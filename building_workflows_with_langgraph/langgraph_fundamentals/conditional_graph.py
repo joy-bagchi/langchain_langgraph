@@ -45,3 +45,4 @@ builder.add_conditional_edges("analyze_job_description", is_suitable_condition)
 builder.add_edge("generate_application", END)
 
 job_application_graph = builder.compile()
+job_application_graph.invoke(input="Analyze")

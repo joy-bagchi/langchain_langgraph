@@ -1,7 +1,8 @@
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod, NodeStyles
-from IPython.display import display, Image
+
+
 
 
 class JobApplicationState(TypedDict):
