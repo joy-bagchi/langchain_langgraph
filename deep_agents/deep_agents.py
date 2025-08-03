@@ -35,5 +35,11 @@ agent = create_deep_agent(
     research_instructions,
 )
 
+
+
 # Invoke the agent
 result = agent.invoke({"messages": [{"role": "user", "content": "what is langgraph?"}]})
+
+
+for message in result["messages"]:
+    print(message.content)
