@@ -1,7 +1,3 @@
-"""
-https://langchain-ai.github.io/langgraph/how-tos/react-agent-from-scratch/?h=react
-"""
-
 from typing import (
     Annotated,
     Sequence,
@@ -18,12 +14,14 @@ from langgraph.graph import StateGraph, END
 
 
 """
-Create ReAct agent¶
+
+https://langchain-ai.github.io/langgraph/how-tos/react-agent-from-scratch/?h=react
+
+Create ReAct agent
 Now that you have installed the required packages and set your environment variables, we can code our ReAct agent!
 
-Define graph state¶
+Define graph state
 We are going to define the most basic ReAct state in this example, which will just contain a list of messages.
-
 For your specific use case, feel free to add any other state keys that you need.
 """
 class AgentState(TypedDict):
@@ -37,7 +35,6 @@ class AgentState(TypedDict):
 
 model = ChatOpenAI(model="gpt-4o-mini")
 
-
 @tool
 def get_weather(location: str):
     """Call to get the weather from a specific location."""
@@ -50,10 +47,7 @@ def get_weather(location: str):
 
 
 tools = [get_weather]
-
 model = model.bind_tools(tools)
-
-
 tools_by_name = {tool.name: tool for tool in tools}
 
 
@@ -72,7 +66,7 @@ def tool_node(state: AgentState):
     return {"messages": outputs}
 
 """
-Define model and tools¶
+Define model and tools
 Next, let's define the tools and model we will use for our example.
 """
 # Define the node that calls the model
