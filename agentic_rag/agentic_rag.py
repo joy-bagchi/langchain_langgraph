@@ -1,22 +1,18 @@
-from typing import TypedDict, List, Literal
+from typing import Literal
+from typing import TypedDict, List
 
 from langchain.chat_models import init_chat_model
-from langgraph.graph import StateGraph, END, MessagesState
-from langchain_core.documents import Document
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
-from typing import Literal
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import convert_to_messages
-from langgraph.graph import MessagesState
-from langchain.chat_models import init_chat_model
 from langchain.tools.retriever import create_retriever_tool
 from langchain_community.document_loaders import WebBaseLoader
-
-
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_core.messages import convert_to_messages
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langgraph.graph import MessagesState
+from langgraph.graph import StateGraph, END
+from pydantic import BaseModel, Field
 
 # ---------- Setup (one-time) ----------
 # 1) Build the vector store
