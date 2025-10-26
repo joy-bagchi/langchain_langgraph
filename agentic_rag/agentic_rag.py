@@ -2,8 +2,8 @@ from typing import Literal
 from typing import TypedDict, List
 
 from langchain.chat_models import init_chat_model
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.tools.retriever import create_retriever_tool
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_classic import create_retriever_tool
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
