@@ -13,6 +13,8 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph import MessagesState
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
+import bm25s
+
 
 # ---------- Setup (one-time) ----------
 # 1) Build the vector store
@@ -39,13 +41,13 @@ print(doc_splits[0].page_content.strip())
 vs = FAISS.from_documents(doc_splits, emb)
 retriever = vs.as_retriever(search_kwargs={"k": 6})
 
-
 response_model = init_chat_model("openai:gpt-4.1", temperature=0)
 
 retriever_tool = create_retriever_tool(
     retriever,
     "retrieve_blog_posts",
-    "Search and return information about Lilian Weng blog posts.",)
+    "Search and return information about Lilian Weng blog posts.", )
+
 
 def generate_query_or_respond(state: MessagesState):
     """Call the model to generate a response based on the current state. Given
@@ -64,6 +66,8 @@ PROMPT = ChatPromptTemplate.from_messages([
     ("human", "QUESTION:\n{question}")
 ])
 print(PROMPT)  # PROMPT
+
+
 # ---------- Graph State ----------
 class RAGState(TypedDict):
     question: str
@@ -71,10 +75,12 @@ class RAGState(TypedDict):
     context: str
     answer: str
 
+
 # ---------- Nodes ----------
 def retrieve_node(state: RAGState) -> RAGState:
     docs = retriever.invoke(state["question"])
     return {**state, "retrieved": docs}
+
 
 def compose_context_node(state: RAGState) -> RAGState:
     # Simple render: title + excerpt + source id. You can add line numbers/citations here.
@@ -85,10 +91,12 @@ def compose_context_node(state: RAGState) -> RAGState:
     context = "\n\n".join(lines)
     return {**state, "context": context}
 
+
 def answer_node(state: RAGState) -> RAGState:
     msg = PROMPT.format_messages(question=state["question"], context=state.get("context", ""))
     resp = llm.invoke(msg)
     return {**state, "answer": resp.content}
+
 
 # ---------- Wiring the graph ----------
 g = StateGraph(RAGState)
@@ -107,8 +115,7 @@ app = g.compile()
 result = app.invoke({"question": "Where do llamas live?"})
 print(result["answer"])
 
-
-#%%
+# %%
 
 GRADE_PROMPT = (
     "You are a grader assessing relevance of a retrieved document to a user question. \n "
@@ -117,6 +124,7 @@ GRADE_PROMPT = (
     "If the document contains keyword(s) or semantic meaning related to the user question, grade it as relevant. \n"
     "Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question."
 )
+
 
 class GradeDocuments(BaseModel):
     """Grade documents using a binary score for relevance check."""
@@ -130,7 +138,7 @@ grader_model = init_chat_model("openai:gpt-4.1", temperature=0)
 
 
 def grade_documents(
-    state: MessagesState,
+        state: MessagesState,
 ) -> Literal["generate_answer", "rewrite_question"]:
     """Determine whether the retrieved documents are relevant to the question."""
     question = state["messages"][0].content
@@ -149,10 +157,12 @@ def grade_documents(
         return "generate_answer"
     else:
         return "rewrite_question"
-#%% md
+
+
+# %% md
 # Run this with irrelevant documents in the tool response:
 
-#%%
+# %%
 
 input = {
     "messages": convert_to_messages(
@@ -177,10 +187,10 @@ input = {
     )
 }
 grade_documents(input)
-#%% md
+# %% md
 # Confirm that the relevant documents are classified as such:
 
-#%%
+# %%
 input = {
     "messages": convert_to_messages(
         [
@@ -208,12 +218,12 @@ input = {
     )
 }
 grade_documents(input)
-#%% md
+# %% md
 # 5. Rewrite question
 
 # Build the rewrite_question node. The retriever tool can return potentially irrelevant documents, which indicates a
 # need to improve the original user question. To do so, we will call the rewrite_question node:
-#%%
+# %%
 REWRITE_PROMPT = (
     "Look at the input and try to reason about the underlying semantic intent / meaning.\n"
     "Here is the initial question:"
@@ -231,7 +241,9 @@ def rewrite_question(state: MessagesState):
     prompt = REWRITE_PROMPT.format(question=question)
     response = response_model.invoke([{"role": "user", "content": prompt}])
     return {"messages": [{"role": "user", "content": response.content}]}
-#%%
+
+
+# %%
 input = {
     "messages": convert_to_messages(
         [
@@ -257,12 +269,12 @@ input = {
 
 response = rewrite_question(input)
 print(response["messages"][-1]["content"])
-#%% md
+# %% md
 # 6. Generate an answer
 
 # Build `generate_answer `node: if we pass the grader checks, we can generate the final answer based on the original
 # question and the retrieved context:
-#%%
+# %%
 GENERATE_PROMPT = (
     "You are an assistant for question-answering tasks. "
     "Use the following pieces of retrieved context to answer the question. "
@@ -280,7 +292,9 @@ def generate_answer(state: MessagesState):
     prompt = GENERATE_PROMPT.format(question=question, context=context)
     response = response_model.invoke([{"role": "user", "content": prompt}])
     return {"messages": [response]}
-#%%
+
+
+# %%
 input = {
     "messages": convert_to_messages(
         [
@@ -310,7 +324,7 @@ input = {
 
 response = generate_answer(input)
 response["messages"][-1].pretty_print()
-#%% md
+# %% md
 # 7. Assemble the graph
 
 # - Start with a `generate_query_or_respond`and determine if we need to cal `retriever_tool`
@@ -322,7 +336,7 @@ response["messages"][-1].pretty_print()
 #     - If relevant, proceed to `generate_answer` and generate final response using the ToolMessage with the
 #     retrieved document context
 # API Reference: [StateGraph](https://langchain.readthedocs.io/en/latest/modules/agents/agent_types/state_graph.html#stategraph)StateGraph | START | END | ToolNode | tools_condition
-#%%
+# %%
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt import tools_condition
@@ -360,7 +374,7 @@ workflow.add_edge("rewrite_question", "generate_query_or_respond")
 
 # Compile
 graph = workflow.compile()
-#%%
+# %%
 from IPython.display import Image, display
 
 display(Image(graph.get_graph().draw_mermaid_png()))
