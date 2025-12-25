@@ -1,4 +1,7 @@
 import chromadb
+import tqdm
+
+tqdm.tqdm.pandas()
 
 client = chromadb.CloudClient(
   api_key='ck-4mzEfAYhkBP5bovWe64bcVnEvpvGaaQoE2GskMFQKB6Q',

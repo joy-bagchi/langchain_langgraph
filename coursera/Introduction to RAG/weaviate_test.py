@@ -1,17 +1,17 @@
-import weaviate
+import weaviate as wv
 from weaviate.classes.config import Configure, DataType, Property
 
 # Connect to Weaviate
-client = weaviate.connect_to_local()
+client = wv.connect_to_local()
 
 # Create a collection
-client.collections.create(
-    name="Article",
-    properties=[Property(name="content", data_type=DataType.TEXT)],
-    vector_config=Configure.Vectors.text2vec_model2vec(),  # Use a vectorizer to generate embeddings during import
-    # vector_config=Configure.Vectors.self_provided()  # If you want to import your own pre-generated embeddings
-)
-
+# client.collections.create(
+#     name="Article",
+#     properties=[Property(name="content", data_type=DataType.TEXT)],
+#     vector_config=Configure.Vectors.text2vec_model2vec(),  # Use a vectorizer to generate embeddings during import
+#     # vector_config=Configure.Vectors.self_provided()  # If you want to import your own pre-generated embeddings
+# )
+client.collections.query("Article")
 # Insert objects and generate embeddings
 articles = client.collections.get("Article")
 articles.data.insert_many(

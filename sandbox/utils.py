@@ -4,23 +4,6 @@ import os
 import re
 from typing import List, Dict, Any
 
-from together import Together
-
-
-def make_url():
-    lab_id = os.environ['WORKSPACE_ID']
-    url = f"http://{lab_id}.labs.coursera.org"
-    BOLD = "\033[1m"
-    RESET = "\033[0m"
-
-    print(f"{BOLD}FOLLOW THIS URL TO OPEN THE UI: {url}{RESET}")
-
-
-def restart_kernel():
-    # This forces the kernel to restart by exiting Python
-    import os
-    os._exit(00)  # Exiting the Python process itself
-
 
 def generate_params_dict(
         prompt: str,
@@ -102,11 +85,6 @@ def generate_with_multiple_input(messages: List[Dict],
                                  model: str = "meta-llama/Llama-3.2-3B-Instruct-Turbo",
                                  together_api_key=None,
                                  **kwargs):
-    if top_p is None:
-        top_p = 'none'
-    if temperature is None:
-        temperature = 'none'
-
     payload = {
         "model": model,
         "messages": messages,

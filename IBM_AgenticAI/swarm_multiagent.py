@@ -1,6 +1,6 @@
 from langgraph.prebuilt import create_react_agent
 from langgraph_swarm import create_swarm, create_handoff_tool
-from react_agent import book_hotel,book_flight
+from react_agent.react_agent import book_hotel,book_flight
 
 transfer_to_hotel_assistant = create_handoff_tool(
     agent_name="hotel_assistant",
