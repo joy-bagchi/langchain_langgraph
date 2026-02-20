@@ -1,9 +1,9 @@
+import os
 from typing import Literal
 from typing import TypedDict, List
-
 from langchain.chat_models import init_chat_model
+from langchain_core.tools import Tool
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_classic import create_retriever_tool
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph import MessagesState
 from langgraph.graph import StateGraph, END
+from langchain.tools import tool
 from pydantic import BaseModel, Field
 import bm25s
 
@@ -19,7 +20,7 @@ import bm25s
 # ---------- Setup (one-time) ----------
 # 1) Build the vector store
 
-
+os.environ["USER_AGENT"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
 urls = [
     "https://lilianweng.github.io/posts/2024-11-28-reward-hacking/",
     "https://lilianweng.github.io/posts/2024-07-07-hallucination/",
@@ -43,10 +44,23 @@ retriever = vs.as_retriever(search_kwargs={"k": 6})
 
 response_model = init_chat_model("openai:gpt-4.1", temperature=0)
 
-retriever_tool = create_retriever_tool(
-    retriever,
-    "retrieve_blog_posts",
-    "Search and return information about Lilian Weng blog posts.", )
+@tool
+def create_retriever_tool(retriever, name, description):
+    """
+    Create a retriever tool for a given retriever, name, and description.
+
+    """
+    return Tool(
+        name=name,
+        description=description,
+        func=lambda query: retriever.invoke(query),
+    )
+
+retriever_tool = create_retriever_tool.invoke(
+    {"retriever": retriever,
+     "name": "retrieve_blog_posts",
+     "description": "Retrieve blog posts related to a query"}
+)
 
 
 def generate_query_or_respond(state: MessagesState):

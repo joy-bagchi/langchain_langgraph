@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="langchain_langgraph" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="llm" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="dl_ai" project-jdk-type="Python SDK" />
 </project>
