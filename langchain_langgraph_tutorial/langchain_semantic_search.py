@@ -1,5 +1,5 @@
 """
-This is a tutorial on how to use LangChain for semantic search.
+This is a langchain_langgraph_tutorial on how to use LangChain for semantic search.
 URL of the Tutorial: https://docs.langchain.com/oss/python/langchain/knowledge-base
 """
 
