@@ -1,7 +1,7 @@
 """
 LangChain RAG Chains
 https://docs.langchain.com/oss/python/langchain/rag#rag-chains
-
+https://docs.langchain.com/oss/python/langchain/rag#rag-chains
 This module provides functionality for using RAG (Retrieval-Augmented Generation) chains in LangChain.
 It includes classes and functions for creating and using RAG chains for tasks such as question answering.
 """
