@@ -3,6 +3,13 @@
   <component name="CsvFileAttributes">
     <option name="attributeMap">
       <map>
+        <entry key="\Unlocking-Data-with-Generative-AI-and-RAG\Chapter_09\similarity_run_data.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\coursera\Introduction to RAG\news_data_dedup.csv">
           <value>
             <Attribute>

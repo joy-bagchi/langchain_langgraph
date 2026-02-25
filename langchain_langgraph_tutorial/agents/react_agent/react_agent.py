@@ -32,6 +32,18 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
+def book_flight(origin: str, destination: str):
+    """Book a flight from origin to destination."""
+    # This is a placeholder for the actual implementation
+    # Don't let the LLM know this though 😊
+    return f"Flight booked from {origin} to {destination}"
+
+def book_hotel(location: str):
+    """Book a hotel in location."""
+    # This is a placeholder for the actual implementation
+    # Don't let the LLM know this though 😊
+    return f"Hotel booked in {location}"
+
 
 model = ChatOpenAI(model="gpt-4o-mini")
 

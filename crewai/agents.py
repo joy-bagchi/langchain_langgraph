@@ -8,7 +8,7 @@ What this does
 - Steers the agent with a research persona/prompt
 
 Prereqs
-pip install -U langchain langchain-community langgraph tavily-python openai
+pip install -U semantic_search semantic_search-community langgraph tavily-python openai
 export TAVILY_API_KEY=...  # https://app.tavily.com
 export OPENAI_API_KEY=...  # or swap to another Chat model provider per LangChain docs
 
