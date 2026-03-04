@@ -33,3 +33,27 @@ My role is to act as your instructor and reviewer, not to pre-build lessons unle
 ## First Planned Review
 
 When ready, review `src/01_hello_chat.py` (Week 1 Day 1).
+
+## Session Log - 2026-03-03
+
+- Completed and reviewed `src/01_hello_chat.py` (Week 1 Day 1).
+- Confirmed Day 1 objective: basic model call + message primitives + response metadata.
+- Completed and reviewed `src/02_prompt_templates.py` (Week 1 Day 2).
+- Updated Day 2 code to use explicit runtime validation (no `assert` checks).
+- Started and reviewed `src/03_output_parsing.py` (Week 1 Day 3).
+- Clarified LCEL wiring:
+  - Use one chat prompt + `with_structured_output(ModelResponse)`.
+  - Put system instructions in `ChatPromptTemplate.from_messages(...)`.
+- Clarified typing warning:
+  - IDE may infer `BaseModel`; use explicit annotation/cast to `ModelResponse`.
+- Clarified structured output behavior:
+  - `with_structured_output(ModelResponse)` drives model output into schema fields.
+
+## Where To Resume Next Session
+
+- Resume with `src/03_output_parsing.py` final polish:
+  - remove unused imports,
+  - constrain `confidence` with `Field(ge=0, le=1, ...)`,
+  - ensure prompt wording clearly requests structured fields,
+  - keep parse-error handling path.
+- After that, move to Week 1 Day 4: `src/04_chains.py`.
