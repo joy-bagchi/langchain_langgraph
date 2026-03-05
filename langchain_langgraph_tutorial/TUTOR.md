@@ -49,11 +49,31 @@ When ready, review `src/01_hello_chat.py` (Week 1 Day 1).
 - Clarified structured output behavior:
   - `with_structured_output(ModelResponse)` drives model output into schema fields.
 
+## Session Log - 2026-03-04
+
+- Completed final polish and review for `src/03_output_parsing.py` (Week 1 Day 3):
+  - removed unused imports,
+  - constrained `confidence` to `[0, 1]`,
+  - clarified prompt instructions for structured fields,
+  - kept parse-error handling path.
+- Completed and reviewed `src/04_chains.py` (Week 1 Day 4):
+  - composed reusable runnable chain (`prompt -> model -> parser`),
+  - added `build_chain(...)` and `run_lesson_example(...)`,
+  - resolved indentation/syntax issue and passed `py_compile`.
+- Added and completed bonus exercise `src/04b_streaming_exercise.py`:
+  - streamed model output live to console,
+  - captured streamed chunks into a final string,
+  - reviewed for style and cleanup notes.
+- Confirmed next syllabus target is Week 1 Day 5 integration lab.
+
 ## Where To Resume Next Session
 
-- Resume with `src/03_output_parsing.py` final polish:
-  - remove unused imports,
-  - constrain `confidence` with `Field(ge=0, le=1, ...)`,
-  - ensure prompt wording clearly requests structured fields,
-  - keep parse-error handling path.
-- After that, move to Week 1 Day 4: `src/04_chains.py`.
+- Start Week 1 Day 5 integration lab:
+  - implement `src/apps/prompt_lab.py` as a CLI-style prompt app,
+  - reuse prompt templates + chain composition patterns from Days 1-4,
+  - add smoke test in `tests/test_week1_prompt_lab.py`.
+- Suggested Day 5 sequence:
+  1. define app inputs and validation,
+  2. build reusable chain invocation path,
+  3. implement CLI runner,
+  4. add and run smoke test.
