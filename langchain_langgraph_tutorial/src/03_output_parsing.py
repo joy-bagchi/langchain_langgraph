@@ -5,7 +5,6 @@ Implement lesson logic for this module.
 
 from __future__ import annotations
 
-from typing import Any
 from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -14,7 +13,7 @@ from pydantic import BaseModel, Field
 class ModelResponse(BaseModel):
     answer: str = Field(description="The answer to the question")
     content: str = Field(description="The content of the response")
-    confidence: float = Field(description="The confidence of the answer")
+    confidence: float = Field(description="The confidence of the answer", ge=0.0, le=1.0)
 
 
 def main() -> None:
@@ -23,7 +22,11 @@ def main() -> None:
     structured_model = model.with_structured_output(ModelResponse)
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful mathematically inclined assistant."),
+        ("system", "You are a helpful mathematically inclined assistant. " 
+                   "Your responses should be formatted as JSON with the keys 'answer', "
+                   "'content', and 'confidence'."
+                   "Ensure that the confidence value is between 0 and 1 inclusive."
+         ),
         ("human", "Please provide an interesting fact about {topic}!"),
     ])
     chain = prompt | structured_model
