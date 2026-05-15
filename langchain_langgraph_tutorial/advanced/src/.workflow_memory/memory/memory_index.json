@@ -1,0 +1,13 @@
+[
+  {
+    "content": "Outline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+    "created_at": "2026-05-15T02:14:44.564871+00:00",
+    "expires_at": null,
+    "memory_type": "decision",
+    "metadata": {},
+    "namespace": "research_brief_memory",
+    "record_id": "62d31192-4c7f-4d93-bfd5-fb35d3d67eb6",
+    "source_run_id": "db8920bc-216c-42e7-bea3-3091ec8dd492",
+    "source_step_id": "draft_outline"
+  }
+]

@@ -1,0 +1,11 @@
+{"run_id": "db8920bc-216c-42e7-bea3-3091ec8dd492", "timestamp": "2026-05-15T02:14:44.552929+00:00", "type": "run_started", "workflow_id": "research_brief"}
+{"match_count": 0, "step_id": "capture_request", "timestamp": "2026-05-15T02:14:44.555112+00:00", "type": "memory_retrieved"}
+{"attempt": 1, "next_step": "draft_outline", "step_id": "capture_request", "timestamp": "2026-05-15T02:14:44.556762+00:00", "type": "step_executed"}
+{"checkpoint_index": 1, "current_step": "draft_outline", "status": "running", "timestamp": "2026-05-15T02:14:44.558400+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "draft_outline", "timestamp": "2026-05-15T02:14:44.560292+00:00", "type": "memory_retrieved"}
+{"attempt": 1, "next_step": "review_outline", "step_id": "draft_outline", "timestamp": "2026-05-15T02:14:44.562151+00:00", "type": "step_executed"}
+{"record_id": "62d31192-4c7f-4d93-bfd5-fb35d3d67eb6", "step_id": "draft_outline", "timestamp": "2026-05-15T02:14:44.565806+00:00", "type": "memory_written"}
+{"checkpoint_index": 2, "current_step": "review_outline", "status": "running", "timestamp": "2026-05-15T02:14:44.567650+00:00", "type": "checkpoint"}
+{"match_count": 1, "step_id": "review_outline", "timestamp": "2026-05-15T02:14:44.569655+00:00", "type": "memory_retrieved"}
+{"step_id": "review_outline", "timestamp": "2026-05-15T02:14:44.571429+00:00", "type": "review_requested"}
+{"checkpoint_index": 3, "current_step": "review_outline", "status": "awaiting_review", "timestamp": "2026-05-15T02:14:44.573374+00:00", "type": "checkpoint"}

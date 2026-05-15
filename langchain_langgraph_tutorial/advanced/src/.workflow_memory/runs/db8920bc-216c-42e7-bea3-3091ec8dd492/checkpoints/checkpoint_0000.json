@@ -1,0 +1,64 @@
+{
+  "checkpoint_index": 0,
+  "current_step": "draft_outline",
+  "events": [
+    {
+      "run_id": "db8920bc-216c-42e7-bea3-3091ec8dd492",
+      "timestamp": "2026-05-15T02:14:44.552929+00:00",
+      "type": "run_started",
+      "workflow_id": "research_brief"
+    },
+    {
+      "match_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-15T02:14:44.555112+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "attempt": 1,
+      "next_step": "draft_outline",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-15T02:14:44.556762+00:00",
+      "type": "step_executed"
+    }
+  ],
+  "execution_outcome": {
+    "completed_step_id": "capture_request",
+    "memory_content": null,
+    "next_step": "draft_outline",
+    "output": "LangGraph patterns for durable agent memory",
+    "route": "checkpoint"
+  },
+  "input_payload": {
+    "topic": "LangGraph patterns for durable agent memory"
+  },
+  "last_error": null,
+  "memory_hits": [],
+  "named_outputs": {
+    "request": "LangGraph patterns for durable agent memory"
+  },
+  "pending_review": null,
+  "retry_counts": {},
+  "review_responses": {},
+  "run_id": "db8920bc-216c-42e7-bea3-3091ec8dd492",
+  "status": "running",
+  "step_history": [
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {},
+      "next_step": "draft_outline",
+      "output": "LangGraph patterns for durable agent memory",
+      "status": "succeeded",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-15T02:14:44.556743+00:00"
+    }
+  ],
+  "step_outputs": {
+    "capture_request": "LangGraph patterns for durable agent memory"
+  },
+  "workflow_id": "research_brief",
+  "workflow_path": "C:\\Users\\joyba\\PycharmProjects\\langchain_langgraph\\langchain_langgraph_tutorial\\advanced\\examples\\workflows\\research_brief.md",
+  "workflow_title": "Research Brief Workflow",
+  "working_notes": []
+}

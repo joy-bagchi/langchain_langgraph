@@ -6,7 +6,7 @@ Implement lesson logic for this module.
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import Any, cast
 
 from langchain.chat_models import init_chat_model
 from langchain_core.output_parsers import StrOutputParser
@@ -40,35 +40,60 @@ def build_parser() -> argparse.ArgumentParser:
 def build_prompt(mode: str) -> ChatPromptTemplate:
     """Return prompt template based on selected mode.
 
-    TODO:
-    - Support `explain` and `quiz` with different instructions.
-    - Keep one shared variable: `{topic}`.
+    Supports:
+    - `explain`: concise beginner explanation.
+    - `quiz`: short quiz with answer key.
     """
-    raise NotImplementedError("TODO: build prompt templates for both modes.")
+    if mode == "explain":
+        return ChatPromptTemplate.from_messages(
+            [
+                ("system", "You are a concise technical assistant."),
+                ("human", "Explain {topic} for a beginner in 3 bullet points."),
+            ]
+        )
+
+    if mode == "quiz":
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a supportive tutor. Create short formative quizzes.",
+                ),
+                (
+                    "human",
+                    "Create a 3-question quiz about {topic} and include a brief answer key.",
+                ),
+            ]
+        )
+
+    raise ValueError(f"Unsupported mode: {mode}")
 
 
 def build_chain(mode: str, model_name: str) -> Any:
     """Compose prompt -> model -> parser.
-
-    TODO:
-    - Reuse `build_prompt(mode)`.
-    - Initialize chat model from `model_name`.
-    - Return composed runnable chain.
     """
-    _ = StrOutputParser()
-    _ = init_chat_model(model_name)
-    raise NotImplementedError("TODO: compose and return chain.")
+    prompt = build_prompt(mode=mode)
+    model = init_chat_model(model_name)
+    parser = StrOutputParser()
+    chain = prompt | model | parser
+    return chain
+
+
+def validate_topic(topic: str) -> str:
+    """Validate topic input for CLI and programmatic use."""
+    cleaned = topic.strip()
+    if not cleaned:
+        raise ValueError("topic must be a non-empty string.")
+    return cleaned
 
 
 def run_once(topic: str, mode: str, model_name: str) -> str:
     """Execute one prompt-lab run and return parsed text.
-
-    TODO:
-    - Invoke chain with `{'topic': topic}`.
-    - Return final string output.
     """
-    _ = build_chain(mode=mode, model_name=model_name)
-    raise NotImplementedError("TODO: call chain.invoke and return output.")
+    valid_topic = validate_topic(topic)
+    chain = build_chain(mode=mode, model_name=model_name)
+    output = chain.invoke({"topic": valid_topic})
+    return cast(str, output)
 
 
 def main() -> None:
@@ -82,7 +107,7 @@ def main() -> None:
     try:
         result = run_once(topic=args.topic, mode=args.mode, model_name=args.model)
         print(result)
-    except NotImplementedError as error:
+    except (ValueError, NotImplementedError) as error:
         print(error)
 
 
