@@ -39,6 +39,31 @@ Configuration sources, in priority order:
 
 If no provider is enabled, the runtime stays in no-LLM mode.
 
+## Run an agent bound to a workflow
+
+You can define an agent separately in YAML and bind it to a workflow:
+
+```yaml
+agent_id: research_analyst
+name: Research Analyst
+role: research_analyst
+workflow_path: examples/workflows/research_brief.md
+llm_provider: none
+memory_service_type: filesystem
+allowed_tools: []
+```
+
+Programmatic entrypoint:
+
+```python
+from agentic_workflow import run_agent_workflow
+
+result = run_agent_workflow(
+    "examples/agents/research_analyst.yaml",
+    {"topic": "LangGraph patterns for durable agent memory"},
+)
+```
+
 ## Context Layer
 
 Prompt steps now run through an explicit context manager layer before execution. That layer assembles:

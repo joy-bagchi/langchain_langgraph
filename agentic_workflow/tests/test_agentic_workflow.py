@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentic_workflow import (
+    AgentDefinition,
     EphemeralMemoryService,
     build_model_callable,
     build_platform_services,
@@ -19,6 +20,7 @@ from agentic_workflow import (
     load_workflow_definition,
     resolve_llm_config,
     render_template,
+    run_agent_workflow,
     resume_workflow,
     start_workflow,
 )
@@ -114,6 +116,20 @@ memory:
 ```prompt
 Finalize the incident workflow for {outputs.request}.
 ```
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_agent(path: Path, workflow_path: Path) -> None:
+    path.write_text(
+        f"""agent_id: onboarding_agent
+name: Onboarding Agent
+role: onboarding_specialist
+workflow_path: {workflow_path.as_posix()}
+llm_provider: none
+memory_service_type: ephemeral
+allowed_tools: []
 """,
         encoding="utf-8",
     )
@@ -339,3 +355,21 @@ def test_default_cognitive_service_descriptor_exposes_capabilities() -> None:
     cognitive = DefaultCognitiveService()
     assert cognitive.descriptor.service_name == "cognitive"
     assert "deterministic_fallback" in cognitive.descriptor.capabilities
+
+
+def test_run_agent_workflow_loads_agent_and_executes_bound_workflow(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    agent_path = tmp_path / "agent.yaml"
+    _write_workflow(workflow_path)
+    _write_agent(agent_path, workflow_path)
+
+    result = run_agent_workflow(
+        agent_path,
+        {"topic": "normal request"},
+        storage_root=tmp_path / "runtime_store",
+    )
+
+    assert result["status"] == "completed"
+    assert result["agent"]["agent_id"] == "onboarding_agent"
+    assert result["agent_role"] == "onboarding_specialist"
+    assert result["named_outputs"]["summary"]

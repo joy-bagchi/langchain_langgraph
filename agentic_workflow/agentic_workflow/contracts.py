@@ -106,6 +106,24 @@ class WorkflowDefinition:
 
 
 @dataclass(slots=True)
+class AgentDefinition:
+    """Declarative agent contract bound to a workflow and service policy."""
+
+    agent_id: str
+    name: str
+    role: str
+    workflow_path: str
+    description: str = ""
+    llm_provider: str = "none"
+    model: str | None = None
+    temperature: float = 0.0
+    memory_service_type: str = "filesystem"
+    allowed_tools: list[str] = field(default_factory=list)
+    memory_namespace: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class StepExecutionResult:
     """Normalized result emitted by a step executor."""
 
@@ -229,6 +247,9 @@ class WorkflowGraphState(TypedDict, total=False):
     """State carried across the LangGraph workflow."""
 
     run_id: str
+    agent_id: str | None
+    agent_name: str | None
+    agent_role: str | None
     workflow_id: str
     workflow_title: str
     workflow_path: str

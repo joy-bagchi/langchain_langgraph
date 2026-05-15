@@ -7,6 +7,7 @@ from agentic_workflow.agentic_os.memory_service import (
 )
 from agentic_workflow.cognitive.service import DefaultCognitiveService
 from agentic_workflow.contracts import (
+    AgentDefinition,
     BranchRule,
     MemoryQuery,
     MemoryRecord,
@@ -18,7 +19,10 @@ from agentic_workflow.contracts import (
     WorkflowStep,
 )
 from agentic_workflow.context import ContextManager, ContextSnapshot, render_template
-from agentic_workflow.definitions import MarkdownWorkflowDefinitionService
+from agentic_workflow.definitions import (
+    MarkdownWorkflowDefinitionService,
+    YamlAgentDefinitionService,
+)
 from agentic_workflow.markdown_workflow import (
     load_workflow_definition,
     parse_workflow_markdown,
@@ -28,12 +32,14 @@ from agentic_workflow.runtime import (
     WorkflowRunner,
     compile_workflow,
     inspect_run,
+    run_agent_workflow,
     resume_workflow,
     start_workflow,
 )
 from agentic_workflow.stores import FilesystemMemoryStore, WorkflowRunStore
 
 __all__ = [
+    "AgentDefinition",
     "BranchRule",
     "ContextManager",
     "ContextSnapshot",
@@ -41,6 +47,7 @@ __all__ = [
     "EphemeralMemoryService",
     "FilesystemMemoryService",
     "MarkdownWorkflowDefinitionService",
+    "YamlAgentDefinitionService",
     "MemoryQuery",
     "MemoryRecord",
     "MemorySearchResult",
@@ -62,6 +69,7 @@ __all__ = [
     "parse_workflow_markdown",
     "render_template",
     "resolve_llm_config",
+    "run_agent_workflow",
     "resume_workflow",
     "start_workflow",
 ]

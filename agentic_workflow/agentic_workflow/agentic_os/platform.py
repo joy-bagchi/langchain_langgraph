@@ -17,6 +17,7 @@ from agentic_workflow.agentic_os.observability_service import EventObservability
 from agentic_workflow.agentic_os.security_service import PermissiveSecurityService
 from agentic_workflow.agentic_os.tool_service import NullToolService
 from agentic_workflow.cognitive.service import DefaultCognitiveService
+from agentic_workflow.definitions.agent_service import YamlAgentDefinitionService
 from agentic_workflow.definitions.workflow_service import MarkdownWorkflowDefinitionService
 
 
@@ -24,6 +25,7 @@ from agentic_workflow.definitions.workflow_service import MarkdownWorkflowDefini
 class PlatformServiceBundle:
     """All runtime services required by the first platform slice."""
 
+    agent_definitions: YamlAgentDefinitionService
     workflow_definitions: MarkdownWorkflowDefinitionService
     cognitive: DefaultCognitiveService
     context: DefaultContextService
@@ -53,6 +55,7 @@ def build_platform_services(
         memory_service = FilesystemMemoryService(memory_root)
 
     return PlatformServiceBundle(
+        agent_definitions=YamlAgentDefinitionService(),
         workflow_definitions=MarkdownWorkflowDefinitionService(),
         cognitive=DefaultCognitiveService(model_callable=model_callable),
         context=DefaultContextService(),

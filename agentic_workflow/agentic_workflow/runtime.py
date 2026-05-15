@@ -19,6 +19,7 @@ from agentic_workflow.agentic_os.security_service import AuthorizationRequest
 from agentic_workflow.cognitive.service import PromptExecutionRequest
 from agentic_workflow.context import render_template, to_namespace
 from agentic_workflow.contracts import (
+    AgentDefinition,
     MemoryQuery,
     MemoryRecord,
     StepExecutionResult,
@@ -28,7 +29,8 @@ from agentic_workflow.contracts import (
     WorkflowStep,
     utc_now,
 )
-from agentic_workflow.stores import FilesystemMemoryStore, WorkflowRunStore
+from agentic_workflow.llm import build_model_callable, resolve_llm_config
+from agentic_workflow.stores import WorkflowRunStore
 from agentic_workflow.shared.services import ServiceEvent
 
 
@@ -557,10 +559,14 @@ class WorkflowRunner:
         input_payload: dict[str, Any],
         run_id: str | None,
         review_responses: dict[str, dict[str, Any]] | None = None,
+        initial_state_overrides: dict[str, Any] | None = None,
     ) -> WorkflowGraphState:
         resolved_run_id = run_id or str(uuid4())
-        return WorkflowGraphState(
+        state = WorkflowGraphState(
             run_id=resolved_run_id,
+            agent_id=None,
+            agent_name=None,
+            agent_role=None,
             workflow_id=self.definition.workflow_id,
             workflow_title=self.definition.title,
             workflow_path=self.definition.workflow_path or "",
@@ -581,6 +587,9 @@ class WorkflowRunner:
             checkpoint_index=0,
             last_error=None,
         )
+        if initial_state_overrides:
+            state.update(initial_state_overrides)
+        return state
 
     def start(
         self,
@@ -588,11 +597,13 @@ class WorkflowRunner:
         *,
         run_id: str | None = None,
         review_responses: dict[str, dict[str, Any]] | None = None,
+        initial_state_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         state = self._bootstrap_state(
             input_payload=input_payload,
             run_id=run_id,
             review_responses=review_responses,
+            initial_state_overrides=initial_state_overrides,
         )
         latest_state = dict(state)
         for latest_state in self.graph.stream(
@@ -643,6 +654,7 @@ def start_workflow(
     model_callable: ModelCallable | None = None,
     services: PlatformServiceBundle | None = None,
     memory_service_type: str = "filesystem",
+    initial_state_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load a workflow from disk and execute it."""
     service_bundle = services or build_platform_services(
@@ -659,7 +671,11 @@ def start_workflow(
         services=service_bundle,
         memory_service_type=memory_service_type,
     )
-    return runner.start(input_payload, run_id=run_id)
+    return runner.start(
+        input_payload,
+        run_id=run_id,
+        initial_state_overrides=initial_state_overrides,
+    )
 
 
 def resume_workflow(
@@ -702,3 +718,48 @@ def inspect_run(
     """Load the persisted state for a workflow run."""
     storage_path = Path(storage_root or Path.cwd() / ".workflow_memory")
     return WorkflowRunStore(storage_path).inspect(run_id)
+
+
+def run_agent_workflow(
+    agent_path: str | Path,
+    input_payload: dict[str, Any],
+    *,
+    run_id: str | None = None,
+    storage_root: str | Path | None = None,
+    services: PlatformServiceBundle | None = None,
+) -> dict[str, Any]:
+    """Load an agent definition, resolve its workflow, and execute it."""
+    bootstrap_services = services or build_platform_services(storage_root=storage_root)
+    agent_definition = bootstrap_services.agent_definitions.load(agent_path)
+    llm_config = resolve_llm_config(
+        provider=agent_definition.llm_provider,
+        model=agent_definition.model,
+        temperature=agent_definition.temperature,
+    )
+    bound_services = build_platform_services(
+        storage_root=storage_root,
+        model_callable=build_model_callable(llm_config),
+        memory_service_type=agent_definition.memory_service_type,
+    )
+    result = start_workflow(
+        agent_definition.workflow_path,
+        input_payload,
+        run_id=run_id,
+        storage_root=storage_root,
+        services=bound_services,
+        memory_service_type=agent_definition.memory_service_type,
+        initial_state_overrides={
+            "agent_id": agent_definition.agent_id,
+            "agent_name": agent_definition.name,
+            "agent_role": agent_definition.role,
+        },
+    )
+    result["agent"] = {
+        "agent_id": agent_definition.agent_id,
+        "name": agent_definition.name,
+        "role": agent_definition.role,
+        "workflow_path": agent_definition.workflow_path,
+        "memory_service_type": agent_definition.memory_service_type,
+        "allowed_tools": list(agent_definition.allowed_tools),
+    }
+    return result
