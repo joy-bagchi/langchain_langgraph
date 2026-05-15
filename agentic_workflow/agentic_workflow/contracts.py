@@ -245,5 +245,6 @@ class WorkflowGraphState(TypedDict, total=False):
     retry_counts: dict[str, int]
     events: list[dict[str, Any]]
     execution_outcome: dict[str, Any]
+    active_context: dict[str, Any]
     checkpoint_index: int
     last_error: str | None

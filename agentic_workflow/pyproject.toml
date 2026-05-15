@@ -7,7 +7,7 @@ name = "agentic-workflow"
 version = "0.1.0"
 description = "Memory-aware agentic workflow runtime built on LangGraph."
 requires-python = ">=3.10"
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0", "langchain-openai>=0.3.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

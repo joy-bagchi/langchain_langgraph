@@ -10,8 +10,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentic_workflow import (
+    EphemeralMemoryService,
+    build_model_callable,
+    build_platform_services,
+    ContextManager,
+    DefaultCognitiveService,
     inspect_run,
     load_workflow_definition,
+    resolve_llm_config,
+    render_template,
     resume_workflow,
     start_workflow,
 )
@@ -194,3 +201,141 @@ def test_memory_is_reused_across_runs(tmp_path: Path) -> None:
         "Classification" in item["record"]["content"] or "Standard handling" in item["record"]["content"]
         for item in second["memory_hits"]
     )
+
+
+def test_start_workflow_uses_configurable_model_callable(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    def fake_model(prompt_text: str, step, state) -> str:
+        return f"LLM::{step.step_id}::{prompt_text[:20]}"
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+        model_callable=fake_model,
+    )
+
+    assert result["status"] == "completed"
+    assert result["named_outputs"]["classification"].startswith("LLM::classify_request::")
+    assert result["named_outputs"]["summary"].startswith("LLM::standard_path::")
+
+
+def test_resolve_llm_config_uses_workflow_default_model(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    _write_workflow(workflow_path)
+    definition = load_workflow_definition(workflow_path)
+    definition.default_model = "gpt-4o-mini"
+
+    config = resolve_llm_config(
+        workflow_definition=definition,
+        provider="openai",
+    )
+
+    assert config.provider == "openai"
+    assert config.model == "gpt-4o-mini"
+
+
+def test_build_model_callable_returns_none_for_disabled_config() -> None:
+    config = resolve_llm_config(provider="none")
+    assert build_model_callable(config) is None
+
+
+def test_context_manager_compacts_older_history(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    _write_workflow(workflow_path)
+    definition = load_workflow_definition(workflow_path)
+    manager = ContextManager(workflow_definition=definition, max_recent_history=2)
+    step = definition.steps["standard_path"]
+    state = {
+        "current_step": "standard_path",
+        "step_history": [
+            {"step_id": "capture_request", "status": "succeeded", "output": "normal request"},
+            {"step_id": "classify_request", "status": "succeeded", "output": "standard"},
+            {"step_id": "prior_action", "status": "succeeded", "output": "done"},
+        ],
+        "memory_hits": [
+            {"record": {"content": "Remember the standard process."}},
+        ],
+        "working_notes": ["Note A"],
+    }
+
+    snapshot = manager.build_context(step, state)
+
+    assert "capture_request -> succeeded" in snapshot.compacted_history
+    assert len(snapshot.recent_history) == 2
+    assert "Remember the standard process." in snapshot.memory_summary
+    assert "Working notes available." in snapshot.context_brief
+
+
+def test_render_template_uses_active_context_fields() -> None:
+    state = {
+        "input_payload": {"topic": "incident"},
+        "step_outputs": {},
+        "named_outputs": {},
+        "memory_hits": [],
+        "working_notes": [],
+        "current_step": "standard_path",
+        "active_context": {
+            "memory_summary": "Semantic memory",
+            "compacted_history": "Earlier steps compacted",
+            "context_brief": "Context packet ready",
+            "current_task": "Handle incident",
+            "raw_memory_hits": [],
+            "recent_history": [],
+            "working_notes": "",
+        },
+    }
+
+    rendered = render_template(
+        "Task={current_task}\nBrief={context_brief}\nMem={memory_summary}\nHist={compacted_history}",
+        state,
+    )
+
+    assert "Task=Handle incident" in rendered
+    assert "Brief=Context packet ready" in rendered
+    assert "Mem=Semantic memory" in rendered
+    assert "Hist=Earlier steps compacted" in rendered
+
+
+def test_workflow_run_persists_active_context(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+    )
+
+    assert "active_context" in result
+    assert "context_brief" in result["active_context"]
+
+
+def test_platform_service_bundle_supports_ephemeral_memory(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    _write_workflow(workflow_path)
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+    )
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        services=services,
+        memory_service_type="ephemeral",
+    )
+
+    assert result["status"] == "completed"
+    assert isinstance(services.memory, EphemeralMemoryService)
+    assert services.memory.descriptor.implementation_id == "ephemeral_memory_service"
+
+
+def test_default_cognitive_service_descriptor_exposes_capabilities() -> None:
+    cognitive = DefaultCognitiveService()
+    assert cognitive.descriptor.service_name == "cognitive"
+    assert "deterministic_fallback" in cognitive.descriptor.capabilities

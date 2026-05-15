@@ -5,12 +5,19 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Callable
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 
+from agentic_workflow.agentic_os.context_service import ContextServiceRequest
+from agentic_workflow.agentic_os.evaluation_service import EvaluationRequest
+from agentic_workflow.agentic_os.guardrail_service import GuardrailRequest
+from agentic_workflow.agentic_os.observability_service import ObservabilityRequest
+from agentic_workflow.agentic_os.platform import PlatformServiceBundle, build_platform_services
+from agentic_workflow.agentic_os.security_service import AuthorizationRequest
+from agentic_workflow.cognitive.service import PromptExecutionRequest
+from agentic_workflow.context import render_template, to_namespace
 from agentic_workflow.contracts import (
     MemoryQuery,
     MemoryRecord,
@@ -21,8 +28,8 @@ from agentic_workflow.contracts import (
     WorkflowStep,
     utc_now,
 )
-from agentic_workflow.markdown_workflow import load_workflow_definition
 from agentic_workflow.stores import FilesystemMemoryStore, WorkflowRunStore
+from agentic_workflow.shared.services import ServiceEvent
 
 
 Executor = Callable[[WorkflowStep, WorkflowGraphState, dict[str, Any]], StepExecutionResult]
@@ -33,57 +40,19 @@ def _deepcopy_dict(payload: dict[str, Any] | None) -> dict[str, Any]:
     return deepcopy(payload or {})
 
 
-def _to_namespace(value: Any) -> Any:
-    if isinstance(value, dict):
-        return SimpleNamespace(**{key: _to_namespace(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return [_to_namespace(item) for item in value]
-    return value
-
-
-class _SafeFormatDict(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def render_template(template: str | None, state: WorkflowGraphState, *, extra: dict[str, Any] | None = None) -> str:
-    """Render a prompt template against the current workflow state."""
-    if not template:
-        return ""
-    context = {
-        "input": _to_namespace(dict(state.get("input_payload", {}))),
-        "steps": _to_namespace(
-            {
-                key: {"output": value}
-                for key, value in dict(state.get("step_outputs", {})).items()
-            }
-        ),
-        "outputs": _to_namespace(dict(state.get("named_outputs", {}))),
-        "memory_hits": _to_namespace(state.get("memory_hits", [])),
-        "memory_summary": "\n".join(
-            item["record"]["content"] for item in state.get("memory_hits", [])
-        ),
-        "working_notes": "\n".join(state.get("working_notes", [])),
-        "current_step": state.get("current_step"),
-    }
-    if extra:
-        context.update({key: _to_namespace(value) for key, value in extra.items()})
-    return template.format_map(_SafeFormatDict(context))
-
-
 def _evaluate_expression(expression: str, state: WorkflowGraphState) -> bool:
     """Evaluate a trusted workflow routing expression."""
     scope = {
-        "input": _to_namespace(dict(state.get("input_payload", {}))),
-        "steps": _to_namespace(
+        "input": to_namespace(dict(state.get("input_payload", {}))),
+        "steps": to_namespace(
             {
                 key: {"output": value}
                 for key, value in state.get("step_outputs", {}).items()
             }
         ),
-        "outputs": _to_namespace(dict(state.get("named_outputs", {}))),
+        "outputs": to_namespace(dict(state.get("named_outputs", {}))),
         "status": state.get("status"),
-        "memory_hits": _to_namespace(state.get("memory_hits", [])),
+        "memory_hits": to_namespace(state.get("memory_hits", [])),
     }
     return bool(eval(expression, {"__builtins__": {}}, scope))
 
@@ -106,11 +75,10 @@ def _default_executors(model_callable: ModelCallable | None) -> dict[str, Execut
         _: dict[str, Any],
     ) -> StepExecutionResult:
         prompt_text = render_template(step.prompt, state)
-        if model_callable is None:
-            output: Any = prompt_text
-        else:
-            output = model_callable(prompt_text, step, state)
-        return StepExecutionResult(output=output)
+        response = model_callable.execute_prompt(
+            PromptExecutionRequest(prompt=prompt_text, step=step, state=state)
+        )
+        return StepExecutionResult(output=response.output, metadata=response.metadata)
 
     def review_executor(
         step: WorkflowStep,
@@ -162,25 +130,24 @@ def _default_executors(model_callable: ModelCallable | None) -> dict[str, Execut
 def compile_workflow(
     definition: WorkflowDefinition,
     *,
-    memory_store: FilesystemMemoryStore,
+    services: PlatformServiceBundle,
     executors: dict[str, Executor] | None = None,
-    model_callable: ModelCallable | None = None,
 ):
     """Compile a structured workflow into a LangGraph state machine."""
-    executor_registry = _default_executors(model_callable)
+    executor_registry = _default_executors(services.cognitive)
     executor_registry.update(executors or {})
 
     def load_run_context(state: WorkflowGraphState) -> WorkflowGraphState:
         events = list(state.get("events", []))
         if not events:
-            events.append(
-                {
-                    "type": "run_started",
+            events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+                event_type="run_started",
+                payload={
                     "timestamp": utc_now(),
                     "run_id": state["run_id"],
                     "workflow_id": definition.workflow_id,
-                }
-            )
+                },
+            ))))
         return {"events": events}
 
     def retrieve_memory(state: WorkflowGraphState) -> WorkflowGraphState:
@@ -190,20 +157,47 @@ def compile_workflow(
         namespace = step.memory.namespace or definition.memory_namespace
         query_template = step.metadata.get("memory_query")
         query_text = render_template(query_template, state) if query_template else render_template(step.prompt, state)
-        results = memory_store.recall(
+        results = services.memory.recall(
             MemoryQuery(namespace=namespace, text=query_text, max_results=5)
         )
         events = list(state.get("events", []))
-        events.append(
-            {
-                "type": "memory_retrieved",
+        events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+            event_type="memory_retrieved",
+            payload={
                 "timestamp": utc_now(),
                 "step_id": step.step_id,
                 "match_count": len(results),
-            }
-        )
+            },
+        ))))
         return {
             "memory_hits": [item.to_dict() for item in results],
+            "events": events,
+        }
+
+    def prepare_context(state: WorkflowGraphState) -> WorkflowGraphState:
+        if state.get("status") != "running" or not state.get("current_step"):
+            return {}
+        step = definition.steps[state["current_step"]]
+        snapshot = services.context.assemble_context(
+            ContextServiceRequest(
+                workflow_definition=definition,
+                step=step,
+                state=state,
+            )
+        )
+        events = list(state.get("events", []))
+        events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+            event_type="context_prepared",
+            payload={
+                "timestamp": utc_now(),
+                "step_id": step.step_id,
+                "recent_history_count": len(snapshot.recent_history),
+                "compacted_history_present": bool(snapshot.compacted_history),
+                "memory_hit_count": len(snapshot.raw_memory_hits),
+            },
+        ))))
+        return {
+            "active_context": snapshot.to_dict(),
             "events": events,
         }
 
@@ -215,6 +209,19 @@ def compile_workflow(
         retry_counts = dict(state.get("retry_counts", {}))
         events = list(state.get("events", []))
         attempt = retry_counts.get(step_id, 0) + 1
+        authz = services.security.authorize(
+            AuthorizationRequest(
+                capability=f"step:{step.step_type}",
+                metadata={"step_id": step.step_id, "workflow_id": definition.workflow_id},
+            )
+        )
+        if not authz.allowed:
+            raise PermissionError(authz.reason)
+        pre_guardrail = services.guardrails.evaluate(
+            GuardrailRequest(phase="pre_step", step=step, state=state)
+        )
+        if not pre_guardrail.allowed:
+            raise PermissionError("; ".join(pre_guardrail.reasons) or "pre-step guardrail blocked execution")
 
         try:
             executor = executor_registry.get(step.step_type)
@@ -236,15 +243,15 @@ def compile_workflow(
                     metadata={"error": str(exc)},
                 ).to_dict()
             )
-            events.append(
-                {
-                    "type": "step_error",
+            events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+                event_type="step_error",
+                payload={
                     "timestamp": utc_now(),
                     "step_id": step_id,
                     "attempt": attempt,
                     "error": str(exc),
-                }
-            )
+                },
+            ))))
             if attempt <= step.max_retries:
                 return {
                     "retry_counts": retry_counts,
@@ -277,6 +284,22 @@ def compile_workflow(
             step_outputs[step_id] = result.output
             if step.output_key:
                 named_outputs[step.output_key] = result.output
+        post_guardrail = services.guardrails.evaluate(
+            GuardrailRequest(
+                phase="post_step",
+                step=step,
+                state={**state, "step_outputs": step_outputs, "named_outputs": named_outputs},
+                candidate_output=result.output,
+            )
+        )
+        if not post_guardrail.allowed:
+            raise PermissionError("; ".join(post_guardrail.reasons) or "post-step guardrail blocked output")
+        services.evaluation.evaluate(
+            EvaluationRequest(
+                phase="step",
+                payload={"step_id": step_id, "status": result.status},
+            )
+        )
 
         if result.awaiting_review:
             history = list(state.get("step_history", []))
@@ -289,13 +312,13 @@ def compile_workflow(
                     attempt=attempt,
                 ).to_dict()
             )
-            events.append(
-                {
-                    "type": "review_requested",
+            events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+                event_type="review_requested",
+                payload={
                     "timestamp": utc_now(),
                     "step_id": step_id,
-                }
-            )
+                },
+            ))))
             return {
                 "step_outputs": step_outputs,
                 "named_outputs": named_outputs,
@@ -331,15 +354,17 @@ def compile_workflow(
                 metadata=dict(result.metadata),
             ).to_dict()
         )
-        events.append(
-            {
-                "type": "step_executed",
+        events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+            event_type="step_executed",
+            payload={
                 "timestamp": utc_now(),
                 "step_id": step_id,
                 "attempt": attempt,
                 "next_step": next_step,
-            }
-        )
+                "cognitive_service": services.cognitive.descriptor.implementation_id,
+                "memory_service": services.memory.descriptor.implementation_id,
+            },
+        ))))
 
         status = "running" if next_step else "completed"
         route = "write_memory" if step.memory.enabled and result.output is not None else "checkpoint"
@@ -383,7 +408,7 @@ def compile_workflow(
         if not content:
             content = json.dumps(outcome.get("output"), sort_keys=True)
 
-        record = memory_store.remember(
+        record = services.memory.remember(
             MemoryRecord.create(
                 namespace=step.memory.namespace or definition.memory_namespace,
                 memory_type=step.memory.memory_type,
@@ -399,14 +424,14 @@ def compile_workflow(
             history[-1]["memory_record_ids"] = list(history[-1].get("memory_record_ids", []))
             history[-1]["memory_record_ids"].append(record.record_id)
         events = list(state.get("events", []))
-        events.append(
-            {
-                "type": "memory_written",
+        events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+            event_type="memory_written",
+            payload={
                 "timestamp": utc_now(),
                 "step_id": step_id,
                 "record_id": record.record_id,
-            }
-        )
+            },
+        ))))
         outcome["memory_record_id"] = record.record_id
         outcome["route"] = "checkpoint"
         return {
@@ -418,15 +443,15 @@ def compile_workflow(
     def checkpoint_run(state: WorkflowGraphState) -> WorkflowGraphState:
         next_index = int(state.get("checkpoint_index", 0)) + 1
         events = list(state.get("events", []))
-        events.append(
-            {
-                "type": "checkpoint",
+        events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+            event_type="checkpoint",
+            payload={
                 "timestamp": utc_now(),
                 "checkpoint_index": next_index,
                 "status": state.get("status"),
                 "current_step": state.get("current_step"),
-            }
-        )
+            },
+        ))))
         return {"checkpoint_index": next_index, "events": events}
 
     def route_after_execute(state: WorkflowGraphState) -> str:
@@ -442,13 +467,15 @@ def compile_workflow(
     builder = StateGraph(WorkflowGraphState)
     builder.add_node("load_run_context", load_run_context)
     builder.add_node("retrieve_memory", retrieve_memory)
+    builder.add_node("prepare_context", prepare_context)
     builder.add_node("execute_step", execute_step)
     builder.add_node("write_memory", write_memory)
     builder.add_node("checkpoint_run", checkpoint_run)
 
     builder.add_edge(START, "load_run_context")
     builder.add_edge("load_run_context", "retrieve_memory")
-    builder.add_edge("retrieve_memory", "execute_step")
+    builder.add_edge("retrieve_memory", "prepare_context")
+    builder.add_edge("prepare_context", "execute_step")
     builder.add_conditional_edges(
         "execute_step",
         route_after_execute,
@@ -479,16 +506,21 @@ class WorkflowRunner:
         storage_root: str | Path | None = None,
         executors: dict[str, Executor] | None = None,
         model_callable: ModelCallable | None = None,
+        services: PlatformServiceBundle | None = None,
+        memory_service_type: str = "filesystem",
     ) -> None:
         self.definition = definition
         self.storage_root = Path(storage_root or Path.cwd() / ".workflow_memory")
-        self.memory_store = FilesystemMemoryStore(self.storage_root)
         self.run_store = WorkflowRunStore(self.storage_root)
+        self.services = services or build_platform_services(
+            storage_root=self.storage_root,
+            model_callable=model_callable,
+            memory_service_type=memory_service_type,
+        )
         self.graph = compile_workflow(
             definition,
-            memory_store=self.memory_store,
+            services=self.services,
             executors=executors,
-            model_callable=model_callable,
         )
 
     def _config(self, run_id: str) -> dict[str, Any]:
@@ -499,6 +531,11 @@ class WorkflowRunner:
                 "workflow_title": self.definition.title,
                 "run_id": run_id,
                 "memory_namespace": self.definition.memory_namespace,
+                "services": {
+                    "cognitive": self.services.cognitive.descriptor.implementation_id,
+                    "context": self.services.context.descriptor.implementation_id,
+                    "memory": self.services.memory.descriptor.implementation_id,
+                },
             },
             "tags": ["agentic_workflow", self.definition.workflow_id],
         }
@@ -540,6 +577,7 @@ class WorkflowRunner:
             retry_counts={},
             events=[],
             execution_outcome={},
+            active_context={},
             checkpoint_index=0,
             last_error=None,
         )
@@ -603,14 +641,23 @@ def start_workflow(
     storage_root: str | Path | None = None,
     executors: dict[str, Executor] | None = None,
     model_callable: ModelCallable | None = None,
+    services: PlatformServiceBundle | None = None,
+    memory_service_type: str = "filesystem",
 ) -> dict[str, Any]:
     """Load a workflow from disk and execute it."""
-    definition = load_workflow_definition(path)
+    service_bundle = services or build_platform_services(
+        storage_root=storage_root,
+        model_callable=model_callable,
+        memory_service_type=memory_service_type,
+    )
+    definition = service_bundle.workflow_definitions.load(path)
     runner = WorkflowRunner(
         definition,
         storage_root=storage_root,
         executors=executors,
         model_callable=model_callable,
+        services=service_bundle,
+        memory_service_type=memory_service_type,
     )
     return runner.start(input_payload, run_id=run_id)
 
@@ -623,17 +670,26 @@ def resume_workflow(
     notes: str | None = None,
     executors: dict[str, Executor] | None = None,
     model_callable: ModelCallable | None = None,
+    services: PlatformServiceBundle | None = None,
+    memory_service_type: str = "filesystem",
 ) -> dict[str, Any]:
     """Resume a persisted workflow run."""
     storage_path = Path(storage_root or Path.cwd() / ".workflow_memory")
     run_store = WorkflowRunStore(storage_path)
     state = run_store.load_state(run_id)
-    definition = load_workflow_definition(state["workflow_path"])
+    service_bundle = services or build_platform_services(
+        storage_root=storage_path,
+        model_callable=model_callable,
+        memory_service_type=memory_service_type,
+    )
+    definition = service_bundle.workflow_definitions.load(state["workflow_path"])
     runner = WorkflowRunner(
         definition,
         storage_root=storage_path,
         executors=executors,
         model_callable=model_callable,
+        services=service_bundle,
+        memory_service_type=memory_service_type,
     )
     return runner.resume(run_id, decision=decision, notes=notes)
 
