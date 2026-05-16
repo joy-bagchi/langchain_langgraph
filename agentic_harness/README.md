@@ -105,7 +105,7 @@ The harness now also supports a separate declarative workflow definition layer f
 Example:
 
 ```bash
-python -c "from agentic_harness import load_declarative_workflow_definition, build_dag_blueprint; definition = load_declarative_workflow_definition('workflows/sabr_research_pipeline.yaml'); blueprint = build_dag_blueprint(definition); print(blueprint.topological_order)"
+python -c "from agentic_harness import load_declarative_workflow_definition, build_dag_blueprint, compile_workflow_dag; definition = load_declarative_workflow_definition('workflows/sabr_research_pipeline.yaml'); blueprint = build_dag_blueprint(definition); compiled = compile_workflow_dag(definition); print(blueprint.topological_order); print(compiled.execution_stages)"
 ```
 
 These YAML workflows:
@@ -113,7 +113,22 @@ These YAML workflows:
 - define nodes declaratively
 - reference real agents or mock agents
 - declare dependencies with `depends_on`
-- validate as DAG-ready definitions before any runtime compiler exists
+- validate as DAG-ready definitions
+- compile into execution stages that the future `agentic_os` executor can schedule
+
+You can now execute a declarative DAG workflow directly:
+
+```bash
+python -m agentic_harness run-dag --workflow workflows/sabr_research_pipeline.yaml --query "What is an SABR model"
+```
+
+That example will pause at the `review_findings` human gate.
+
+If you want to auto-complete human gates for testing:
+
+```bash
+python -m agentic_harness run-dag --workflow workflows/sabr_research_pipeline.yaml --query "What is an SABR model" --auto-approve-gates
+```
 
 ## Built-in Tools
 

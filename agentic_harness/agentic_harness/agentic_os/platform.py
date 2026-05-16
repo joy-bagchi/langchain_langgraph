@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agentic_harness.agentic_os.context_service import DefaultContextService
+from agentic_harness.agentic_os.dag_compiler import DefaultDagCompiler
+from agentic_harness.agentic_os.dag_executor import DefaultDagExecutor
 from agentic_harness.agentic_os.evaluation_service import NullEvaluationService
 from agentic_harness.agentic_os.guardrail_service import PassthroughGuardrailService
 from agentic_harness.agentic_os.memory_service import (
@@ -31,6 +33,8 @@ class PlatformServiceBundle:
     agent_definitions: YamlAgentDefinitionService
     workflow_definitions: MarkdownWorkflowDefinitionService
     declarative_workflow_definitions: YamlDeclarativeWorkflowDefinitionService
+    dag_compiler: DefaultDagCompiler
+    dag_executor: DefaultDagExecutor
     cognitive: DefaultCognitiveService
     context: DefaultContextService
     memory: object
@@ -63,6 +67,8 @@ def build_platform_services(
         agent_definitions=YamlAgentDefinitionService(),
         workflow_definitions=MarkdownWorkflowDefinitionService(),
         declarative_workflow_definitions=YamlDeclarativeWorkflowDefinitionService(),
+        dag_compiler=DefaultDagCompiler(),
+        dag_executor=DefaultDagExecutor(),
         cognitive=DefaultCognitiveService(model_callable=model_callable),
         context=DefaultContextService(),
         memory=memory_service,

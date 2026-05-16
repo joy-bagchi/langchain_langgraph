@@ -12,12 +12,16 @@ if str(ROOT) not in sys.path:
 from agentic_harness.__main__ import _build_agent_input_payload, build_parser
 from agentic_harness import (
     AgentDefinition,
+    CompiledWorkflowDag,
     DeclarativeWorkflowDefinition,
+    DagWorkflowRunResult,
     EphemeralMemoryService,
     ToolExecutionRequest,
     WorkflowDagBlueprint,
+    DefaultDagCompiler,
     YamlDeclarativeWorkflowDefinitionService,
     build_dag_blueprint,
+    compile_workflow_dag,
     build_model_callable,
     build_platform_services,
     ContextManager,
@@ -30,6 +34,7 @@ from agentic_harness import (
     select_output,
     resolve_llm_config,
     render_template,
+    run_declarative_workflow,
     run_agent_workflow,
     resume_workflow,
     start_workflow,
@@ -579,6 +584,25 @@ def test_run_agent_parser_accepts_query_shortcut() -> None:
     assert args.output_mode == "response"
 
 
+def test_run_dag_parser_accepts_query_and_auto_approve() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run-dag",
+            "--workflow",
+            "workflows/sabr_research_pipeline.yaml",
+            "--query",
+            "What is an SABR model",
+            "--auto-approve-gates",
+        ]
+    )
+
+    assert args.command == "run-dag"
+    assert args.workflow == "workflows/sabr_research_pipeline.yaml"
+    assert args.query == "What is an SABR model"
+    assert args.auto_approve_gates is True
+
+
 def test_build_agent_input_payload_merges_query_shortcut(tmp_path: Path) -> None:
     payload_path = tmp_path / "input.json"
     payload_path.write_text(json.dumps({"topic": "quant finance"}), encoding="utf-8")
@@ -883,4 +907,180 @@ def test_platform_services_expose_declarative_workflow_loader(tmp_path: Path) ->
 
     assert isinstance(services.declarative_workflow_definitions, YamlDeclarativeWorkflowDefinitionService)
     assert definition.workflow_id == "quant_research_pipeline"
+
+
+def test_compile_workflow_dag_builds_execution_stages_and_resolved_modes(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    compiled = compile_workflow_dag(definition)
+
+    assert isinstance(compiled, CompiledWorkflowDag)
+    assert compiled.execution_stages == [
+        ["gather_research"],
+        ["extract_equations"],
+        ["review_output"],
+    ]
+    assert compiled.nodes["gather_research"].execution_mode == "real"
+    assert compiled.nodes["extract_equations"].execution_mode == "mock"
+    assert compiled.nodes["review_output"].dependencies == ["extract_equations"]
+    assert compiled.nodes["gather_research"].dependents == ["extract_equations"]
+
+
+def test_compile_workflow_dag_validates_input_binding_dependency_references(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "bad_pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    workflow_path.write_text(
+        f"""workflow_id: bad_pipeline
+nodes:
+  - id: gather_research
+    kind: agent
+    agent: {agent_path.name}
+    depends_on: []
+    execution_mode: real
+  - id: downstream
+    kind: mock_agent
+    depends_on: []
+    input_bindings:
+      search_results: "$node.gather_research.artifact"
+    execution_mode: mock
+    mock:
+      response: {{}}
+""",
+        encoding="utf-8",
+    )
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    try:
+        compile_workflow_dag(definition)
+    except ValueError as exc:
+        assert "not available from its upstream DAG state" in str(exc)
+    else:
+        raise AssertionError("Expected invalid node artifact reference to fail compilation.")
+
+
+def test_compile_workflow_dag_allows_transitive_upstream_artifact_references(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    compiled = compile_workflow_dag(definition)
+
+    assert compiled.nodes["review_output"].stage_index == 2
+    assert compiled.nodes["review_output"].input_bindings["packet"] == "$node.extract_equations.artifact"
+
+
+def test_platform_services_expose_dag_compiler(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+
+    services = build_platform_services(storage_root=tmp_path / "runtime_store")
+    definition = services.declarative_workflow_definitions.load(workflow_path)
+    compiled = services.dag_compiler.compile(definition)
+
+    assert isinstance(services.dag_compiler, DefaultDagCompiler)
+    assert compiled.execution_stages[0] == ["gather_research"]
+
+
+def test_run_declarative_workflow_executes_real_agent_mock_and_human_gate(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            return {
+                "query": query,
+                "results": [
+                    {"title": "SABR overview", "url": "https://example.com/sabr"},
+                    {"title": "SABR parameters", "url": "https://example.com/params"},
+                ][:max_results],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    result = run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+    )
+
+    assert result["status"] == "awaiting_human_gate"
+    assert result["node_results"]["gather_research"]["status"] == "completed"
+    assert result["node_results"]["extract_equations"]["status"] == "completed"
+    assert result["node_results"]["review_output"]["status"] == "awaiting_human_gate"
+    assert result["artifacts"]["gather_research"]["artifact_type"] == "search_results"
+    assert result["pending_human_gate"]["node_id"] == "review_output"
+    assert result["completed_stages"] == [0, 1]
+
+
+def test_run_declarative_workflow_auto_approves_human_gate_and_emits_leaf_artifact(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            return {
+                "query": query,
+                "results": [{"title": "SABR overview", "url": "https://example.com/sabr"}],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    result = run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        auto_approve_human_gates=True,
+    )
+
+    assert result["status"] == "completed"
+    assert result["completed_stages"] == [0, 1, 2]
+    assert result["leaf_artifacts"]["review_output"]["artifact_type"] == "review_packet"
+    artifact_view = select_output(result, output_mode="artifact")
+    assert artifact_view["artifact_type"] == "review_packet"
+
+
+def test_platform_services_expose_dag_executor(tmp_path: Path) -> None:
+    services = build_platform_services(storage_root=tmp_path / "runtime_store")
+    assert services.dag_executor.descriptor.service_name == "dag_executor"
 

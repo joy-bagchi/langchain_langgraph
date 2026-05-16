@@ -35,6 +35,26 @@ def _default_payload(result: dict[str, Any]) -> dict[str, Any]:
 
 def extract_artifact(result: dict[str, Any]) -> ArtifactEnvelope:
     """Convert internal run state into a public machine-readable artifact."""
+    pending_human_gate = dict(result.get("pending_human_gate") or {})
+    if pending_human_gate:
+        gate_artifact = pending_human_gate.get("artifact")
+        if isinstance(gate_artifact, dict) and "artifact_type" in gate_artifact:
+            return ArtifactEnvelope.from_dict(gate_artifact)
+
+    leaf_artifacts = dict(result.get("leaf_artifacts") or {})
+    if leaf_artifacts:
+        if len(leaf_artifacts) == 1:
+            only_artifact = next(iter(leaf_artifacts.values()))
+            if isinstance(only_artifact, dict) and "artifact_type" in only_artifact:
+                return ArtifactEnvelope.from_dict(only_artifact)
+        return ArtifactEnvelope(
+            artifact_type="workflow_artifacts",
+            version="1.0",
+            producer=_producer_from_result(result),
+            payload={"artifacts": leaf_artifacts},
+            metadata={"status": result.get("status")},
+        )
+
     named_outputs = dict(result.get("named_outputs", {}))
     artifact_type = "workflow_result"
     payload = _default_payload(result)

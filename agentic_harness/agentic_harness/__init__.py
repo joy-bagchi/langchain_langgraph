@@ -1,6 +1,13 @@
 """Memory-aware workflow runtime built on LangGraph."""
 
-from agentic_harness.agentic_os import PlatformServiceBundle, build_platform_services
+from agentic_harness.agentic_os import (
+    DefaultDagCompiler,
+    DefaultDagExecutor,
+    PlatformServiceBundle,
+    build_platform_services,
+    compile_workflow_dag,
+    run_declarative_workflow,
+)
 from agentic_harness.agentic_os.memory_service import (
     EphemeralMemoryService,
     FilesystemMemoryService,
@@ -16,6 +23,10 @@ from agentic_harness.cognitive.service import DefaultCognitiveService
 from agentic_harness.contracts import (
     AgentDefinition,
     ArtifactEnvelope,
+    CompiledDagNode,
+    CompiledWorkflowDag,
+    DagNodeExecutionRecord,
+    DagWorkflowRunResult,
     DeclarativeWorkflowDefinition,
     DeclarativeWorkflowNode,
     BranchRule,
@@ -68,7 +79,13 @@ __all__ = [
     "BranchRule",
     "ContextManager",
     "ContextSnapshot",
+    "DefaultDagCompiler",
+    "DefaultDagExecutor",
     "DefaultCognitiveService",
+    "CompiledDagNode",
+    "CompiledWorkflowDag",
+    "DagNodeExecutionRecord",
+    "DagWorkflowRunResult",
     "DeclarativeWorkflowDefinition",
     "DeclarativeWorkflowDefinitionService",
     "DeclarativeWorkflowNode",
@@ -101,6 +118,7 @@ __all__ = [
     "build_platform_services",
     "build_dag_blueprint",
     "compile_workflow",
+    "compile_workflow_dag",
     "extract_artifact",
     "format_response",
     "inspect_run",
@@ -112,6 +130,7 @@ __all__ = [
     "resolve_llm_config",
     "run_agent_workflow",
     "resume_workflow",
+    "run_declarative_workflow",
     "select_output",
     "start_workflow",
 ]

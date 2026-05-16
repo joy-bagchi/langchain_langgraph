@@ -9,6 +9,7 @@ from pathlib import Path
 from agentic_harness.llm import build_model_callable, resolve_llm_config
 from agentic_harness.markdown_workflow import load_workflow_definition
 from agentic_harness.outputs import select_output
+from agentic_harness.agentic_os import run_declarative_workflow
 from agentic_harness.runtime import inspect_run, resume_workflow, run_agent_workflow, start_workflow
 
 
@@ -19,6 +20,13 @@ def _load_json(path: str | None) -> dict:
 
 
 def _build_agent_input_payload(*, input_path: str | None, query: str | None) -> dict:
+    payload = _load_json(input_path)
+    if query:
+        payload["query"] = query
+    return payload
+
+
+def _build_generic_input_payload(*, input_path: str | None, query: str | None) -> dict:
     payload = _load_json(input_path)
     if query:
         payload["query"] = query
@@ -69,6 +77,19 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--run-id", help="Optional explicit run id.")
     agent_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
 
+    dag_parser = subparsers.add_parser("run-dag", help="Execute a declarative DAG workflow.")
+    _add_output_arguments(dag_parser)
+    dag_parser.add_argument("--workflow", required=True, help="Path to the declarative workflow YAML file.")
+    dag_parser.add_argument("--input", help="Path to a JSON file containing workflow input payload.")
+    dag_parser.add_argument("--query", help="Shortcut query string for workflows that expect a top-level query input.")
+    dag_parser.add_argument("--run-id", help="Optional explicit run id.")
+    dag_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    dag_parser.add_argument(
+        "--auto-approve-gates",
+        action="store_true",
+        help="Automatically complete human gate nodes instead of pausing.",
+    )
+
     resume_parser = subparsers.add_parser("resume", help="Resume a saved workflow run.")
     _add_output_arguments(resume_parser)
     resume_parser.add_argument("--run-id", required=True, help="Run id to resume.")
@@ -111,6 +132,14 @@ def main() -> None:
             _build_agent_input_payload(input_path=args.input, query=args.query),
             run_id=args.run_id,
             storage_root=args.storage_root,
+        )
+    elif args.command == "run-dag":
+        result = run_declarative_workflow(
+            args.workflow,
+            _build_generic_input_payload(input_path=args.input, query=args.query),
+            run_id=args.run_id,
+            storage_root=args.storage_root,
+            auto_approve_human_gates=args.auto_approve_gates,
         )
     elif args.command == "resume":
         run_state = inspect_run(args.run_id, storage_root=args.storage_root)

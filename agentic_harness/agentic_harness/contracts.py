@@ -165,6 +165,81 @@ class WorkflowDagBlueprint:
 
 
 @dataclass(slots=True)
+class CompiledDagNode:
+    """Executable node produced by the DAG compiler."""
+
+    node_id: str
+    kind: str
+    purpose: str
+    execution_mode: str
+    agent: str | None = None
+    dependencies: list[str] = field(default_factory=list)
+    dependents: list[str] = field(default_factory=list)
+    stage_index: int = 0
+    artifact_contract: str | None = None
+    input_bindings: dict[str, Any] = field(default_factory=dict)
+    mock_response: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class CompiledWorkflowDag:
+    """Compiled DAG execution plan ready for runtime scheduling."""
+
+    workflow_id: str
+    title: str
+    nodes: dict[str, CompiledDagNode]
+    roots: list[str]
+    leaves: list[str]
+    topological_order: list[str]
+    execution_stages: list[list[str]]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class DagNodeExecutionRecord:
+    """Internal execution ledger for a single DAG node run."""
+
+    node_id: str
+    kind: str
+    status: str
+    execution_mode: str
+    inputs: dict[str, Any] = field(default_factory=dict)
+    artifact: dict[str, Any] | None = None
+    child_run_id: str | None = None
+    error: str | None = None
+    started_at: str = field(default_factory=utc_now)
+    completed_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
+
+
+@dataclass(slots=True)
+class DagWorkflowRunResult:
+    """Internal run state produced by the DAG executor."""
+
+    run_id: str
+    workflow_id: str
+    workflow_title: str
+    workflow_path: str | None
+    status: str
+    input_payload: dict[str, Any]
+    node_results: dict[str, DagNodeExecutionRecord]
+    artifacts: dict[str, dict[str, Any]]
+    leaf_artifacts: dict[str, dict[str, Any]]
+    execution_stages: list[list[str]]
+    completed_stages: list[int] = field(default_factory=list)
+    pending_human_gate: dict[str, Any] | None = None
+    events: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
+
+
+@dataclass(slots=True)
 class AgentDefinition:
     """Declarative agent contract bound to a workflow and service policy."""
 
@@ -195,6 +270,16 @@ class ArtifactEnvelope:
     def to_dict(self) -> dict[str, Any]:
         return dataclass_dict(self)
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ArtifactEnvelope":
+        return cls(
+            artifact_type=str(payload["artifact_type"]),
+            version=str(payload.get("version", "1.0")),
+            producer=dict(payload.get("producer", {})),
+            payload=dict(payload.get("payload", {})),
+            metadata=dict(payload.get("metadata", {})),
+        )
+
 
 @dataclass(slots=True)
 class ResponseEnvelope:
@@ -207,6 +292,15 @@ class ResponseEnvelope:
 
     def to_dict(self) -> dict[str, Any]:
         return dataclass_dict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ResponseEnvelope":
+        return cls(
+            audience=str(payload.get("audience", "human")),
+            response_format=str(payload.get("response_format", "json")),
+            content=payload.get("content"),
+            metadata=dict(payload.get("metadata", {})),
+        )
 
 
 @dataclass(slots=True)
