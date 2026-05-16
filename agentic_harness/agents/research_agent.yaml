@@ -1,0 +1,9 @@
+agent_id: research_agent
+name: Research Agent
+role: research_agent
+workflow_path: ../examples/workflows/research_agent_search.md
+description: Generic research agent with access to web search.
+llm_provider: none
+memory_service_type: ephemeral
+allowed_tools:
+  - web_search

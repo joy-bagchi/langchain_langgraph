@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-harness"
+version = "0.1.0"
+description = "Layered agentic harness built on LangGraph."
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0", "langchain-openai>=0.3.0", "tavily-python>=0.5.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
