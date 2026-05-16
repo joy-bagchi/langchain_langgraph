@@ -18,7 +18,10 @@ from agentic_harness.agentic_os.security_service import PermissiveSecurityServic
 from agentic_harness.agentic_os.tool_service import RegisteredToolService
 from agentic_harness.cognitive.service import DefaultCognitiveService
 from agentic_harness.definitions.agent_service import YamlAgentDefinitionService
-from agentic_harness.definitions.workflow_service import MarkdownWorkflowDefinitionService
+from agentic_harness.definitions.workflow_service import (
+    MarkdownWorkflowDefinitionService,
+    YamlDeclarativeWorkflowDefinitionService,
+)
 
 
 @dataclass(slots=True)
@@ -27,6 +30,7 @@ class PlatformServiceBundle:
 
     agent_definitions: YamlAgentDefinitionService
     workflow_definitions: MarkdownWorkflowDefinitionService
+    declarative_workflow_definitions: YamlDeclarativeWorkflowDefinitionService
     cognitive: DefaultCognitiveService
     context: DefaultContextService
     memory: object
@@ -58,6 +62,7 @@ def build_platform_services(
     return PlatformServiceBundle(
         agent_definitions=YamlAgentDefinitionService(),
         workflow_definitions=MarkdownWorkflowDefinitionService(),
+        declarative_workflow_definitions=YamlDeclarativeWorkflowDefinitionService(),
         cognitive=DefaultCognitiveService(model_callable=model_callable),
         context=DefaultContextService(),
         memory=memory_service,

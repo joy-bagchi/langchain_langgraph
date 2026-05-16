@@ -1,0 +1,68 @@
+workflow_id: sabr_research_pipeline
+title: SABR Research Pipeline
+description: >
+  Declarative business workflow that will later compile into a DAG. It combines
+  a real research agent node with a mock math extraction node so the workflow can
+  be exercised safely before every downstream agent exists.
+entry_nodes:
+  - gather_web_research
+nodes:
+  - id: gather_web_research
+    kind: agent
+    purpose: Research SABR model information over the web.
+    agent: ../agents/research_agent.yaml
+    depends_on: []
+    input_bindings:
+      query: "$workflow.query"
+    artifact_contract: search_results@1.0
+    execution_mode: real
+    mock:
+      enabled: true
+      notes: Safe fallback for local testing when web search should not run.
+      response:
+        artifact_type: search_results
+        version: "1.0"
+        payload:
+          query: "What is an SABR model"
+          results:
+            - title: SABR model overview
+              url: https://example.com/sabr-overview
+              snippet: The SABR model is a stochastic volatility model used in derivatives pricing.
+
+  - id: extract_candidate_equations
+    kind: mock_agent
+    purpose: Extract candidate equations and parameters from research results.
+    depends_on:
+      - gather_web_research
+    input_bindings:
+      search_results: "$node.gather_web_research.artifact"
+    artifact_contract: math_equations@1.0
+    execution_mode: mock
+    mock:
+      enabled: true
+      notes: Placeholder until a real deep math research agent exists.
+      response:
+        artifact_type: math_equations
+        version: "1.0"
+        payload:
+          equations:
+            - name: SABR stochastic volatility dynamics
+              expression: d alpha_t = nu alpha_t dW_t^2
+            - name: SABR forward dynamics
+              expression: dF_t = alpha_t F_t^beta dW_t^1
+          parameters:
+            - alpha
+            - beta
+            - rho
+            - nu
+
+  - id: review_findings
+    kind: human_gate
+    purpose: Allow a human to review research and extracted equations before downstream use.
+    depends_on:
+      - extract_candidate_equations
+    input_bindings:
+      research_results: "$node.gather_web_research.artifact"
+      equations: "$node.extract_candidate_equations.artifact"
+    artifact_contract: review_packet@1.0
+    execution_mode: auto

@@ -12,12 +12,17 @@ if str(ROOT) not in sys.path:
 from agentic_harness.__main__ import _build_agent_input_payload, build_parser
 from agentic_harness import (
     AgentDefinition,
+    DeclarativeWorkflowDefinition,
     EphemeralMemoryService,
     ToolExecutionRequest,
+    WorkflowDagBlueprint,
+    YamlDeclarativeWorkflowDefinitionService,
+    build_dag_blueprint,
     build_model_callable,
     build_platform_services,
     ContextManager,
     DefaultCognitiveService,
+    load_declarative_workflow_definition,
     inspect_run,
     load_workflow_definition,
     extract_artifact,
@@ -193,6 +198,65 @@ llm_provider: none
 memory_service_type: ephemeral
 allowed_tools:
   - web_search
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_declarative_workflow(path: Path, agent_path: Path) -> None:
+    path.write_text(
+        f"""workflow_id: quant_research_pipeline
+title: Quant Research Pipeline
+description: Declarative workflow that will later compile into a DAG.
+entry_nodes:
+  - gather_research
+nodes:
+  - id: gather_research
+    kind: agent
+    purpose: Research over the web.
+    agent: {agent_path.name}
+    depends_on: []
+    input_bindings:
+      query: "$workflow.query"
+    artifact_contract: search_results@1.0
+    execution_mode: real
+    mock:
+      enabled: true
+      response:
+        artifact_type: search_results
+        version: "1.0"
+        payload:
+          results:
+            - title: Mock result
+              url: https://example.com/mock
+
+  - id: extract_equations
+    kind: mock_agent
+    purpose: Extract equations from search results.
+    depends_on:
+      - gather_research
+    input_bindings:
+      search_results: "$node.gather_research.artifact"
+    artifact_contract: math_equations@1.0
+    execution_mode: mock
+    mock:
+      enabled: true
+      response:
+        artifact_type: math_equations
+        version: "1.0"
+        payload:
+          equations:
+            - expression: dF_t = alpha_t F_t^beta dW_t^1
+
+  - id: review_output
+    kind: human_gate
+    purpose: Human validation gate.
+    depends_on:
+      - extract_equations
+    input_bindings:
+      packet: "$node.extract_equations.artifact"
+    artifact_contract: review_packet@1.0
+    execution_mode: auto
 """,
         encoding="utf-8",
     )
@@ -715,4 +779,108 @@ def test_select_output_hides_internal_state_for_artifact_and_response() -> None:
     assert artifact_view["artifact_type"] == "search_results"
     assert "events" not in response_view
     assert response_view["response_format"] == "json"
+
+
+def test_load_declarative_workflow_definition_parses_agent_and_mock_nodes(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    assert isinstance(definition, DeclarativeWorkflowDefinition)
+    assert definition.workflow_id == "quant_research_pipeline"
+    assert definition.entry_nodes == ["gather_research"]
+    assert definition.nodes["gather_research"].kind == "agent"
+    assert definition.nodes["extract_equations"].kind == "mock_agent"
+    assert definition.nodes["gather_research"].agent == str(agent_path.resolve())
+
+
+def test_build_dag_blueprint_returns_roots_leaves_and_topological_order(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    blueprint = build_dag_blueprint(definition)
+
+    assert isinstance(blueprint, WorkflowDagBlueprint)
+    assert blueprint.roots == ["gather_research"]
+    assert blueprint.leaves == ["review_output"]
+    assert blueprint.topological_order == [
+        "gather_research",
+        "extract_equations",
+        "review_output",
+    ]
+    assert blueprint.adjacency["gather_research"] == ["extract_equations"]
+
+
+def test_declarative_workflow_rejects_unknown_dependencies(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "pipeline.yaml"
+    workflow_path.write_text(
+        """workflow_id: bad_workflow
+nodes:
+  - id: orphan
+    kind: mock_agent
+    depends_on:
+      - missing_node
+    execution_mode: mock
+    mock:
+      response: {}
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        load_declarative_workflow_definition(workflow_path)
+    except ValueError as exc:
+        assert "depends on unknown node 'missing_node'" in str(exc)
+    else:
+        raise AssertionError("Expected unknown dependency validation to fail.")
+
+
+def test_declarative_workflow_rejects_cycles(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "cyclic.yaml"
+    workflow_path.write_text(
+        """workflow_id: cyclic_workflow
+nodes:
+  - id: a
+    kind: mock_agent
+    depends_on:
+      - b
+    execution_mode: mock
+    mock:
+      response: {}
+  - id: b
+    kind: mock_agent
+    depends_on:
+      - a
+    execution_mode: mock
+    mock:
+      response: {}
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        load_declarative_workflow_definition(workflow_path)
+    except ValueError as exc:
+        assert "contains a cycle" in str(exc)
+    else:
+        raise AssertionError("Expected cycle validation to fail.")
+
+
+def test_platform_services_expose_declarative_workflow_loader(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+
+    services = build_platform_services(storage_root=tmp_path / "runtime_store")
+    definition = services.declarative_workflow_definitions.load(workflow_path)
+
+    assert isinstance(services.declarative_workflow_definitions, YamlDeclarativeWorkflowDefinitionService)
+    assert definition.workflow_id == "quant_research_pipeline"
 

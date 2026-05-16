@@ -3,6 +3,7 @@
 Standalone LangGraph-based workflow runtime with:
 
 - structured Markdown workflow definitions
+- declarative YAML business workflow definitions for future DAG compilation
 - filesystem-backed durable memory
 - explicit context manager layer with deterministic compaction
 - resumable long-running workflow runs
@@ -96,6 +97,23 @@ python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "
 ```
 
 That `research_agent` is a first-class agent definition on top of `agentic_os`. Its bound workflow uses the built-in `web_search` tool for generic web search.
+
+## Declarative Workflow Definitions
+
+The harness now also supports a separate declarative workflow definition layer for business workflows that will later compile into DAGs.
+
+Example:
+
+```bash
+python -c "from agentic_harness import load_declarative_workflow_definition, build_dag_blueprint; definition = load_declarative_workflow_definition('workflows/sabr_research_pipeline.yaml'); blueprint = build_dag_blueprint(definition); print(blueprint.topological_order)"
+```
+
+These YAML workflows:
+
+- define nodes declaratively
+- reference real agents or mock agents
+- declare dependencies with `depends_on`
+- validate as DAG-ready definitions before any runtime compiler exists
 
 ## Built-in Tools
 

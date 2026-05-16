@@ -106,6 +106,65 @@ class WorkflowDefinition:
 
 
 @dataclass(slots=True)
+class MockDefinition:
+    """Mock execution contract for safe workflow testing."""
+
+    enabled: bool = True
+    response: dict[str, Any] = field(default_factory=dict)
+    notes: str = ""
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None) -> "MockDefinition":
+        data = payload or {}
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            response=dict(data.get("response", {})),
+            notes=str(data.get("notes", "")),
+        )
+
+
+@dataclass(slots=True)
+class DeclarativeWorkflowNode:
+    """Node in a declarative DAG-oriented workflow definition."""
+
+    node_id: str
+    kind: str
+    purpose: str = ""
+    agent: str | None = None
+    depends_on: list[str] = field(default_factory=list)
+    input_bindings: dict[str, Any] = field(default_factory=dict)
+    artifact_contract: str | None = None
+    execution_mode: str = "real"
+    mock: MockDefinition | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class DeclarativeWorkflowDefinition:
+    """Declarative business workflow targeted at future DAG compilation."""
+
+    workflow_id: str
+    title: str
+    nodes: dict[str, DeclarativeWorkflowNode]
+    entry_nodes: list[str]
+    description: str = ""
+    workflow_path: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class WorkflowDagBlueprint:
+    """Validated DAG blueprint derived from a declarative workflow."""
+
+    workflow_id: str
+    nodes: dict[str, DeclarativeWorkflowNode]
+    roots: list[str]
+    leaves: list[str]
+    topological_order: list[str]
+    adjacency: dict[str, list[str]]
+
+
+@dataclass(slots=True)
 class AgentDefinition:
     """Declarative agent contract bound to a workflow and service policy."""
 
