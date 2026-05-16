@@ -124,6 +124,33 @@ class AgentDefinition:
 
 
 @dataclass(slots=True)
+class ArtifactEnvelope:
+    """Public machine-readable output produced by an agent or workflow."""
+
+    artifact_type: str
+    version: str
+    producer: dict[str, Any]
+    payload: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
+
+
+@dataclass(slots=True)
+class ResponseEnvelope:
+    """Audience-aware presentation layer for callers."""
+
+    audience: str
+    response_format: str
+    content: Any
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
+
+
+@dataclass(slots=True)
 class StepExecutionResult:
     """Normalized result emitted by a step executor."""
 

@@ -71,6 +71,30 @@ CLI entrypoint:
 python -m agentic_harness run-agent --agent agents/research_agent.yaml --input examples/workflows/research_agent_input.json
 ```
 
+For quick ad hoc searches, you can skip the JSON file and pass the query directly:
+
+```bash
+python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "What is an SABR model"
+```
+
+If you want to hide internal harness state and only emit the public artifact:
+
+```bash
+python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "What is an SABR model" --output-mode artifact
+```
+
+If the caller is a human and you want a plain-text response instead of the full internal JSON:
+
+```bash
+python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "What is an SABR model" --output-mode response --audience human
+```
+
+If the caller is another agent and you want a machine-readable handoff:
+
+```bash
+python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "What is an SABR model" --output-mode response --audience agent
+```
+
 That `research_agent` is a first-class agent definition on top of `agentic_os`. Its bound workflow uses the built-in `web_search` tool for generic web search.
 
 ## Built-in Tools

@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from agentic_harness.__main__ import _build_agent_input_payload, build_parser
 from agentic_harness import (
     AgentDefinition,
     EphemeralMemoryService,
@@ -19,6 +20,9 @@ from agentic_harness import (
     DefaultCognitiveService,
     inspect_run,
     load_workflow_definition,
+    extract_artifact,
+    format_response,
+    select_output,
     resolve_llm_config,
     render_template,
     run_agent_workflow,
@@ -493,6 +497,37 @@ def test_web_search_tool_returns_unavailable_without_provider(tmp_path: Path, mo
     assert "reason" in response.metadata
 
 
+def test_run_agent_parser_accepts_query_shortcut() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run-agent",
+            "--agent",
+            "agents/research_agent.yaml",
+            "--query",
+            "What is an SABR model",
+        ]
+    )
+
+    assert args.command == "run-agent"
+    assert args.agent == "agents/research_agent.yaml"
+    assert args.query == "What is an SABR model"
+    assert args.output_mode == "response"
+
+
+def test_build_agent_input_payload_merges_query_shortcut(tmp_path: Path) -> None:
+    payload_path = tmp_path / "input.json"
+    payload_path.write_text(json.dumps({"topic": "quant finance"}), encoding="utf-8")
+
+    payload = _build_agent_input_payload(
+        input_path=str(payload_path),
+        query="What is an SABR model",
+    )
+
+    assert payload["topic"] == "quant finance"
+    assert payload["query"] == "What is an SABR model"
+
+
 def test_tool_step_executes_web_search_via_platform_tool_service(tmp_path: Path) -> None:
     workflow_path = tmp_path / "research_workflow.md"
     _write_research_workflow(workflow_path)
@@ -601,4 +636,83 @@ def test_run_agent_workflow_executes_research_agent_with_web_search(tmp_path: Pa
     assert result["agent"]["agent_id"] == "research_agent"
     assert result["agent"]["allowed_tools"] == ["web_search"]
     assert result["named_outputs"]["search_results"]["query"] == "generic web search"
+
+
+def test_extract_artifact_returns_search_results_contract() -> None:
+    result = {
+        "run_id": "run-123",
+        "workflow_id": "research_agent_search",
+        "status": "completed",
+        "agent_id": "research_agent",
+        "agent_name": "Research Agent",
+        "agent_role": "research_agent",
+        "named_outputs": {
+            "search_query": "What is an SABR model",
+            "search_results": {
+                "results": [
+                    {"title": "SABR overview", "url": "https://example.com/sabr"}
+                ]
+            },
+        },
+    }
+
+    artifact = extract_artifact(result)
+
+    assert artifact.artifact_type == "search_results"
+    assert artifact.payload["query"] == "What is an SABR model"
+    assert artifact.payload["results"][0]["title"] == "SABR overview"
+
+
+def test_format_response_returns_human_and_agent_views() -> None:
+    artifact = extract_artifact(
+        {
+            "run_id": "run-123",
+            "workflow_id": "research_agent_search",
+            "status": "completed",
+            "agent_id": "research_agent",
+            "agent_name": "Research Agent",
+            "agent_role": "research_agent",
+            "named_outputs": {
+                "search_query": "What is an SABR model",
+                "search_results": {
+                    "results": [
+                        {"title": "SABR overview", "url": "https://example.com/sabr"}
+                    ]
+                },
+            },
+        }
+    )
+
+    human_response = format_response(artifact, audience="human", response_format="auto")
+    agent_response = format_response(artifact, audience="agent", response_format="auto")
+
+    assert human_response.response_format == "text"
+    assert "Search results for: What is an SABR model" in human_response.content
+    assert agent_response.response_format == "json"
+    assert agent_response.content["artifact_type"] == "search_results"
+
+
+def test_select_output_hides_internal_state_for_artifact_and_response() -> None:
+    result = {
+        "run_id": "run-123",
+        "workflow_id": "research_agent_search",
+        "status": "completed",
+        "events": [{"event_type": "checkpoint"}],
+        "named_outputs": {
+            "search_query": "What is an SABR model",
+            "search_results": {
+                "results": [
+                    {"title": "SABR overview", "url": "https://example.com/sabr"}
+                ]
+            },
+        },
+    }
+
+    artifact_view = select_output(result, output_mode="artifact")
+    response_view = select_output(result, output_mode="response", audience="agent")
+
+    assert "events" not in artifact_view
+    assert artifact_view["artifact_type"] == "search_results"
+    assert "events" not in response_view
+    assert response_view["response_format"] == "json"
 

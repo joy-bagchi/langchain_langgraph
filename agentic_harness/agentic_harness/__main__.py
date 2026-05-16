@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agentic_harness.llm import build_model_callable, resolve_llm_config
 from agentic_harness.markdown_workflow import load_workflow_definition
+from agentic_harness.outputs import select_output
 from agentic_harness.runtime import inspect_run, resume_workflow, run_agent_workflow, start_workflow
 
 
@@ -17,12 +18,41 @@ def _load_json(path: str | None) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _build_agent_input_payload(*, input_path: str | None, query: str | None) -> dict:
+    payload = _load_json(input_path)
+    if query:
+        payload["query"] = query
+    return payload
+
+
+def _add_output_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--output-mode",
+        choices=["internal", "artifact", "response"],
+        default="response",
+        help="Choose whether to print internal run state, a public artifact, or an audience-formatted response.",
+    )
+    parser.add_argument(
+        "--audience",
+        choices=["human", "agent"],
+        default="human",
+        help="Audience hint used when output-mode is response.",
+    )
+    parser.add_argument(
+        "--response-format",
+        choices=["auto", "json", "text"],
+        default="auto",
+        help="Response format used when output-mode is response.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the CLI parser."""
     parser = argparse.ArgumentParser(description="Run structured markdown workflows.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Start a new workflow run.")
+    _add_output_arguments(run_parser)
     run_parser.add_argument("--workflow", required=True, help="Path to the workflow markdown file.")
     run_parser.add_argument("--input", help="Path to a JSON file containing input payload.")
     run_parser.add_argument("--run-id", help="Optional explicit run id.")
@@ -32,12 +62,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--temperature", type=float, help="Sampling temperature for prompt-step execution.")
 
     agent_parser = subparsers.add_parser("run-agent", help="Start a new agent-bound workflow run.")
+    _add_output_arguments(agent_parser)
     agent_parser.add_argument("--agent", required=True, help="Path to the agent YAML definition.")
     agent_parser.add_argument("--input", help="Path to a JSON file containing input payload.")
+    agent_parser.add_argument("--query", help="Shortcut query string for agents that expect a top-level query input.")
     agent_parser.add_argument("--run-id", help="Optional explicit run id.")
     agent_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
 
     resume_parser = subparsers.add_parser("resume", help="Resume a saved workflow run.")
+    _add_output_arguments(resume_parser)
     resume_parser.add_argument("--run-id", required=True, help="Run id to resume.")
     resume_parser.add_argument("--decision", choices=["approved", "rejected"], help="Review decision for a pending review step.")
     resume_parser.add_argument("--notes", help="Optional review notes.")
@@ -47,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("--temperature", type=float, help="Sampling temperature for prompt-step execution.")
 
     inspect_parser = subparsers.add_parser("inspect", help="Inspect a saved workflow run.")
+    _add_output_arguments(inspect_parser)
     inspect_parser.add_argument("--run-id", required=True, help="Run id to inspect.")
     inspect_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
     return parser
@@ -74,7 +108,7 @@ def main() -> None:
     elif args.command == "run-agent":
         result = run_agent_workflow(
             args.agent,
-            _load_json(args.input),
+            _build_agent_input_payload(input_path=args.input, query=args.query),
             run_id=args.run_id,
             storage_root=args.storage_root,
         )
@@ -97,7 +131,21 @@ def main() -> None:
     else:
         result = inspect_run(args.run_id, storage_root=args.storage_root)
 
-    print(json.dumps(result, indent=2, sort_keys=True))
+    output = select_output(
+        result,
+        output_mode=args.output_mode,
+        audience=args.audience,
+        response_format=args.response_format,
+    )
+    if (
+        args.output_mode == "response"
+        and isinstance(output, dict)
+        and output.get("response_format") == "text"
+        and isinstance(output.get("content"), str)
+    ):
+        print(output["content"])
+    else:
+        print(json.dumps(output, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -15,11 +15,13 @@ from agentic_harness.agentic_os.tool_service import (
 from agentic_harness.cognitive.service import DefaultCognitiveService
 from agentic_harness.contracts import (
     AgentDefinition,
+    ArtifactEnvelope,
     BranchRule,
     MemoryQuery,
     MemoryRecord,
     MemorySearchResult,
     MemoryWritePolicy,
+    ResponseEnvelope,
     StepExecutionResult,
     StepHistoryEntry,
     WorkflowDefinition,
@@ -35,6 +37,11 @@ from agentic_harness.markdown_workflow import (
     parse_workflow_markdown,
 )
 from agentic_harness.llm import LLMConfig, build_model_callable, resolve_llm_config
+from agentic_harness.outputs import (
+    extract_artifact,
+    format_response,
+    select_output,
+)
 from agentic_harness.runtime import (
     WorkflowRunner,
     compile_workflow,
@@ -47,6 +54,7 @@ from agentic_harness.stores import FilesystemMemoryStore, WorkflowRunStore
 
 __all__ = [
     "AgentDefinition",
+    "ArtifactEnvelope",
     "BranchRule",
     "ContextManager",
     "ContextSnapshot",
@@ -61,6 +69,7 @@ __all__ = [
     "MemoryWritePolicy",
     "PlatformServiceBundle",
     "RegisteredToolService",
+    "ResponseEnvelope",
     "StepExecutionResult",
     "StepHistoryEntry",
     "LLMConfig",
@@ -76,6 +85,8 @@ __all__ = [
     "build_model_callable",
     "build_platform_services",
     "compile_workflow",
+    "extract_artifact",
+    "format_response",
     "inspect_run",
     "load_workflow_definition",
     "parse_workflow_markdown",
@@ -83,6 +94,7 @@ __all__ = [
     "resolve_llm_config",
     "run_agent_workflow",
     "resume_workflow",
+    "select_output",
     "start_workflow",
 ]
 
