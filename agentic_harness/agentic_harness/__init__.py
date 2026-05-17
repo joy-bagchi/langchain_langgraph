@@ -13,6 +13,7 @@ from agentic_harness.agentic_os.memory_service import (
     EphemeralMemoryService,
     FilesystemMemoryService,
 )
+from agentic_harness.agentic_os.evaluation_service import BasicEvaluationService
 from agentic_harness.agentic_os.tool_service import (
     RegisteredToolService,
     TavilyWebSearchClient,
@@ -23,6 +24,8 @@ from agentic_harness.agentic_os.tool_service import (
 from agentic_harness.cognitive.service import DefaultCognitiveService
 from agentic_harness.contracts import (
     AgentDefinition,
+    AgentInvocation,
+    AgentRuntimeProfile,
     ArtifactEnvelope,
     CompiledDagNode,
     CompiledWorkflowDag,
@@ -31,7 +34,10 @@ from agentic_harness.contracts import (
     DeclarativeWorkflowDefinition,
     DeclarativeWorkflowNode,
     BranchRule,
+    CompactionDecision,
+    ContextPolicy,
     MemoryQuery,
+    MemoryLifecyclePolicy,
     MemoryRecord,
     MemorySearchResult,
     MemoryWritePolicy,
@@ -72,14 +78,19 @@ from agentic_harness.runtime import (
     resume_workflow,
     start_workflow,
 )
-from agentic_harness.stores import FilesystemMemoryStore, WorkflowRunStore
+from agentic_harness.stores import FilesystemMemoryStore, RuntimeLedger, WorkflowRunStore
 
 __all__ = [
     "AgentDefinition",
+    "AgentInvocation",
+    "AgentRuntimeProfile",
     "ArtifactEnvelope",
+    "BasicEvaluationService",
     "BranchRule",
+    "CompactionDecision",
     "ContextManager",
     "ContextSnapshot",
+    "ContextPolicy",
     "DefaultDagCompiler",
     "DefaultDagExecutor",
     "DefaultCognitiveService",
@@ -96,12 +107,14 @@ __all__ = [
     "YamlAgentDefinitionService",
     "YamlDeclarativeWorkflowDefinitionService",
     "MemoryQuery",
+    "MemoryLifecyclePolicy",
     "MemoryRecord",
     "MemorySearchResult",
     "MemoryWritePolicy",
     "PlatformServiceBundle",
     "RegisteredToolService",
     "ResponseEnvelope",
+    "RuntimeLedger",
     "StepExecutionResult",
     "StepHistoryEntry",
     "LLMConfig",
@@ -136,4 +149,3 @@ __all__ = [
     "select_output",
     "start_workflow",
 ]
-

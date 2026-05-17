@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from agentic_harness.context import ContextManager, ContextSnapshot
-from agentic_harness.contracts import WorkflowDefinition, WorkflowGraphState, WorkflowStep
+from agentic_harness.contracts import ContextPolicy, WorkflowDefinition, WorkflowGraphState, WorkflowStep
 from agentic_harness.shared.services import ServiceDescriptor
 
 
@@ -27,21 +27,20 @@ class ContextService(Protocol):
 class DefaultContextService:
     """Simple deterministic context-engineering service."""
 
-    def __init__(self, *, max_recent_history: int = 3, max_memory_hits: int = 3) -> None:
-        self.max_recent_history = max_recent_history
-        self.max_memory_hits = max_memory_hits
+    def __init__(self, *, default_policy: ContextPolicy | None = None) -> None:
+        self.default_policy = default_policy or ContextPolicy()
         self.descriptor = ServiceDescriptor(
             service_name="context",
             implementation_id="default_context_service",
             maturity="simple",
-            capabilities=["assembly", "deterministic_compaction"],
+            capabilities=["assembly", "deterministic_compaction", "token_budgeting"],
         )
 
     def assemble_context(self, request: ContextServiceRequest) -> ContextSnapshot:
+        policy = ContextPolicy(**dict(request.state.get("context_policy", {}))) if request.state.get("context_policy") else self.default_policy
         manager = ContextManager(
             workflow_definition=request.workflow_definition,
-            max_recent_history=self.max_recent_history,
-            max_memory_hits=self.max_memory_hits,
+            policy=policy,
         )
         return manager.build_context(request.step, request.state)
 

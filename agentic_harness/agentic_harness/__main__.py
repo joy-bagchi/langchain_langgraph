@@ -54,6 +54,13 @@ def _add_output_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_runtime_store_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--db-url",
+        help="Override the runtime ledger database URL. Defaults to AGENTIC_HARNESS_DB_URL or a local SQLite ledger under storage-root.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the CLI parser."""
     parser = argparse.ArgumentParser(description="Run structured markdown workflows.")
@@ -65,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--input", help="Path to a JSON file containing input payload.")
     run_parser.add_argument("--run-id", help="Optional explicit run id.")
     run_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    _add_runtime_store_arguments(run_parser)
     run_parser.add_argument("--llm-provider", choices=["none", "openai"], help="Prompt-step LLM provider.")
     run_parser.add_argument("--model", help="Model name for prompt-step execution.")
     run_parser.add_argument("--temperature", type=float, help="Sampling temperature for prompt-step execution.")
@@ -76,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--query", help="Shortcut query string for agents that expect a top-level query input.")
     agent_parser.add_argument("--run-id", help="Optional explicit run id.")
     agent_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    _add_runtime_store_arguments(agent_parser)
 
     dag_parser = subparsers.add_parser("run-dag", help="Execute a declarative DAG workflow.")
     _add_output_arguments(dag_parser)
@@ -84,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     dag_parser.add_argument("--query", help="Shortcut query string for workflows that expect a top-level query input.")
     dag_parser.add_argument("--run-id", help="Optional explicit run id.")
     dag_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    _add_runtime_store_arguments(dag_parser)
     dag_parser.add_argument(
         "--auto-approve-gates",
         action="store_true",
@@ -101,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dag_resume_parser.add_argument("--notes", help="Optional human gate review notes.")
     dag_resume_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    _add_runtime_store_arguments(dag_resume_parser)
     dag_resume_parser.add_argument(
         "--auto-approve-gates",
         action="store_true",
@@ -113,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("--decision", choices=["approved", "rejected"], help="Review decision for a pending review step.")
     resume_parser.add_argument("--notes", help="Optional review notes.")
     resume_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    _add_runtime_store_arguments(resume_parser)
     resume_parser.add_argument("--llm-provider", choices=["none", "openai"], help="Prompt-step LLM provider.")
     resume_parser.add_argument("--model", help="Model name for prompt-step execution.")
     resume_parser.add_argument("--temperature", type=float, help="Sampling temperature for prompt-step execution.")
@@ -121,6 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_output_arguments(inspect_parser)
     inspect_parser.add_argument("--run-id", required=True, help="Run id to inspect.")
     inspect_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    _add_runtime_store_arguments(inspect_parser)
     return parser
 
 
@@ -142,6 +155,7 @@ def main() -> None:
             run_id=args.run_id,
             storage_root=args.storage_root,
             model_callable=build_model_callable(llm_config),
+            database_url=args.db_url,
         )
     elif args.command == "run-agent":
         result = run_agent_workflow(
@@ -149,6 +163,7 @@ def main() -> None:
             _build_agent_input_payload(input_path=args.input, query=args.query),
             run_id=args.run_id,
             storage_root=args.storage_root,
+            database_url=args.db_url,
         )
     elif args.command == "run-dag":
         result = run_declarative_workflow(
@@ -157,6 +172,7 @@ def main() -> None:
             run_id=args.run_id,
             storage_root=args.storage_root,
             auto_approve_human_gates=args.auto_approve_gates,
+            database_url=args.db_url,
         )
     elif args.command == "resume-dag":
         result = resume_declarative_workflow(
@@ -165,6 +181,7 @@ def main() -> None:
             decision=args.decision,
             notes=args.notes,
             auto_approve_human_gates=args.auto_approve_gates,
+            database_url=args.db_url,
         )
     elif args.command == "resume":
         run_state = inspect_run(args.run_id, storage_root=args.storage_root)
@@ -181,6 +198,7 @@ def main() -> None:
             decision=args.decision,
             notes=args.notes,
             model_callable=build_model_callable(llm_config),
+            database_url=args.db_url,
         )
     else:
         result = inspect_run(args.run_id, storage_root=args.storage_root)

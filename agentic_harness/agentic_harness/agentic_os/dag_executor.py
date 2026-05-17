@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 from typing_extensions import Annotated, TypedDict
 
 from agentic_harness.agentic_os.dag_compiler import compile_workflow_dag
@@ -29,6 +30,10 @@ from agentic_harness.stores import WorkflowRunStore
 class _StageExecutionState(TypedDict):
     """Transient LangGraph state for one DAG execution stage."""
 
+    active_nodes: list[dict[str, Any]]
+    node_id: str
+    node: CompiledDagNode
+    inputs: dict[str, Any]
     records: Annotated[list[dict[str, Any]], operator.add]
 
 
@@ -67,9 +72,9 @@ def _build_node_inputs(
     }
 
 
-def _persist_dag_state(storage_root: str | Path | None, state: dict[str, Any]) -> None:
+def _persist_dag_state(storage_root: str | Path | None, state: dict[str, Any], *, services=None) -> None:
     storage_path = Path(storage_root or Path.cwd() / ".workflow_memory")
-    run_store = WorkflowRunStore(storage_path)
+    run_store = services.runtime_store if services is not None and hasattr(services, "runtime_store") else WorkflowRunStore(storage_path)
     run_store.save_state(state)
     run_store.save_manifest(
         state["run_id"],
@@ -241,30 +246,40 @@ def _execute_stage_with_langgraph(
 
     builder = StateGraph(_StageExecutionState)
 
-    for node_id, node, inputs in active_nodes:
-        def _worker(
-            state: _StageExecutionState,
-            *,
-            _node: CompiledDagNode = node,
-            _inputs: dict[str, Any] = inputs,
-        ) -> dict[str, list[dict[str, Any]]]:
-            record = _execute_single_dag_node(
-                _node,
-                inputs=_inputs,
-                resolved_run_id=resolved_run_id,
-                compiled=compiled,
-                storage_root=storage_root,
-                services=services,
-                auto_approve_human_gates=auto_approve_human_gates,
-            )
-            return {"records": [record.to_dict()]}
+    def dispatch(state: _StageExecutionState) -> dict[str, Any]:
+        return {}
 
-        builder.add_node(node_id, _worker)
-        builder.add_edge(START, node_id)
-        builder.add_edge(node_id, END)
+    def fan_out(state: _StageExecutionState) -> list[Send]:
+        return [Send("execute_node", item) for item in state["active_nodes"]]
+
+    def execute_node(state: _StageExecutionState) -> dict[str, list[dict[str, Any]]]:
+        record = _execute_single_dag_node(
+            state["node"],
+            inputs=state["inputs"],
+            resolved_run_id=resolved_run_id,
+            compiled=compiled,
+            storage_root=storage_root,
+            services=services,
+            auto_approve_human_gates=auto_approve_human_gates,
+        )
+        return {"records": [record.to_dict()]}
+
+    builder.add_node("dispatch", dispatch)
+    builder.add_node("execute_node", execute_node)
+    builder.add_edge(START, "dispatch")
+    builder.add_conditional_edges("dispatch", fan_out, ["execute_node"])
+    builder.add_edge("execute_node", END)
 
     graph = builder.compile()
-    final_state = graph.invoke({"records": []})
+    final_state = graph.invoke(
+        {
+            "active_nodes": [
+                {"node_id": node_id, "node": node, "inputs": inputs}
+                for node_id, node, inputs in active_nodes
+            ],
+            "records": [],
+        }
+    )
     records = final_state.get("records", [])
     return {
         record["node_id"]: DagNodeExecutionRecord(**record)
@@ -348,7 +363,7 @@ class DefaultDagExecutor:
             events=events,
             executor_id=self.descriptor.implementation_id,
         )
-        _persist_dag_state(storage_root, result)
+        _persist_dag_state(storage_root, result, services=services)
         return result
 
     def _execute_from_stage(
@@ -523,7 +538,7 @@ class DefaultDagExecutor:
         auto_approve_human_gates: bool = False,
     ) -> dict[str, Any]:
         storage_path = Path(storage_root or Path.cwd() / ".workflow_memory")
-        run_store = WorkflowRunStore(storage_path)
+        run_store = services.runtime_store if hasattr(services, "runtime_store") else WorkflowRunStore(storage_path)
         state = run_store.load_state(run_id)
         definition = services.declarative_workflow_definitions.load(state["workflow_path"])
         compiled = services.dag_compiler.compile(definition)
@@ -576,7 +591,7 @@ class DefaultDagExecutor:
                 events=events,
                 executor_id=self.descriptor.implementation_id,
             )
-            _persist_dag_state(storage_path, result)
+            _persist_dag_state(storage_path, result, services=services)
             return result
 
         gate_record["status"] = "completed"
@@ -625,7 +640,7 @@ class DefaultDagExecutor:
             events=events,
             executor_id=self.descriptor.implementation_id,
         )
-        _persist_dag_state(storage_path, result)
+        _persist_dag_state(storage_path, result, services=services)
         return result
 
 
@@ -637,11 +652,12 @@ def run_declarative_workflow(
     run_id: str | None = None,
     services=None,
     auto_approve_human_gates: bool = False,
+    database_url: str | None = None,
 ) -> dict[str, Any]:
     """Load, compile, and execute a declarative workflow through the DAG executor."""
     from agentic_harness.agentic_os.platform import build_platform_services
 
-    service_bundle = services or build_platform_services(storage_root=storage_root)
+    service_bundle = services or build_platform_services(storage_root=storage_root, database_url=database_url)
     definition = service_bundle.declarative_workflow_definitions.load(workflow_path)
     return service_bundle.dag_executor.execute_definition(
         definition,
@@ -661,11 +677,12 @@ def resume_declarative_workflow(
     decision: str = "approved",
     notes: str | None = None,
     auto_approve_human_gates: bool = False,
+    database_url: str | None = None,
 ) -> dict[str, Any]:
     """Resume a declarative workflow run that is waiting on a human gate."""
     from agentic_harness.agentic_os.platform import build_platform_services
 
-    service_bundle = services or build_platform_services(storage_root=storage_root)
+    service_bundle = services or build_platform_services(storage_root=storage_root, database_url=database_url)
     return service_bundle.dag_executor.resume(
         run_id,
         services=service_bundle,

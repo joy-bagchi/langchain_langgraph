@@ -1,0 +1,225 @@
+{
+  "active_context": {
+    "compacted_history": "",
+    "context_brief": "Workflow: Onboarding Workflow Step: standard_path",
+    "current_task": "Standard handling for {outputs.request}.\nPrior memory:\n{memory_summary}",
+    "memory_summary": "",
+    "raw_memory_hits": [],
+    "recent_history": [
+      {
+        "attempt": 1,
+        "memory_record_ids": [],
+        "metadata": {},
+        "next_step": "classify_request",
+        "output": "normal request",
+        "status": "succeeded",
+        "step_id": "capture_request",
+        "timestamp": "2026-05-17T05:41:47.254293+00:00"
+      },
+      {
+        "attempt": 1,
+        "memory_record_ids": [
+          "2fe0e636-5eec-4b92-8bb8-2187759ddc6a"
+        ],
+        "metadata": {
+          "mode": "deterministic"
+        },
+        "next_step": "standard_path",
+        "output": "Classify the request type for: normal request",
+        "status": "succeeded",
+        "step_id": "classify_request",
+        "timestamp": "2026-05-17T05:41:47.261796+00:00"
+      }
+    ],
+    "step_id": "standard_path",
+    "working_notes": ""
+  },
+  "agent_id": null,
+  "agent_name": null,
+  "agent_role": null,
+  "allowed_tools": [],
+  "checkpoint_index": 3,
+  "current_step": null,
+  "events": [
+    {
+      "run_id": "31f5293e-16f6-451e-ae91-0a6d2e4f4ab7",
+      "timestamp": "2026-05-17T05:41:47.248913+00:00",
+      "type": "run_started",
+      "workflow_id": "onboarding_workflow"
+    },
+    {
+      "match_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.250750+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "memory_hit_count": 0,
+      "recent_history_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.252433+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "memory_service": "ephemeral_memory_service",
+      "next_step": "classify_request",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.254310+00:00",
+      "type": "step_executed"
+    },
+    {
+      "checkpoint_index": 1,
+      "current_step": "classify_request",
+      "status": "running",
+      "timestamp": "2026-05-17T05:41:47.256135+00:00",
+      "type": "checkpoint"
+    },
+    {
+      "match_count": 0,
+      "step_id": "classify_request",
+      "timestamp": "2026-05-17T05:41:47.258224+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "memory_hit_count": 0,
+      "recent_history_count": 1,
+      "step_id": "classify_request",
+      "timestamp": "2026-05-17T05:41:47.260019+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "memory_service": "ephemeral_memory_service",
+      "next_step": "standard_path",
+      "step_id": "classify_request",
+      "timestamp": "2026-05-17T05:41:47.261812+00:00",
+      "type": "step_executed"
+    },
+    {
+      "record_id": "2fe0e636-5eec-4b92-8bb8-2187759ddc6a",
+      "step_id": "classify_request",
+      "timestamp": "2026-05-17T05:41:47.265050+00:00",
+      "type": "memory_written"
+    },
+    {
+      "checkpoint_index": 2,
+      "current_step": "standard_path",
+      "status": "running",
+      "timestamp": "2026-05-17T05:41:47.266817+00:00",
+      "type": "checkpoint"
+    },
+    {
+      "match_count": 0,
+      "step_id": "standard_path",
+      "timestamp": "2026-05-17T05:41:47.268911+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "memory_hit_count": 0,
+      "recent_history_count": 2,
+      "step_id": "standard_path",
+      "timestamp": "2026-05-17T05:41:47.270700+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "memory_service": "ephemeral_memory_service",
+      "next_step": null,
+      "step_id": "standard_path",
+      "timestamp": "2026-05-17T05:41:47.272458+00:00",
+      "type": "step_executed"
+    },
+    {
+      "record_id": "8df69945-be31-4490-9464-fad51b5f19ed",
+      "step_id": "standard_path",
+      "timestamp": "2026-05-17T05:41:47.274373+00:00",
+      "type": "memory_written"
+    },
+    {
+      "checkpoint_index": 3,
+      "current_step": null,
+      "status": "completed",
+      "timestamp": "2026-05-17T05:41:47.276070+00:00",
+      "type": "checkpoint"
+    }
+  ],
+  "execution_outcome": {
+    "completed_step_id": "standard_path",
+    "memory_content": null,
+    "memory_record_id": "8df69945-be31-4490-9464-fad51b5f19ed",
+    "next_step": null,
+    "output": "Standard handling for normal request.\nPrior memory:\n",
+    "route": "checkpoint"
+  },
+  "input_payload": {
+    "topic": "normal request"
+  },
+  "last_error": null,
+  "memory_hits": [],
+  "named_outputs": {
+    "classification": "Classify the request type for: normal request",
+    "request": "normal request",
+    "summary": "Standard handling for normal request.\nPrior memory:\n"
+  },
+  "pending_review": null,
+  "retry_counts": {},
+  "review_responses": {},
+  "run_id": "31f5293e-16f6-451e-ae91-0a6d2e4f4ab7",
+  "status": "completed",
+  "step_history": [
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {},
+      "next_step": "classify_request",
+      "output": "normal request",
+      "status": "succeeded",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.254293+00:00"
+    },
+    {
+      "attempt": 1,
+      "memory_record_ids": [
+        "2fe0e636-5eec-4b92-8bb8-2187759ddc6a"
+      ],
+      "metadata": {
+        "mode": "deterministic"
+      },
+      "next_step": "standard_path",
+      "output": "Classify the request type for: normal request",
+      "status": "succeeded",
+      "step_id": "classify_request",
+      "timestamp": "2026-05-17T05:41:47.261796+00:00"
+    },
+    {
+      "attempt": 1,
+      "memory_record_ids": [
+        "8df69945-be31-4490-9464-fad51b5f19ed"
+      ],
+      "metadata": {
+        "mode": "deterministic"
+      },
+      "next_step": null,
+      "output": "Standard handling for normal request.\nPrior memory:\n",
+      "status": "succeeded",
+      "step_id": "standard_path",
+      "timestamp": "2026-05-17T05:41:47.272443+00:00"
+    }
+  ],
+  "step_outputs": {
+    "capture_request": "normal request",
+    "classify_request": "Classify the request type for: normal request",
+    "standard_path": "Standard handling for normal request.\nPrior memory:\n"
+  },
+  "workflow_id": "onboarding_workflow",
+  "workflow_path": "C:\\Users\\joyba\\AppData\\Local\\Temp\\pytest-of-joyba\\pytest-27\\test_platform_service_bundle_s0\\workflow.md",
+  "workflow_title": "Onboarding Workflow",
+  "working_notes": []
+}

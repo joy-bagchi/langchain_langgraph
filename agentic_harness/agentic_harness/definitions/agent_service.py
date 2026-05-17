@@ -45,6 +45,7 @@ class YamlAgentDefinitionService:
             model=payload.get("model"),
             temperature=float(payload.get("temperature", 0.0)),
             memory_service_type=str(payload.get("memory_service_type", "filesystem")),
+            runtime_profile=str(payload.get("runtime_profile", "default")),
             allowed_tools=list(payload.get("allowed_tools", [])),
             memory_namespace=payload.get("memory_namespace"),
             metadata={
@@ -61,6 +62,7 @@ class YamlAgentDefinitionService:
                     "model",
                     "temperature",
                     "memory_service_type",
+                    "runtime_profile",
                     "allowed_tools",
                     "memory_namespace",
                 }

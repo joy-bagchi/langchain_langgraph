@@ -1,0 +1,88 @@
+{
+  "active_context": {
+    "compacted_history": "",
+    "context_brief": "Workflow: Onboarding Workflow Step: capture_request",
+    "current_task": "{input.topic}",
+    "memory_summary": "",
+    "raw_memory_hits": [],
+    "recent_history": [],
+    "step_id": "capture_request",
+    "working_notes": ""
+  },
+  "agent_id": null,
+  "agent_name": null,
+  "agent_role": null,
+  "allowed_tools": [],
+  "checkpoint_index": 0,
+  "current_step": "classify_request",
+  "events": [
+    {
+      "run_id": "31f5293e-16f6-451e-ae91-0a6d2e4f4ab7",
+      "timestamp": "2026-05-17T05:41:47.248913+00:00",
+      "type": "run_started",
+      "workflow_id": "onboarding_workflow"
+    },
+    {
+      "match_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.250750+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "memory_hit_count": 0,
+      "recent_history_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.252433+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "memory_service": "ephemeral_memory_service",
+      "next_step": "classify_request",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.254310+00:00",
+      "type": "step_executed"
+    }
+  ],
+  "execution_outcome": {
+    "completed_step_id": "capture_request",
+    "memory_content": null,
+    "next_step": "classify_request",
+    "output": "normal request",
+    "route": "checkpoint"
+  },
+  "input_payload": {
+    "topic": "normal request"
+  },
+  "last_error": null,
+  "memory_hits": [],
+  "named_outputs": {
+    "request": "normal request"
+  },
+  "pending_review": null,
+  "retry_counts": {},
+  "review_responses": {},
+  "run_id": "31f5293e-16f6-451e-ae91-0a6d2e4f4ab7",
+  "status": "running",
+  "step_history": [
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {},
+      "next_step": "classify_request",
+      "output": "normal request",
+      "status": "succeeded",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T05:41:47.254293+00:00"
+    }
+  ],
+  "step_outputs": {
+    "capture_request": "normal request"
+  },
+  "workflow_id": "onboarding_workflow",
+  "workflow_path": "C:\\Users\\joyba\\AppData\\Local\\Temp\\pytest-of-joyba\\pytest-27\\test_platform_service_bundle_s0\\workflow.md",
+  "workflow_title": "Onboarding Workflow",
+  "working_notes": []
+}

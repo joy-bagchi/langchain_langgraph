@@ -4,7 +4,8 @@ Standalone LangGraph-based workflow runtime with:
 
 - structured Markdown workflow definitions
 - declarative YAML business workflow definitions for future DAG compilation
-- filesystem-backed durable memory
+- database-backed runtime ledger for runs, checkpoints, events, artifacts, and memory
+- compatibility JSON mirrors under `.workflow_memory/` for local inspection
 - explicit context manager layer with deterministic compaction
 - resumable long-running workflow runs
 - CLI execution and inspection
@@ -41,6 +42,16 @@ Configuration sources, in priority order:
 
 If no provider is enabled, the runtime stays in no-LLM mode.
 
+## Runtime Ledger
+
+The harness now persists runtime state to a database ledger by default.
+
+- default local backend: SQLite at `.workflow_memory/runtime_ledger.db`
+- production override: set `AGENTIC_HARNESS_DB_URL` to a Postgres URL
+- optional CLI override: pass `--db-url`
+
+The JSON files under `.workflow_memory/` are still written as compatibility/debug mirrors, but the database ledger is the authoritative runtime store.
+
 ## Run an agent bound to a workflow
 
 You can define an agent separately in YAML and bind it to a workflow:
@@ -76,6 +87,12 @@ For quick ad hoc searches, you can skip the JSON file and pass the query directl
 
 ```bash
 python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "What is an SABR model"
+```
+
+To force a specific runtime ledger:
+
+```bash
+python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "What is an SABR model" --db-url "sqlite:///C:/tmp/agentic_runtime.db"
 ```
 
 If you want to hide internal harness state and only emit the public artifact:
@@ -160,6 +177,7 @@ The bundled `research_agent` example is configured with:
 
 - `allowed_tools: [web_search]`
 - `memory_service_type: ephemeral`
+- `runtime_profile: default`
 - a workflow that captures `query` input and executes a `tool` step through the toolbox service
 
 ## Context Layer
@@ -171,6 +189,13 @@ Prompt steps now run through an explicit context manager layer before execution.
 - recent step history window
 - working notes
 - a short `context_brief`
+
+The OS now also applies rule-based context budgeting:
+
+- runtime profiles provide default context and memory policies
+- the context service estimates token load heuristically
+- memory hits and recent history are compacted when the token budget is exceeded
+- compaction decisions are recorded in runtime state for inspection
 
 Templates can reference:
 

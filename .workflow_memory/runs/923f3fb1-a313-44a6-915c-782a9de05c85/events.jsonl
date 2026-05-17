@@ -1,0 +1,9 @@
+{"run_id": "923f3fb1-a313-44a6-915c-782a9de05c85", "timestamp": "2026-05-17T05:41:47.427816+00:00", "type": "run_started", "workflow_id": "research_agent_workflow"}
+{"match_count": 0, "step_id": "capture_query", "timestamp": "2026-05-17T05:41:47.429602+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 0, "step_id": "capture_query", "timestamp": "2026-05-17T05:41:47.431320+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "ephemeral_memory_service", "next_step": "run_web_search", "step_id": "capture_query", "timestamp": "2026-05-17T05:41:47.432954+00:00", "type": "step_executed"}
+{"checkpoint_index": 1, "current_step": "run_web_search", "status": "running", "timestamp": "2026-05-17T05:41:47.434673+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "run_web_search", "timestamp": "2026-05-17T05:41:47.436545+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 1, "step_id": "run_web_search", "timestamp": "2026-05-17T05:41:47.438317+00:00", "type": "context_prepared"}
+{"attempt": 1, "error": "Agent is not allowed to use tool 'web_search'.", "step_id": "run_web_search", "timestamp": "2026-05-17T05:41:47.440381+00:00", "type": "step_error"}
+{"checkpoint_index": 2, "current_step": null, "status": "failed", "timestamp": "2026-05-17T05:41:47.442222+00:00", "type": "checkpoint"}

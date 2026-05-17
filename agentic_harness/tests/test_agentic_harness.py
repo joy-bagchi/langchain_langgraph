@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -139,7 +140,7 @@ Finalize the incident workflow for {outputs.request}.
     )
 
 
-def _write_agent(path: Path, workflow_path: Path) -> None:
+def _write_agent(path: Path, workflow_path: Path, *, runtime_profile: str = "default") -> None:
     path.write_text(
         f"""agent_id: onboarding_agent
 name: Onboarding Agent
@@ -147,6 +148,7 @@ role: onboarding_specialist
 workflow_path: {workflow_path.as_posix()}
 llm_provider: none
 memory_service_type: ephemeral
+runtime_profile: {runtime_profile}
 allowed_tools: []
 """,
         encoding="utf-8",
@@ -355,6 +357,39 @@ def test_start_workflow_completes_and_persists_memory(tmp_path: Path) -> None:
     assert memory_index[0]["namespace"] == "onboarding_memory"
 
 
+def test_runtime_ledger_persists_runs_checkpoints_and_events(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+    )
+
+    ledger_path = storage_root / "runtime_ledger.db"
+    assert ledger_path.exists()
+
+    connection = sqlite3.connect(ledger_path)
+    try:
+        run_count = connection.execute("SELECT COUNT(*) FROM runs WHERE run_id = ?", (result["run_id"],)).fetchone()[0]
+        checkpoint_count = connection.execute(
+            "SELECT COUNT(*) FROM checkpoints WHERE run_id = ?",
+            (result["run_id"],),
+        ).fetchone()[0]
+        event_count = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE run_id = ?",
+            (result["run_id"],),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert run_count == 1
+    assert checkpoint_count >= 1
+    assert event_count >= 1
+
+
 def test_resume_workflow_after_review(tmp_path: Path) -> None:
     workflow_path = tmp_path / "workflow.md"
     storage_root = tmp_path / "runtime_store"
@@ -559,6 +594,35 @@ def test_run_agent_workflow_loads_agent_and_executes_bound_workflow(tmp_path: Pa
     assert result["agent"]["agent_id"] == "onboarding_agent"
     assert result["agent_role"] == "onboarding_specialist"
     assert result["named_outputs"]["summary"]
+
+
+def test_run_agent_workflow_persists_agent_invocation_runtime_profile(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    agent_path = tmp_path / "agent.yaml"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+    _write_agent(agent_path, workflow_path, runtime_profile="durable_research")
+
+    result = run_agent_workflow(
+        agent_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+    )
+
+    ledger_path = storage_root / "runtime_ledger.db"
+    connection = sqlite3.connect(ledger_path)
+    try:
+        row = connection.execute(
+            "SELECT agent_id, status, runtime_profile FROM agent_invocations WHERE run_id = ?",
+            (result["run_id"],),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert row is not None
+    assert row[0] == "onboarding_agent"
+    assert row[1] == "completed"
+    assert row[2] == "durable_research"
 
 
 def test_default_toolbox_registers_web_search_tool() -> None:

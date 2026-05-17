@@ -252,9 +252,92 @@ class AgentDefinition:
     model: str | None = None
     temperature: float = 0.0
     memory_service_type: str = "filesystem"
+    runtime_profile: str = "default"
     allowed_tools: list[str] = field(default_factory=list)
     memory_namespace: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ContextPolicy:
+    """Rule-based policy that bounds assembled execution context."""
+
+    max_recent_history: int = 3
+    max_memory_hits: int = 3
+    max_working_notes_chars: int = 500
+    token_budget: int = 1200
+    compaction_strategy: str = "deterministic"
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
+
+
+@dataclass(slots=True)
+class MemoryLifecyclePolicy:
+    """Rule-based memory lifecycle policy owned by the OS."""
+
+    namespace_strategy: str = "agent_or_workflow"
+    max_ephemeral_records: int = 100
+    max_durable_records: int = 5000
+    consolidation_strategy: str = "merge_duplicates"
+    suspend_on_idle: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
+
+
+@dataclass(slots=True)
+class AgentRuntimeProfile:
+    """Named runtime defaults applied by the OS to agent invocations."""
+
+    profile_id: str = "default"
+    context_policy: ContextPolicy = field(default_factory=ContextPolicy)
+    memory_policy: MemoryLifecyclePolicy = field(default_factory=MemoryLifecyclePolicy)
+    suspension_threshold_seconds: int = 300
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "context_policy": self.context_policy.to_dict(),
+            "memory_policy": self.memory_policy.to_dict(),
+            "suspension_threshold_seconds": self.suspension_threshold_seconds,
+        }
+
+
+@dataclass(slots=True)
+class CompactionDecision:
+    """OS decision record describing how context was compacted."""
+
+    triggered: bool = False
+    reason: str = ""
+    estimated_tokens_before: int = 0
+    estimated_tokens_after: int = 0
+    trimmed_history_items: int = 0
+    trimmed_memory_items: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
+
+
+@dataclass(slots=True)
+class AgentInvocation:
+    """Durable invocation record for a running or resumable agent."""
+
+    invocation_id: str
+    run_id: str
+    agent_id: str
+    workflow_id: str
+    status: str
+    runtime_profile: str = "default"
+    parent_run_id: str | None = None
+    lease_owner: str | None = None
+    lease_expires_at: str | None = None
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclass_dict(self)
 
 
 @dataclass(slots=True)
@@ -430,6 +513,8 @@ class WorkflowGraphState(TypedDict, total=False):
     agent_id: str | None
     agent_name: str | None
     agent_role: str | None
+    invocation_id: str | None
+    runtime_profile: str | None
     allowed_tools: list[str]
     workflow_id: str
     workflow_title: str
@@ -448,5 +533,8 @@ class WorkflowGraphState(TypedDict, total=False):
     events: list[dict[str, Any]]
     execution_outcome: dict[str, Any]
     active_context: dict[str, Any]
+    context_policy: dict[str, Any]
+    memory_policy: dict[str, Any]
+    compaction_decision: dict[str, Any] | None
     checkpoint_index: int
     last_error: str | None

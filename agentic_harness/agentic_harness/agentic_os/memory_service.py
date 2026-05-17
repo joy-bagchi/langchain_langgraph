@@ -17,6 +17,7 @@ class MemoryServiceSelection:
 
     service_type: str = "filesystem"
     storage_root: str | Path | None = None
+    database_url: str | None = None
 
 
 class MemoryService(Protocol):
@@ -30,15 +31,15 @@ class MemoryService(Protocol):
 
 
 class FilesystemMemoryService:
-    """Filesystem-backed durable memory implementation."""
+    """Durable memory implementation backed by the runtime ledger."""
 
-    def __init__(self, root: str | Path) -> None:
-        self.store = FilesystemMemoryStore(root)
+    def __init__(self, root: str | Path, *, database_url: str | None = None) -> None:
+        self.store = FilesystemMemoryStore(root, database_url=database_url)
         self.descriptor = ServiceDescriptor(
             service_name="memory",
-            implementation_id="filesystem_memory_service",
+            implementation_id="database_memory_service",
             maturity="simple",
-            capabilities=["durable_memory", "namespace_recall"],
+            capabilities=["durable_memory", "namespace_recall", "runtime_ledger_backed"],
         )
 
     def remember(self, record: MemoryRecord) -> MemoryRecord:

@@ -1,0 +1,122 @@
+{
+  "active_context": {
+    "compacted_history": "",
+    "compaction_decision": {
+      "estimated_tokens_after": 0,
+      "estimated_tokens_before": 0,
+      "reason": "",
+      "triggered": false,
+      "trimmed_history_items": 0,
+      "trimmed_memory_items": 0
+    },
+    "context_brief": "Workflow: Research Brief Workflow Step: capture_request",
+    "current_task": "{input.topic}",
+    "estimated_tokens": 3,
+    "memory_summary": "",
+    "raw_memory_hits": [],
+    "recent_history": [],
+    "step_id": "capture_request",
+    "token_budget": 1200,
+    "working_notes": ""
+  },
+  "agent_id": null,
+  "agent_name": null,
+  "agent_role": null,
+  "allowed_tools": [],
+  "checkpoint_index": 0,
+  "compaction_decision": {
+    "estimated_tokens_after": 0,
+    "estimated_tokens_before": 0,
+    "reason": "",
+    "triggered": false,
+    "trimmed_history_items": 0,
+    "trimmed_memory_items": 0
+  },
+  "context_policy": {
+    "compaction_strategy": "deterministic",
+    "max_memory_hits": 3,
+    "max_recent_history": 3,
+    "max_working_notes_chars": 500,
+    "token_budget": 1200
+  },
+  "current_step": "draft_outline",
+  "events": [
+    {
+      "run_id": "6726ab35-3258-4738-8118-e11d12959514",
+      "timestamp": "2026-05-17T16:08:56.861404+00:00",
+      "type": "run_started",
+      "workflow_id": "research_brief"
+    },
+    {
+      "match_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T16:08:56.880474+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "memory_hit_count": 0,
+      "recent_history_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T16:08:56.899695+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "memory_service": "database_memory_service",
+      "next_step": "draft_outline",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T16:08:56.917723+00:00",
+      "type": "step_executed"
+    }
+  ],
+  "execution_outcome": {
+    "completed_step_id": "capture_request",
+    "memory_content": null,
+    "next_step": "draft_outline",
+    "output": "LangGraph patterns for durable agent memory",
+    "route": "checkpoint"
+  },
+  "input_payload": {
+    "topic": "LangGraph patterns for durable agent memory"
+  },
+  "invocation_id": "6726ab35-3258-4738-8118-e11d12959514",
+  "last_error": null,
+  "memory_hits": [],
+  "memory_policy": {
+    "consolidation_strategy": "merge_duplicates",
+    "max_durable_records": 5000,
+    "max_ephemeral_records": 100,
+    "namespace_strategy": "agent_or_workflow",
+    "suspend_on_idle": true
+  },
+  "named_outputs": {
+    "request": "LangGraph patterns for durable agent memory"
+  },
+  "pending_review": null,
+  "retry_counts": {},
+  "review_responses": {},
+  "run_id": "6726ab35-3258-4738-8118-e11d12959514",
+  "runtime_profile": "default",
+  "status": "running",
+  "step_history": [
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {},
+      "next_step": "draft_outline",
+      "output": "LangGraph patterns for durable agent memory",
+      "status": "succeeded",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-17T16:08:56.917676+00:00"
+    }
+  ],
+  "step_outputs": {
+    "capture_request": "LangGraph patterns for durable agent memory"
+  },
+  "workflow_id": "research_brief",
+  "workflow_path": "C:\\Users\\joyba\\PycharmProjects\\langchain_langgraph\\agentic_harness\\examples\\workflows\\research_brief.md",
+  "workflow_title": "Research Brief Workflow",
+  "working_notes": []
+}

@@ -21,6 +21,9 @@ from agentic_harness.cognitive.service import PromptExecutionRequest
 from agentic_harness.context import render_template, to_namespace
 from agentic_harness.contracts import (
     AgentDefinition,
+    AgentRuntimeProfile,
+    ContextPolicy,
+    MemoryLifecyclePolicy,
     MemoryQuery,
     MemoryRecord,
     StepExecutionResult,
@@ -41,6 +44,41 @@ ModelCallable = Callable[[str, WorkflowStep, WorkflowGraphState], Any]
 
 def _deepcopy_dict(payload: dict[str, Any] | None) -> dict[str, Any]:
     return deepcopy(payload or {})
+
+
+def _runtime_profile_defaults(profile_id: str | None) -> AgentRuntimeProfile:
+    profile = (profile_id or "default").strip().lower()
+    if profile == "durable_research":
+        return AgentRuntimeProfile(
+            profile_id=profile,
+            context_policy=ContextPolicy(
+                max_recent_history=5,
+                max_memory_hits=5,
+                max_working_notes_chars=1000,
+                token_budget=1800,
+            ),
+            memory_policy=MemoryLifecyclePolicy(
+                max_ephemeral_records=250,
+                max_durable_records=20000,
+            ),
+            suspension_threshold_seconds=900,
+        )
+    if profile == "short_task":
+        return AgentRuntimeProfile(
+            profile_id=profile,
+            context_policy=ContextPolicy(
+                max_recent_history=2,
+                max_memory_hits=2,
+                max_working_notes_chars=300,
+                token_budget=700,
+            ),
+            memory_policy=MemoryLifecyclePolicy(
+                max_ephemeral_records=25,
+                max_durable_records=500,
+            ),
+            suspension_threshold_seconds=120,
+        )
+    return AgentRuntimeProfile(profile_id="default")
 
 
 def _evaluate_expression(expression: str, state: WorkflowGraphState) -> bool:
@@ -259,6 +297,7 @@ def compile_workflow(
         ))))
         return {
             "active_context": snapshot.to_dict(),
+            "compaction_decision": dict(snapshot.compaction_decision),
             "events": events,
         }
 
@@ -572,12 +611,12 @@ class WorkflowRunner:
     ) -> None:
         self.definition = definition
         self.storage_root = Path(storage_root or Path.cwd() / ".workflow_memory")
-        self.run_store = WorkflowRunStore(self.storage_root)
         self.services = services or build_platform_services(
             storage_root=self.storage_root,
             model_callable=model_callable,
             memory_service_type=memory_service_type,
         )
+        self.run_store = self.services.runtime_store if hasattr(self.services, "runtime_store") else WorkflowRunStore(self.storage_root)
         self.graph = compile_workflow(
             definition,
             services=self.services,
@@ -626,6 +665,8 @@ class WorkflowRunner:
             agent_id=None,
             agent_name=None,
             agent_role=None,
+            invocation_id=resolved_run_id,
+            runtime_profile="default",
             allowed_tools=[],
             workflow_id=self.definition.workflow_id,
             workflow_title=self.definition.title,
@@ -644,6 +685,9 @@ class WorkflowRunner:
             events=[],
             execution_outcome={},
             active_context={},
+            context_policy=ContextPolicy().to_dict(),
+            memory_policy=MemoryLifecyclePolicy().to_dict(),
+            compaction_decision=None,
             checkpoint_index=0,
             last_error=None,
         )
@@ -715,12 +759,14 @@ def start_workflow(
     services: PlatformServiceBundle | None = None,
     memory_service_type: str = "filesystem",
     initial_state_overrides: dict[str, Any] | None = None,
+    database_url: str | None = None,
 ) -> dict[str, Any]:
     """Load a workflow from disk and execute it."""
     service_bundle = services or build_platform_services(
         storage_root=storage_root,
         model_callable=model_callable,
         memory_service_type=memory_service_type,
+        database_url=database_url,
     )
     definition = service_bundle.workflow_definitions.load(path)
     runner = WorkflowRunner(
@@ -748,6 +794,7 @@ def resume_workflow(
     model_callable: ModelCallable | None = None,
     services: PlatformServiceBundle | None = None,
     memory_service_type: str = "filesystem",
+    database_url: str | None = None,
 ) -> dict[str, Any]:
     """Resume a persisted workflow run."""
     storage_path = Path(storage_root or Path.cwd() / ".workflow_memory")
@@ -757,6 +804,7 @@ def resume_workflow(
         storage_root=storage_path,
         model_callable=model_callable,
         memory_service_type=memory_service_type,
+        database_url=database_url,
     )
     definition = service_bundle.workflow_definitions.load(state["workflow_path"])
     runner = WorkflowRunner(
@@ -787,10 +835,12 @@ def run_agent_workflow(
     run_id: str | None = None,
     storage_root: str | Path | None = None,
     services: PlatformServiceBundle | None = None,
+    database_url: str | None = None,
 ) -> dict[str, Any]:
     """Load an agent definition, resolve its workflow, and execute it."""
-    bootstrap_services = services or build_platform_services(storage_root=storage_root)
+    bootstrap_services = services or build_platform_services(storage_root=storage_root, database_url=database_url)
     agent_definition = bootstrap_services.agent_definitions.load(agent_path)
+    runtime_profile = _runtime_profile_defaults(agent_definition.runtime_profile)
     if services is None:
         llm_config = resolve_llm_config(
             provider=agent_definition.llm_provider,
@@ -801,6 +851,7 @@ def run_agent_workflow(
             storage_root=storage_root,
             model_callable=build_model_callable(llm_config),
             memory_service_type=agent_definition.memory_service_type,
+            database_url=database_url,
         )
     else:
         bound_services = services
@@ -815,6 +866,10 @@ def run_agent_workflow(
             "agent_id": agent_definition.agent_id,
             "agent_name": agent_definition.name,
             "agent_role": agent_definition.role,
+            "invocation_id": run_id or str(uuid4()),
+            "runtime_profile": runtime_profile.profile_id,
+            "context_policy": runtime_profile.context_policy.to_dict(),
+            "memory_policy": runtime_profile.memory_policy.to_dict(),
             "allowed_tools": list(agent_definition.allowed_tools),
         },
     )
@@ -824,6 +879,7 @@ def run_agent_workflow(
         "role": agent_definition.role,
         "workflow_path": agent_definition.workflow_path,
         "memory_service_type": agent_definition.memory_service_type,
+        "runtime_profile": agent_definition.runtime_profile,
         "allowed_tools": list(agent_definition.allowed_tools),
     }
     return result
