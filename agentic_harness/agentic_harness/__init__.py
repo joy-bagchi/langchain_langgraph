@@ -6,6 +6,7 @@ from agentic_harness.agentic_os import (
     PlatformServiceBundle,
     build_platform_services,
     compile_workflow_dag,
+    resume_declarative_workflow,
     run_declarative_workflow,
 )
 from agentic_harness.agentic_os.memory_service import (
@@ -128,6 +129,7 @@ __all__ = [
     "parse_workflow_markdown",
     "render_template",
     "resolve_llm_config",
+    "resume_declarative_workflow",
     "run_agent_workflow",
     "resume_workflow",
     "run_declarative_workflow",

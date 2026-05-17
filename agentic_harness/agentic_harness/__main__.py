@@ -9,7 +9,7 @@ from pathlib import Path
 from agentic_harness.llm import build_model_callable, resolve_llm_config
 from agentic_harness.markdown_workflow import load_workflow_definition
 from agentic_harness.outputs import select_output
-from agentic_harness.agentic_os import run_declarative_workflow
+from agentic_harness.agentic_os import resume_declarative_workflow, run_declarative_workflow
 from agentic_harness.runtime import inspect_run, resume_workflow, run_agent_workflow, start_workflow
 
 
@@ -90,6 +90,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Automatically complete human gate nodes instead of pausing.",
     )
 
+    dag_resume_parser = subparsers.add_parser("resume-dag", help="Resume a declarative DAG workflow run.")
+    _add_output_arguments(dag_resume_parser)
+    dag_resume_parser.add_argument("--run-id", required=True, help="DAG run id to resume.")
+    dag_resume_parser.add_argument(
+        "--decision",
+        choices=["approved", "rejected"],
+        default="approved",
+        help="Decision for the pending human gate.",
+    )
+    dag_resume_parser.add_argument("--notes", help="Optional human gate review notes.")
+    dag_resume_parser.add_argument("--storage-root", help="Override the default .workflow_memory directory.")
+    dag_resume_parser.add_argument(
+        "--auto-approve-gates",
+        action="store_true",
+        help="Automatically complete any subsequent human gates after resuming.",
+    )
+
     resume_parser = subparsers.add_parser("resume", help="Resume a saved workflow run.")
     _add_output_arguments(resume_parser)
     resume_parser.add_argument("--run-id", required=True, help="Run id to resume.")
@@ -139,6 +156,14 @@ def main() -> None:
             _build_generic_input_payload(input_path=args.input, query=args.query),
             run_id=args.run_id,
             storage_root=args.storage_root,
+            auto_approve_human_gates=args.auto_approve_gates,
+        )
+    elif args.command == "resume-dag":
+        result = resume_declarative_workflow(
+            args.run_id,
+            storage_root=args.storage_root,
+            decision=args.decision,
+            notes=args.notes,
             auto_approve_human_gates=args.auto_approve_gates,
         )
     elif args.command == "resume":

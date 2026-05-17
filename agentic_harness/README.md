@@ -130,6 +130,12 @@ If you want to auto-complete human gates for testing:
 python -m agentic_harness run-dag --workflow workflows/sabr_research_pipeline.yaml --query "What is an SABR model" --auto-approve-gates
 ```
 
+If a DAG run pauses at a human gate, you can resume it:
+
+```bash
+python -m agentic_harness resume-dag --run-id <run_id> --decision approved --notes "Looks good"
+```
+
 ## Built-in Tools
 
 The default platform service bundle now includes a `web_search` tool in the toolbox.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 
@@ -34,6 +36,7 @@ from agentic_harness import (
     select_output,
     resolve_llm_config,
     render_template,
+    resume_declarative_workflow,
     run_declarative_workflow,
     run_agent_workflow,
     resume_workflow,
@@ -262,6 +265,57 @@ nodes:
       packet: "$node.extract_equations.artifact"
     artifact_contract: review_packet@1.0
     execution_mode: auto
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_parallel_declarative_workflow(path: Path, agent_path: Path) -> None:
+    path.write_text(
+        f"""workflow_id: parallel_research_pipeline
+title: Parallel Research Pipeline
+entry_nodes:
+  - gather_alpha
+  - gather_beta
+nodes:
+  - id: gather_alpha
+    kind: agent
+    purpose: Research alpha topic.
+    agent: {agent_path.name}
+    depends_on: []
+    input_bindings:
+      query: "$workflow.alpha_query"
+    artifact_contract: search_results@1.0
+    execution_mode: real
+
+  - id: gather_beta
+    kind: agent
+    purpose: Research beta topic.
+    agent: {agent_path.name}
+    depends_on: []
+    input_bindings:
+      query: "$workflow.beta_query"
+    artifact_contract: search_results@1.0
+    execution_mode: real
+
+  - id: combine_results
+    kind: mock_agent
+    purpose: Combine the results.
+    depends_on:
+      - gather_alpha
+      - gather_beta
+    input_bindings:
+      alpha: "$node.gather_alpha.artifact"
+      beta: "$node.gather_beta.artifact"
+    artifact_contract: combined_results@1.0
+    execution_mode: mock
+    mock:
+      enabled: true
+      response:
+        artifact_type: combined_results
+        version: "1.0"
+        payload:
+          status: combined
 """,
         encoding="utf-8",
     )
@@ -601,6 +655,26 @@ def test_run_dag_parser_accepts_query_and_auto_approve() -> None:
     assert args.workflow == "workflows/sabr_research_pipeline.yaml"
     assert args.query == "What is an SABR model"
     assert args.auto_approve_gates is True
+
+
+def test_resume_dag_parser_accepts_review_decision() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "resume-dag",
+            "--run-id",
+            "dag-run-123",
+            "--decision",
+            "approved",
+            "--notes",
+            "Looks good",
+        ]
+    )
+
+    assert args.command == "resume-dag"
+    assert args.run_id == "dag-run-123"
+    assert args.decision == "approved"
+    assert args.notes == "Looks good"
 
 
 def test_build_agent_input_payload_merges_query_shortcut(tmp_path: Path) -> None:
@@ -1083,4 +1157,146 @@ def test_run_declarative_workflow_auto_approves_human_gate_and_emits_leaf_artifa
 def test_platform_services_expose_dag_executor(tmp_path: Path) -> None:
     services = build_platform_services(storage_root=tmp_path / "runtime_store")
     assert services.dag_executor.descriptor.service_name == "dag_executor"
+
+
+def test_run_declarative_workflow_executes_same_stage_nodes_concurrently(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "parallel_pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_parallel_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.15)
+                return {
+                    "query": query,
+                    "results": [{"title": query, "url": "https://example.com/result"}],
+                    "topic": topic,
+                }
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    fake_client = FakeSearchClient()
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=fake_client,
+    )
+    result = run_declarative_workflow(
+        declarative_path,
+        {"alpha_query": "alpha", "beta_query": "beta"},
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        auto_approve_human_gates=True,
+    )
+
+    assert result["status"] == "completed"
+    assert fake_client.max_active >= 2
+    assert result["completed_stages"] == [0, 1]
+
+
+def test_resume_declarative_workflow_approves_human_gate_and_completes(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(self, *, query: str, max_results: int = 5, topic: str = "general", include_raw_content: bool = False):
+            return {
+                "query": query,
+                "results": [{"title": "SABR overview", "url": "https://example.com/sabr"}],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    first = run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        run_id="dag-run-1",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+    )
+
+    resumed = resume_declarative_workflow(
+        "dag-run-1",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        decision="approved",
+        notes="Looks good",
+    )
+
+    assert first["status"] == "awaiting_human_gate"
+    assert resumed["status"] == "completed"
+    assert resumed["completed_stages"] == [0, 1, 2]
+    assert resumed["node_results"]["review_output"]["status"] == "completed"
+    assert resumed["node_results"]["review_output"]["metadata"]["review_decision"] == "approved"
+    assert resumed["pending_human_gate"] is None
+
+
+def test_resume_declarative_workflow_rejects_human_gate(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(self, *, query: str, max_results: int = 5, topic: str = "general", include_raw_content: bool = False):
+            return {
+                "query": query,
+                "results": [{"title": "SABR overview", "url": "https://example.com/sabr"}],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        run_id="dag-run-2",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+    )
+
+    resumed = resume_declarative_workflow(
+        "dag-run-2",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        decision="rejected",
+        notes="Not enough detail",
+    )
+
+    assert resumed["status"] == "rejected"
+    assert resumed["node_results"]["review_output"]["status"] == "rejected"
+    assert resumed["node_results"]["review_output"]["metadata"]["review_notes"] == "Not enough detail"
 
