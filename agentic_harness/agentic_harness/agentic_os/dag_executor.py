@@ -332,38 +332,43 @@ class DefaultDagExecutor:
         completed_stages: list[int] = []
         pending_human_gate: dict[str, Any] | None = None
         pending_ref = {"value": pending_human_gate}
-        status = self._execute_from_stage(
-            compiled,
-            workflow_definition=workflow_definition,
-            workflow_input=workflow_input,
-            services=services,
-            storage_root=storage_root,
-            resolved_run_id=resolved_run_id,
-            node_results=node_results,
-            artifacts=artifacts,
-            events=events,
-            completed_stages=completed_stages,
-            pending_human_gate_ref=pending_ref,
-            start_stage_index=0,
-            auto_approve_human_gates=auto_approve_human_gates,
-        )
-        pending_human_gate = pending_ref["value"]
+        with services.observability.trace_context(
+            tags=["agentic_harness", "dag_workflow", compiled.workflow_id],
+            metadata={"run_id": resolved_run_id, "workflow_id": compiled.workflow_id},
+        ):
+            status = self._execute_from_stage(
+                compiled,
+                workflow_definition=workflow_definition,
+                workflow_input=workflow_input,
+                services=services,
+                storage_root=storage_root,
+                resolved_run_id=resolved_run_id,
+                node_results=node_results,
+                artifacts=artifacts,
+                events=events,
+                completed_stages=completed_stages,
+                pending_human_gate_ref=pending_ref,
+                start_stage_index=0,
+                auto_approve_human_gates=auto_approve_human_gates,
+            )
+            pending_human_gate = pending_ref["value"]
 
-        result = _build_run_result(
-            run_id=resolved_run_id,
-            compiled=compiled,
-            workflow_definition=workflow_definition,
-            status=status,
-            workflow_input=workflow_input,
-            node_results=node_results,
-            artifacts=artifacts,
-            execution_stages=compiled.execution_stages,
-            completed_stages=completed_stages,
-            pending_human_gate=pending_human_gate,
-            events=events,
-            executor_id=self.descriptor.implementation_id,
-        )
-        _persist_dag_state(storage_root, result, services=services)
+            result = _build_run_result(
+                run_id=resolved_run_id,
+                compiled=compiled,
+                workflow_definition=workflow_definition,
+                status=status,
+                workflow_input=workflow_input,
+                node_results=node_results,
+                artifacts=artifacts,
+                execution_stages=compiled.execution_stages,
+                completed_stages=completed_stages,
+                pending_human_gate=pending_human_gate,
+                events=events,
+                executor_id=self.descriptor.implementation_id,
+            )
+            _persist_dag_state(storage_root, result, services=services)
+        services.observability.flush()
         return result
 
     def _execute_from_stage(
@@ -566,32 +571,37 @@ class DefaultDagExecutor:
             gate_record["metadata"]["review_notes"] = notes
 
         if decision_normalized == "rejected":
-            gate_record["status"] = "rejected"
-            node_results[node_id] = gate_record
-            events.append(
-                {
-                    "event_type": "human_gate_rejected",
-                    "payload": {
-                        "timestamp": utc_now(),
-                        "node_id": node_id,
-                    },
-                }
-            )
-            result = _build_run_result(
-                run_id=run_id,
-                compiled=compiled,
-                workflow_definition=definition,
-                status="rejected",
-                workflow_input=dict(state.get("input_payload", {})),
-                node_results=node_results,
-                artifacts=artifacts,
-                execution_stages=compiled.execution_stages,
-                completed_stages=completed_stages,
-                pending_human_gate=None,
-                events=events,
-                executor_id=self.descriptor.implementation_id,
-            )
-            _persist_dag_state(storage_path, result, services=services)
+            with services.observability.trace_context(
+                tags=["agentic_harness", "dag_resume", compiled.workflow_id],
+                metadata={"run_id": run_id, "workflow_id": compiled.workflow_id, "decision": decision_normalized},
+            ):
+                gate_record["status"] = "rejected"
+                node_results[node_id] = gate_record
+                events.append(
+                    {
+                        "event_type": "human_gate_rejected",
+                        "payload": {
+                            "timestamp": utc_now(),
+                            "node_id": node_id,
+                        },
+                    }
+                )
+                result = _build_run_result(
+                    run_id=run_id,
+                    compiled=compiled,
+                    workflow_definition=definition,
+                    status="rejected",
+                    workflow_input=dict(state.get("input_payload", {})),
+                    node_results=node_results,
+                    artifacts=artifacts,
+                    execution_stages=compiled.execution_stages,
+                    completed_stages=completed_stages,
+                    pending_human_gate=None,
+                    events=events,
+                    executor_id=self.descriptor.implementation_id,
+                )
+                _persist_dag_state(storage_path, result, services=services)
+            services.observability.flush()
             return result
 
         gate_record["status"] = "completed"
@@ -611,36 +621,41 @@ class DefaultDagExecutor:
         )
 
         pending_ref = {"value": None}
-        status = self._execute_from_stage(
-            compiled,
-            workflow_definition=definition,
-            workflow_input=dict(state.get("input_payload", {})),
-            services=services,
-            storage_root=storage_path,
-            resolved_run_id=run_id,
-            node_results=node_results,
-            artifacts=artifacts,
-            events=events,
-            completed_stages=completed_stages,
-            pending_human_gate_ref=pending_ref,
-            start_stage_index=stage_index + 1,
-            auto_approve_human_gates=auto_approve_human_gates,
-        )
-        result = _build_run_result(
-            run_id=run_id,
-            compiled=compiled,
-            workflow_definition=definition,
-            status=status,
-            workflow_input=dict(state.get("input_payload", {})),
-            node_results=node_results,
-            artifacts=artifacts,
-            execution_stages=compiled.execution_stages,
-            completed_stages=completed_stages,
-            pending_human_gate=pending_ref["value"],
-            events=events,
-            executor_id=self.descriptor.implementation_id,
-        )
-        _persist_dag_state(storage_path, result, services=services)
+        with services.observability.trace_context(
+            tags=["agentic_harness", "dag_resume", compiled.workflow_id],
+            metadata={"run_id": run_id, "workflow_id": compiled.workflow_id, "decision": decision_normalized},
+        ):
+            status = self._execute_from_stage(
+                compiled,
+                workflow_definition=definition,
+                workflow_input=dict(state.get("input_payload", {})),
+                services=services,
+                storage_root=storage_path,
+                resolved_run_id=run_id,
+                node_results=node_results,
+                artifacts=artifacts,
+                events=events,
+                completed_stages=completed_stages,
+                pending_human_gate_ref=pending_ref,
+                start_stage_index=stage_index + 1,
+                auto_approve_human_gates=auto_approve_human_gates,
+            )
+            result = _build_run_result(
+                run_id=run_id,
+                compiled=compiled,
+                workflow_definition=definition,
+                status=status,
+                workflow_input=dict(state.get("input_payload", {})),
+                node_results=node_results,
+                artifacts=artifacts,
+                execution_stages=compiled.execution_stages,
+                completed_stages=completed_stages,
+                pending_human_gate=pending_ref["value"],
+                events=events,
+                executor_id=self.descriptor.implementation_id,
+            )
+            _persist_dag_state(storage_path, result, services=services)
+        services.observability.flush()
         return result
 
 
@@ -653,11 +668,24 @@ def run_declarative_workflow(
     services=None,
     auto_approve_human_gates: bool = False,
     database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Load, compile, and execute a declarative workflow through the DAG executor."""
     from agentic_harness.agentic_os.platform import build_platform_services
 
-    service_bundle = services or build_platform_services(storage_root=storage_root, database_url=database_url)
+    service_bundle = services or build_platform_services(
+        storage_root=storage_root,
+        database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
     definition = service_bundle.declarative_workflow_definitions.load(workflow_path)
     return service_bundle.dag_executor.execute_definition(
         definition,
@@ -678,11 +706,24 @@ def resume_declarative_workflow(
     notes: str | None = None,
     auto_approve_human_gates: bool = False,
     database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Resume a declarative workflow run that is waiting on a human gate."""
     from agentic_harness.agentic_os.platform import build_platform_services
 
-    service_bundle = services or build_platform_services(storage_root=storage_root, database_url=database_url)
+    service_bundle = services or build_platform_services(
+        storage_root=storage_root,
+        database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
     return service_bundle.dag_executor.resume(
         run_id,
         services=service_bundle,

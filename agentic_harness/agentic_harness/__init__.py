@@ -14,6 +14,10 @@ from agentic_harness.agentic_os.memory_service import (
     FilesystemMemoryService,
 )
 from agentic_harness.agentic_os.evaluation_service import BasicEvaluationService
+from agentic_harness.agentic_os.observability_service import (
+    LangSmithConfig,
+    resolve_langsmith_config,
+)
 from agentic_harness.agentic_os.tool_service import (
     RegisteredToolService,
     TavilyWebSearchClient,
@@ -118,6 +122,7 @@ __all__ = [
     "StepExecutionResult",
     "StepHistoryEntry",
     "LLMConfig",
+    "LangSmithConfig",
     "TavilyWebSearchClient",
     "ToolDefinition",
     "ToolExecutionRequest",
@@ -141,6 +146,7 @@ __all__ = [
     "parse_declarative_workflow",
     "parse_workflow_markdown",
     "render_template",
+    "resolve_langsmith_config",
     "resolve_llm_config",
     "resume_declarative_workflow",
     "run_agent_workflow",

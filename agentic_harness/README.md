@@ -11,6 +11,7 @@ Standalone LangGraph-based workflow runtime with:
 - CLI execution and inspection
 - optional LLM-backed prompt steps
 - toolbox service with a built-in `web_search` tool
+- optional LangSmith tracing layered on top of the local runtime ledger
 
 ## Run tests
 
@@ -51,6 +52,30 @@ The harness now persists runtime state to a database ledger by default.
 - optional CLI override: pass `--db-url`
 
 The JSON files under `.workflow_memory/` are still written as compatibility/debug mirrors, but the database ledger is the authoritative runtime store.
+
+## LangSmith Observability
+
+The harness now supports LangSmith natively without removing the local runtime ledger or CLI-facing observability.
+
+Environment variables:
+
+- `LANGSMITH_TRACING=true`
+- `LANGSMITH_API_KEY=...`
+- optional `LANGSMITH_PROJECT=agentic-harness`
+- optional `LANGSMITH_ENDPOINT=...`
+- optional `LANGSMITH_WORKSPACE_ID=...`
+
+CLI overrides are also available on run/resume commands:
+
+```bash
+python -m agentic_harness run-agent --agent agents/research_agent.yaml --query "What is an SABR model" --langsmith-tracing --langsmith-project agentic-harness-dev
+```
+
+Behavior:
+
+- local events, checkpoints, JSON mirrors, and runtime-ledger persistence remain enabled
+- LangSmith tracing is added as an additional sink when configured
+- workflow runs, DAG runs, and nested LangGraph execution run inside a LangSmith tracing context
 
 ## Run an agent bound to a workflow
 

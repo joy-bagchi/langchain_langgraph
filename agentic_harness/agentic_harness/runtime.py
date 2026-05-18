@@ -710,13 +710,24 @@ class WorkflowRunner:
             initial_state_overrides=initial_state_overrides,
         )
         latest_state = dict(state)
-        for latest_state in self.graph.stream(
-            state,
-            config=self._config(latest_state["run_id"]),
-            stream_mode="values",
+        with self.services.observability.trace_context(
+            project_name=None,
+            tags=["agentic_harness", "workflow", self.definition.workflow_id],
+            metadata={
+                "run_id": latest_state["run_id"],
+                "workflow_id": self.definition.workflow_id,
+                "agent_id": latest_state.get("agent_id"),
+                "agent_role": latest_state.get("agent_role"),
+            },
         ):
+            for latest_state in self.graph.stream(
+                state,
+                config=self._config(latest_state["run_id"]),
+                stream_mode="values",
+            ):
+                self._persist(latest_state)
             self._persist(latest_state)
-        self._persist(latest_state)
+        self.services.observability.flush()
         return latest_state
 
     def resume(
@@ -738,13 +749,23 @@ class WorkflowRunner:
             state["pending_review"] = None
 
         latest_state = dict(state)
-        for latest_state in self.graph.stream(
-            state,
-            config=self._config(run_id),
-            stream_mode="values",
+        with self.services.observability.trace_context(
+            project_name=None,
+            tags=["agentic_harness", "workflow_resume", self.definition.workflow_id],
+            metadata={
+                "run_id": run_id,
+                "workflow_id": self.definition.workflow_id,
+                "decision": decision,
+            },
         ):
+            for latest_state in self.graph.stream(
+                state,
+                config=self._config(run_id),
+                stream_mode="values",
+            ):
+                self._persist(latest_state)
             self._persist(latest_state)
-        self._persist(latest_state)
+        self.services.observability.flush()
         return latest_state
 
 
@@ -760,6 +781,11 @@ def start_workflow(
     memory_service_type: str = "filesystem",
     initial_state_overrides: dict[str, Any] | None = None,
     database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Load a workflow from disk and execute it."""
     service_bundle = services or build_platform_services(
@@ -767,6 +793,11 @@ def start_workflow(
         model_callable=model_callable,
         memory_service_type=memory_service_type,
         database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
     )
     definition = service_bundle.workflow_definitions.load(path)
     runner = WorkflowRunner(
@@ -795,6 +826,11 @@ def resume_workflow(
     services: PlatformServiceBundle | None = None,
     memory_service_type: str = "filesystem",
     database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Resume a persisted workflow run."""
     storage_path = Path(storage_root or Path.cwd() / ".workflow_memory")
@@ -805,6 +841,11 @@ def resume_workflow(
         model_callable=model_callable,
         memory_service_type=memory_service_type,
         database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
     )
     definition = service_bundle.workflow_definitions.load(state["workflow_path"])
     runner = WorkflowRunner(
@@ -836,9 +877,22 @@ def run_agent_workflow(
     storage_root: str | Path | None = None,
     services: PlatformServiceBundle | None = None,
     database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Load an agent definition, resolve its workflow, and execute it."""
-    bootstrap_services = services or build_platform_services(storage_root=storage_root, database_url=database_url)
+    bootstrap_services = services or build_platform_services(
+        storage_root=storage_root,
+        database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
     agent_definition = bootstrap_services.agent_definitions.load(agent_path)
     runtime_profile = _runtime_profile_defaults(agent_definition.runtime_profile)
     if services is None:
@@ -852,6 +906,11 @@ def run_agent_workflow(
             model_callable=build_model_callable(llm_config),
             memory_service_type=agent_definition.memory_service_type,
             database_url=database_url,
+            langsmith_tracing=langsmith_tracing,
+            langsmith_api_key=langsmith_api_key,
+            langsmith_endpoint=langsmith_endpoint,
+            langsmith_project=langsmith_project,
+            langsmith_workspace_id=langsmith_workspace_id,
         )
     else:
         bound_services = services

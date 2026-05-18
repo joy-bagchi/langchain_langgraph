@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from contextlib import contextmanager
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentic_harness.__main__ import _build_agent_input_payload, build_parser
+from agentic_harness.agentic_os.observability_service import ObservabilityRequest
+from agentic_harness.shared.services import ServiceEvent
 from agentic_harness import (
     AgentDefinition,
     CompiledWorkflowDag,
@@ -29,6 +32,7 @@ from agentic_harness import (
     build_platform_services,
     ContextManager,
     DefaultCognitiveService,
+    LangSmithConfig,
     load_declarative_workflow_definition,
     inspect_run,
     load_workflow_definition,
@@ -36,6 +40,7 @@ from agentic_harness import (
     format_response,
     select_output,
     resolve_llm_config,
+    resolve_langsmith_config,
     render_template,
     resume_declarative_workflow,
     run_declarative_workflow,
@@ -721,6 +726,24 @@ def test_run_dag_parser_accepts_query_and_auto_approve() -> None:
     assert args.auto_approve_gates is True
 
 
+def test_run_parser_accepts_langsmith_arguments() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "--workflow",
+            "examples/workflows/research_brief.md",
+            "--langsmith-tracing",
+            "--langsmith-project",
+            "agentic-harness-tests",
+        ]
+    )
+
+    assert args.command == "run"
+    assert args.langsmith_tracing is True
+    assert args.langsmith_project == "agentic-harness-tests"
+
+
 def test_resume_dag_parser_accepts_review_decision() -> None:
     parser = build_parser()
     args = parser.parse_args(
@@ -1221,6 +1244,60 @@ def test_run_declarative_workflow_auto_approves_human_gate_and_emits_leaf_artifa
 def test_platform_services_expose_dag_executor(tmp_path: Path) -> None:
     services = build_platform_services(storage_root=tmp_path / "runtime_store")
     assert services.dag_executor.descriptor.service_name == "dag_executor"
+
+
+def test_platform_services_enable_langsmith_without_disabling_local_events(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def flush(self, timeout=None) -> None:
+            captured["flushed"] = True
+
+    @contextmanager
+    def fake_tracing_context(**kwargs):
+        captured["context_kwargs"] = kwargs
+        yield
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        langsmith_tracing=True,
+        langsmith_project="agentic-harness-tests",
+        langsmith_api_key="test-key",
+        langsmith_client=FakeClient(),
+    )
+    services.observability._tracing_context_factory = fake_tracing_context
+
+    event = services.observability.record(
+        ObservabilityRequest(
+            event=ServiceEvent(
+                event_type="checkpoint",
+                payload={"run_id": "run-123"},
+            )
+        )
+    )
+    with services.observability.trace_context(
+        tags=["test"],
+        metadata={"run_id": "run-123"},
+    ):
+        pass
+    services.observability.flush()
+
+    assert event["type"] == "checkpoint"
+    assert "langsmith_project" in event
+    assert "langsmith_tracing" in services.observability.descriptor.capabilities
+    assert captured["context_kwargs"]["project_name"] == "agentic-harness-tests"
+    assert captured["flushed"] is True
+
+
+def test_resolve_langsmith_config_uses_explicit_and_env_inputs(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "env-project")
+
+    config = resolve_langsmith_config(project="explicit-project")
+
+    assert isinstance(config, LangSmithConfig)
+    assert config.enabled is True
+    assert config.project == "explicit-project"
 
 
 def test_run_declarative_workflow_executes_same_stage_nodes_concurrently(tmp_path: Path) -> None:

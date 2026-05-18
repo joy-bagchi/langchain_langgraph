@@ -15,7 +15,10 @@ from agentic_harness.agentic_os.memory_service import (
     FilesystemMemoryService,
     MemoryServiceSelection,
 )
-from agentic_harness.agentic_os.observability_service import EventObservabilityService
+from agentic_harness.agentic_os.observability_service import (
+    EventObservabilityService,
+    resolve_langsmith_config,
+)
 from agentic_harness.agentic_os.security_service import PermissiveSecurityService
 from agentic_harness.agentic_os.tool_service import RegisteredToolService
 from agentic_harness.cognitive.service import DefaultCognitiveService
@@ -54,6 +57,12 @@ def build_platform_services(
     memory_service_type: str = "filesystem",
     web_search_client=None,
     database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+    langsmith_client=None,
 ) -> PlatformServiceBundle:
     """Create the default in-process service bundle."""
     memory_selection = MemoryServiceSelection(
@@ -70,6 +79,13 @@ def build_platform_services(
         Path(storage_root or Path.cwd() / ".workflow_memory"),
         database_url=database_url,
     )
+    langsmith_config = resolve_langsmith_config(
+        enabled=langsmith_tracing,
+        api_key=langsmith_api_key,
+        endpoint=langsmith_endpoint,
+        project=langsmith_project,
+        workspace_id=langsmith_workspace_id,
+    )
 
     return PlatformServiceBundle(
         agent_definitions=YamlAgentDefinitionService(),
@@ -82,7 +98,10 @@ def build_platform_services(
         memory=memory_service,
         runtime_store=runtime_store,
         guardrails=PassthroughGuardrailService(),
-        observability=EventObservabilityService(),
+        observability=EventObservabilityService(
+            langsmith_config=langsmith_config,
+            langsmith_client=langsmith_client,
+        ),
         tools=RegisteredToolService.with_defaults(web_search_client=web_search_client),
         evaluation=BasicEvaluationService(),
         security=PermissiveSecurityService(),
