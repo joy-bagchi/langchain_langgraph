@@ -53,6 +53,59 @@ The harness now persists runtime state to a database ledger by default.
 
 The JSON files under `.workflow_memory/` are still written as compatibility/debug mirrors, but the database ledger is the authoritative runtime store.
 
+One-shot local Postgres smoke test:
+
+```powershell
+pwsh -File scripts/smoke_postgres.ps1
+```
+
+WSL / Bash equivalent:
+
+```bash
+bash scripts/smoke_postgres.sh
+```
+
+The default behavior is now direct Postgres access. If you do not set `AGENTIC_HARNESS_DB_URL`, the script uses:
+
+```text
+postgresql://postgres:postgres@localhost:5432/agentic_harness
+```
+
+If you want to point it at an existing Postgres instance explicitly:
+
+```bash
+AGENTIC_HARNESS_DB_URL="postgresql://postgres:postgres@localhost:5432/agentic_harness" bash scripts/smoke_postgres.sh
+```
+
+If you already have a Postgres container running and want to reuse it by container name:
+
+```bash
+EXISTING_CONTAINER_NAME=your-postgres-container bash scripts/smoke_postgres.sh
+```
+
+If you want the script to create or manage its own temporary Docker Postgres container, opt into that behavior explicitly:
+
+```bash
+MANAGE_CONTAINER=true bash scripts/smoke_postgres.sh
+```
+
+That script will:
+
+- connect to Postgres directly by default
+- optionally reuse or manage a Docker Postgres container
+- point `agentic_harness` at Postgres
+- run `research_agent`
+- run the durable `research_brief` workflow
+- query the runtime ledger tables back through `psql`
+
+The smoke script summary now distinguishes between:
+
+- Postgres/runtime-ledger success
+- workflow persistence success
+- external tool failures such as blocked Tavily web access
+
+So a blocked `web_search` call does not hide the fact that the Postgres integration itself passed.
+
 ## LangSmith Observability
 
 The harness now supports LangSmith natively without removing the local runtime ledger or CLI-facing observability.
@@ -65,6 +118,8 @@ Environment variables:
 - optional `LANGSMITH_ENDPOINT=...`
 - optional `LANGSMITH_WORKSPACE_ID=...`
 
+LangSmith is a runtime/platform concern, not an agent-definition concern. You do not need to add LangSmith fields to agent YAML files. Any agent or workflow run can be traced by enabling LangSmith at invocation time through environment variables or CLI flags.
+
 CLI overrides are also available on run/resume commands:
 
 ```bash
@@ -76,6 +131,23 @@ Behavior:
 - local events, checkpoints, JSON mirrors, and runtime-ledger persistence remain enabled
 - LangSmith tracing is added as an additional sink when configured
 - workflow runs, DAG runs, and nested LangGraph execution run inside a LangSmith tracing context
+
+One-shot LangSmith smoke tests:
+
+```powershell
+pwsh -File scripts/smoke_langsmith.ps1
+```
+
+```bash
+bash scripts/smoke_langsmith.sh
+```
+
+Those scripts:
+
+- run the deterministic `research_analyst` agent
+- enable LangSmith tracing for that invocation
+- query LangSmith for recent runs in the target project
+- print a small summary of recent run ids, names, and statuses
 
 ## Run an agent bound to a workflow
 

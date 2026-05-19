@@ -1,0 +1,311 @@
+{
+  "active_context": {
+    "compacted_history": "",
+    "compaction_decision": {
+      "estimated_tokens_after": 0,
+      "estimated_tokens_before": 0,
+      "reason": "",
+      "triggered": false,
+      "trimmed_history_items": 0,
+      "trimmed_memory_items": 0
+    },
+    "context_brief": "Workflow: Research Brief Workflow Step: review_outline Retrieved memory hits: 2.",
+    "current_task": "Review the draft outline and approve it when it is ready for finalization.",
+    "estimated_tokens": 210,
+    "memory_summary": "Outline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+    "raw_memory_hits": [
+      {
+        "record": {
+          "content": "Outline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+          "created_at": "2026-05-19T03:13:35.979752+00:00",
+          "expires_at": null,
+          "memory_type": "decision",
+          "metadata": {},
+          "namespace": "research_brief_memory",
+          "record_id": "838d56e0-31c5-4dc1-ba3c-13a169368d06",
+          "source_run_id": "aec1b4e9-ffa9-412b-9470-4c2cac7c83dc",
+          "source_step_id": "draft_outline"
+        },
+        "score": 0.16666666666666666
+      },
+      {
+        "record": {
+          "content": "Outline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+          "created_at": "2026-05-19T03:30:10.076606+00:00",
+          "expires_at": null,
+          "memory_type": "decision",
+          "metadata": {},
+          "namespace": "research_brief_memory",
+          "record_id": "10bf4604-3e2a-46bc-aad1-cc013f512206",
+          "source_run_id": "9fa22bb2-2c2b-48d3-a0c0-59c4dabfff22",
+          "source_step_id": "draft_outline"
+        },
+        "score": 0.16666666666666666
+      }
+    ],
+    "recent_history": [
+      {
+        "attempt": 1,
+        "memory_record_ids": [],
+        "metadata": {},
+        "next_step": "draft_outline",
+        "output": "LangGraph patterns for durable agent memory",
+        "status": "succeeded",
+        "step_id": "capture_request",
+        "timestamp": "2026-05-19T03:30:09.269172+00:00"
+      },
+      {
+        "attempt": 1,
+        "memory_record_ids": [
+          "10bf4604-3e2a-46bc-aad1-cc013f512206"
+        ],
+        "metadata": {
+          "mode": "deterministic"
+        },
+        "next_step": "review_outline",
+        "output": "Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+        "status": "succeeded",
+        "step_id": "draft_outline",
+        "timestamp": "2026-05-19T03:30:09.928744+00:00"
+      }
+    ],
+    "step_id": "review_outline",
+    "token_budget": 1800,
+    "working_notes": ""
+  },
+  "agent_id": "research_analyst",
+  "agent_name": "Research Analyst",
+  "agent_role": "research_analyst",
+  "allowed_tools": [
+    "web_search"
+  ],
+  "checkpoint_index": 2,
+  "compaction_decision": {
+    "estimated_tokens_after": 0,
+    "estimated_tokens_before": 0,
+    "reason": "",
+    "triggered": false,
+    "trimmed_history_items": 0,
+    "trimmed_memory_items": 0
+  },
+  "context_policy": {
+    "compaction_strategy": "deterministic",
+    "max_memory_hits": 5,
+    "max_recent_history": 5,
+    "max_working_notes_chars": 1000,
+    "token_budget": 1800
+  },
+  "current_step": "review_outline",
+  "events": [
+    {
+      "langsmith_project": "agentic_harness",
+      "run_id": "9fa22bb2-2c2b-48d3-a0c0-59c4dabfff22",
+      "timestamp": "2026-05-19T03:30:08.421591+00:00",
+      "type": "run_started",
+      "workflow_id": "research_brief"
+    },
+    {
+      "langsmith_project": "agentic_harness",
+      "match_count": 1,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-19T03:30:08.903036+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "langsmith_project": "agentic_harness",
+      "memory_hit_count": 1,
+      "recent_history_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-05-19T03:30:09.033716+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "langsmith_project": "agentic_harness",
+      "memory_service": "database_memory_service",
+      "next_step": "draft_outline",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-19T03:30:09.269191+00:00",
+      "type": "step_executed"
+    },
+    {
+      "checkpoint_index": 1,
+      "current_step": "draft_outline",
+      "langsmith_project": "agentic_harness",
+      "status": "running",
+      "timestamp": "2026-05-19T03:30:09.494816+00:00",
+      "type": "checkpoint"
+    },
+    {
+      "langsmith_project": "agentic_harness",
+      "match_count": 1,
+      "step_id": "draft_outline",
+      "timestamp": "2026-05-19T03:30:09.662431+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "langsmith_project": "agentic_harness",
+      "memory_hit_count": 1,
+      "recent_history_count": 1,
+      "step_id": "draft_outline",
+      "timestamp": "2026-05-19T03:30:09.790061+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "langsmith_project": "agentic_harness",
+      "memory_service": "database_memory_service",
+      "next_step": "review_outline",
+      "step_id": "draft_outline",
+      "timestamp": "2026-05-19T03:30:09.928765+00:00",
+      "type": "step_executed"
+    },
+    {
+      "langsmith_project": "agentic_harness",
+      "record_id": "10bf4604-3e2a-46bc-aad1-cc013f512206",
+      "step_id": "draft_outline",
+      "timestamp": "2026-05-19T03:30:10.162967+00:00",
+      "type": "memory_written"
+    },
+    {
+      "checkpoint_index": 2,
+      "current_step": "review_outline",
+      "langsmith_project": "agentic_harness",
+      "status": "running",
+      "timestamp": "2026-05-19T03:30:10.309013+00:00",
+      "type": "checkpoint"
+    },
+    {
+      "langsmith_project": "agentic_harness",
+      "match_count": 2,
+      "step_id": "review_outline",
+      "timestamp": "2026-05-19T03:30:10.596177+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "langsmith_project": "agentic_harness",
+      "memory_hit_count": 2,
+      "recent_history_count": 2,
+      "step_id": "review_outline",
+      "timestamp": "2026-05-19T03:30:10.721867+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "langsmith_project": "agentic_harness",
+      "step_id": "review_outline",
+      "timestamp": "2026-05-19T03:30:10.955942+00:00",
+      "type": "review_requested"
+    }
+  ],
+  "execution_outcome": {
+    "completed_step_id": "review_outline",
+    "route": "checkpoint"
+  },
+  "input_payload": {
+    "topic": "LangGraph patterns for durable agent memory"
+  },
+  "invocation_id": "2d925098-6079-4d22-b3b7-bef3825a8a6d",
+  "last_error": null,
+  "memory_hits": [
+    {
+      "record": {
+        "content": "Outline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+        "created_at": "2026-05-19T03:13:35.979752+00:00",
+        "expires_at": null,
+        "memory_type": "decision",
+        "metadata": {},
+        "namespace": "research_brief_memory",
+        "record_id": "838d56e0-31c5-4dc1-ba3c-13a169368d06",
+        "source_run_id": "aec1b4e9-ffa9-412b-9470-4c2cac7c83dc",
+        "source_step_id": "draft_outline"
+      },
+      "score": 0.16666666666666666
+    },
+    {
+      "record": {
+        "content": "Outline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+        "created_at": "2026-05-19T03:30:10.076606+00:00",
+        "expires_at": null,
+        "memory_type": "decision",
+        "metadata": {},
+        "namespace": "research_brief_memory",
+        "record_id": "10bf4604-3e2a-46bc-aad1-cc013f512206",
+        "source_run_id": "9fa22bb2-2c2b-48d3-a0c0-59c4dabfff22",
+        "source_step_id": "draft_outline"
+      },
+      "score": 0.16666666666666666
+    }
+  ],
+  "memory_policy": {
+    "consolidation_strategy": "merge_duplicates",
+    "max_durable_records": 20000,
+    "max_ephemeral_records": 250,
+    "namespace_strategy": "agent_or_workflow",
+    "suspend_on_idle": true
+  },
+  "named_outputs": {
+    "outline": "Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+    "request": "LangGraph patterns for durable agent memory"
+  },
+  "pending_review": {
+    "candidate_output": "Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+    "instructions": "Review the draft outline and approve it when it is ready for finalization.",
+    "step_id": "review_outline",
+    "title": "Review Outline"
+  },
+  "retry_counts": {},
+  "review_responses": {},
+  "run_id": "9fa22bb2-2c2b-48d3-a0c0-59c4dabfff22",
+  "runtime_profile": "durable_research",
+  "status": "awaiting_review",
+  "step_history": [
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {},
+      "next_step": "draft_outline",
+      "output": "LangGraph patterns for durable agent memory",
+      "status": "succeeded",
+      "step_id": "capture_request",
+      "timestamp": "2026-05-19T03:30:09.269172+00:00"
+    },
+    {
+      "attempt": 1,
+      "memory_record_ids": [
+        "10bf4604-3e2a-46bc-aad1-cc013f512206"
+      ],
+      "metadata": {
+        "mode": "deterministic"
+      },
+      "next_step": "review_outline",
+      "output": "Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+      "status": "succeeded",
+      "step_id": "draft_outline",
+      "timestamp": "2026-05-19T03:30:09.928744+00:00"
+    },
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {},
+      "next_step": "review_outline",
+      "output": "Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+      "status": "awaiting_review",
+      "step_id": "review_outline",
+      "timestamp": "2026-05-19T03:30:10.955922+00:00"
+    }
+  ],
+  "step_outputs": {
+    "capture_request": "LangGraph patterns for durable agent memory",
+    "draft_outline": "Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n",
+    "review_outline": "Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\nOutline for LangGraph patterns for durable agent memory: Create a research outline for: LangGraph patterns for durable agent memory\n\nRelevant prior memory:\n"
+  },
+  "workflow_id": "research_brief",
+  "workflow_path": "C:\\Users\\joyba\\PycharmProjects\\langchain_langgraph\\agentic_harness\\examples\\workflows\\research_brief.md",
+  "workflow_title": "Research Brief Workflow",
+  "working_notes": []
+}

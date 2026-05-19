@@ -1,0 +1,14 @@
+{"langsmith_project": "agentic_harness", "run_id": "20ac2a73-ea06-45b0-bf6a-e8b96bd48cf6", "timestamp": "2026-05-19T03:30:50.218832+00:00", "type": "run_started", "workflow_id": "research_brief"}
+{"langsmith_project": "agentic_harness", "match_count": 2, "step_id": "capture_request", "timestamp": "2026-05-19T03:30:50.550085+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "langsmith_project": "agentic_harness", "memory_hit_count": 2, "recent_history_count": 0, "step_id": "capture_request", "timestamp": "2026-05-19T03:30:50.740862+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "langsmith_project": "agentic_harness", "memory_service": "database_memory_service", "next_step": "draft_outline", "step_id": "capture_request", "timestamp": "2026-05-19T03:30:51.207683+00:00", "type": "step_executed"}
+{"checkpoint_index": 1, "current_step": "draft_outline", "langsmith_project": "agentic_harness", "status": "running", "timestamp": "2026-05-19T03:30:51.445765+00:00", "type": "checkpoint"}
+{"langsmith_project": "agentic_harness", "match_count": 2, "step_id": "draft_outline", "timestamp": "2026-05-19T03:30:51.721379+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "langsmith_project": "agentic_harness", "memory_hit_count": 2, "recent_history_count": 1, "step_id": "draft_outline", "timestamp": "2026-05-19T03:30:51.931759+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "langsmith_project": "agentic_harness", "memory_service": "database_memory_service", "next_step": "review_outline", "step_id": "draft_outline", "timestamp": "2026-05-19T03:30:52.134824+00:00", "type": "step_executed"}
+{"langsmith_project": "agentic_harness", "record_id": "c251b5a0-aec9-4c9d-a1de-e77afd9307d5", "step_id": "draft_outline", "timestamp": "2026-05-19T03:30:52.446754+00:00", "type": "memory_written"}
+{"checkpoint_index": 2, "current_step": "review_outline", "langsmith_project": "agentic_harness", "status": "running", "timestamp": "2026-05-19T03:30:52.617008+00:00", "type": "checkpoint"}
+{"langsmith_project": "agentic_harness", "match_count": 3, "step_id": "review_outline", "timestamp": "2026-05-19T03:30:52.818580+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "langsmith_project": "agentic_harness", "memory_hit_count": 3, "recent_history_count": 2, "step_id": "review_outline", "timestamp": "2026-05-19T03:30:52.962106+00:00", "type": "context_prepared"}
+{"langsmith_project": "agentic_harness", "step_id": "review_outline", "timestamp": "2026-05-19T03:30:53.100064+00:00", "type": "review_requested"}
+{"checkpoint_index": 3, "current_step": "review_outline", "langsmith_project": "agentic_harness", "status": "awaiting_review", "timestamp": "2026-05-19T03:30:53.230295+00:00", "type": "checkpoint"}

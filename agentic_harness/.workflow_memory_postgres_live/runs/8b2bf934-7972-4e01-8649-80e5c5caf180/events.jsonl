@@ -1,0 +1,9 @@
+{"run_id": "8b2bf934-7972-4e01-8649-80e5c5caf180", "timestamp": "2026-05-19T03:13:20.024124+00:00", "type": "run_started", "workflow_id": "research_agent_search"}
+{"match_count": 0, "step_id": "capture_query", "timestamp": "2026-05-19T03:13:20.173042+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 0, "step_id": "capture_query", "timestamp": "2026-05-19T03:13:20.433165+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "ephemeral_memory_service", "next_step": "run_web_search", "step_id": "capture_query", "timestamp": "2026-05-19T03:13:20.591063+00:00", "type": "step_executed"}
+{"checkpoint_index": 1, "current_step": "run_web_search", "status": "running", "timestamp": "2026-05-19T03:13:20.740691+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "run_web_search", "timestamp": "2026-05-19T03:13:20.878499+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 1, "step_id": "run_web_search", "timestamp": "2026-05-19T03:13:21.009872+00:00", "type": "context_prepared"}
+{"attempt": 1, "error": "HTTPSConnectionPool(host='api.tavily.com', port=443): Max retries exceeded with url: /search (Caused by NewConnectionError(\"HTTPSConnection(host='api.tavily.com', port=443): Failed to establish a new connection: [WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions\"))", "step_id": "run_web_search", "timestamp": "2026-05-19T03:13:21.215575+00:00", "type": "step_error"}
+{"checkpoint_index": 2, "current_step": null, "status": "failed", "timestamp": "2026-05-19T03:13:21.465954+00:00", "type": "checkpoint"}
