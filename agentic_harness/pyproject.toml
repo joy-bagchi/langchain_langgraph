@@ -7,7 +7,7 @@ name = "agentic-harness"
 version = "0.1.0"
 description = "Layered agentic harness built on LangGraph."
 requires-python = ">=3.10"
-dependencies = ["PyYAML>=6.0", "langchain-openai>=0.3.0", "tavily-python>=0.5.0", "psycopg[binary]>=3.2.0", "langsmith>=0.8.4"]
+dependencies = ["PyYAML>=6.0", "langchain-openai>=0.3.0", "tavily-python>=0.5.0", "psycopg[binary]>=3.2.0", "langsmith>=0.8.4", "amplitude-analytics>=1.1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

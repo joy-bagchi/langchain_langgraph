@@ -11,6 +11,7 @@ from agentic_harness.markdown_workflow import load_workflow_definition
 from agentic_harness.outputs import select_output
 from agentic_harness.agentic_os import resume_declarative_workflow, run_declarative_workflow
 from agentic_harness.runtime import inspect_run, resume_workflow, run_agent_workflow, start_workflow
+import agentic_harness.analytics as _amp
 
 
 def _load_json(path: str | None) -> dict:
@@ -174,6 +175,11 @@ def main() -> None:
             model=args.model,
             temperature=args.temperature,
         )
+        _amp.track("Workflow Run Started", {
+            "workflow_id": definition.workflow_id,
+            "run_id": args.run_id or "",
+            "has_llm_provider": bool(args.llm_provider),
+        })
         result = start_workflow(
             args.workflow,
             _load_json(args.input),
@@ -186,7 +192,17 @@ def main() -> None:
             langsmith_project=args.langsmith_project,
             langsmith_workspace_id=args.langsmith_workspace_id,
         )
+        _amp.track("Workflow Run Completed", {
+            "workflow_id": result.get("workflow_id", definition.workflow_id),
+            "run_id": result.get("run_id", ""),
+            "status": result.get("status", ""),
+            "step_count": len(result.get("step_history", [])),
+        })
     elif args.command == "run-agent":
+        _amp.track("Agent Workflow Started", {
+            "run_id": args.run_id or "",
+            "agent_path": args.agent,
+        })
         result = run_agent_workflow(
             args.agent,
             _build_agent_input_payload(input_path=args.input, query=args.query),
@@ -198,7 +214,18 @@ def main() -> None:
             langsmith_project=args.langsmith_project,
             langsmith_workspace_id=args.langsmith_workspace_id,
         )
+        agent_meta = result.get("agent", {})
+        _amp.track("Agent Workflow Completed", {
+            "agent_id": agent_meta.get("agent_id", ""),
+            "run_id": result.get("run_id", ""),
+            "status": result.get("status", ""),
+            "step_count": len(result.get("step_history", [])),
+        })
     elif args.command == "run-dag":
+        _amp.track("DAG Workflow Started", {
+            "run_id": args.run_id or "",
+            "auto_approve_gates": args.auto_approve_gates,
+        })
         result = run_declarative_workflow(
             args.workflow,
             _build_generic_input_payload(input_path=args.input, query=args.query),
@@ -211,6 +238,12 @@ def main() -> None:
             langsmith_project=args.langsmith_project,
             langsmith_workspace_id=args.langsmith_workspace_id,
         )
+        _amp.track("DAG Workflow Completed", {
+            "workflow_id": result.get("workflow_id", ""),
+            "run_id": result.get("run_id", ""),
+            "status": result.get("status", ""),
+            "completed_stage_count": len(result.get("completed_stages", [])),
+        })
     elif args.command == "resume-dag":
         result = resume_declarative_workflow(
             args.run_id,
@@ -224,6 +257,18 @@ def main() -> None:
             langsmith_project=args.langsmith_project,
             langsmith_workspace_id=args.langsmith_workspace_id,
         )
+        pending = result.get("pending_human_gate") or {}
+        _amp.track("Human Gate Decided", {
+            "run_id": args.run_id,
+            "node_id": pending.get("node_id", ""),
+            "decision": args.decision,
+        })
+        _amp.track("DAG Workflow Completed", {
+            "workflow_id": result.get("workflow_id", ""),
+            "run_id": result.get("run_id", ""),
+            "status": result.get("status", ""),
+            "completed_stage_count": len(result.get("completed_stages", [])),
+        })
     elif args.command == "resume":
         run_state = inspect_run(args.run_id, storage_root=args.storage_root)
         definition = load_workflow_definition(run_state["workflow_path"])
@@ -245,8 +290,16 @@ def main() -> None:
             langsmith_project=args.langsmith_project,
             langsmith_workspace_id=args.langsmith_workspace_id,
         )
+        _amp.track("Workflow Run Completed", {
+            "workflow_id": result.get("workflow_id", definition.workflow_id),
+            "run_id": result.get("run_id", ""),
+            "status": result.get("status", ""),
+            "step_count": len(result.get("step_history", [])),
+        })
     else:
         result = inspect_run(args.run_id, storage_root=args.storage_root)
+
+    _amp.shutdown()
 
     output = select_output(
         result,

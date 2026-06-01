@@ -146,7 +146,7 @@ Those scripts:
 
 - run the deterministic `research_analyst` agent
 - enable LangSmith tracing for that invocation
-- query LangSmith for recent runs in the target project
+- poll LangSmith briefly for recent runs in the target project
 - print a small summary of recent run ids, names, and statuses
 
 ## Run an agent bound to a workflow

@@ -6,6 +6,7 @@ AGENT_PATH="${AGENT_PATH:-agents/research_analyst.yaml}"
 INPUT_PATH="${INPUT_PATH:-examples/workflows/research_brief_input.json}"
 STORAGE_ROOT="${STORAGE_ROOT:-.workflow_memory_langsmith_smoke}"
 RECENT_WINDOW_SECONDS="${RECENT_WINDOW_SECONDS:-180}"
+VERIFICATION_TIMEOUT_SECONDS="${VERIFICATION_TIMEOUT_SECONDS:-30}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 require_command() {
@@ -61,6 +62,11 @@ run_raw="$("$PYTHON_BIN" -m agentic_harness run-agent \
 run_status="$(printf '%s' "$run_raw" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
 run_id="$(printf '%s' "$run_raw" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')"
 
+verification_raw=""
+recent_count=0
+deadline_epoch="$("$PYTHON_BIN" -c "import time; print(int(time.time()) + int(${VERIFICATION_TIMEOUT_SECONDS@Q}))")"
+
+while true; do
 verification_raw="$("$PYTHON_BIN" - <<PY
 from datetime import datetime, timedelta, timezone
 import json
@@ -98,8 +104,16 @@ for run in runs:
 print(json.dumps({"recent_count": len(recent), "recent_runs": recent[:10]}, indent=2))
 PY
 )"
-
 recent_count="$(printf '%s' "$verification_raw" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["recent_count"])')"
+if [[ "$recent_count" -gt 0 ]]; then
+  break
+fi
+now_epoch="$("$PYTHON_BIN" -c 'import time; print(int(time.time()))')"
+if [[ "$now_epoch" -ge "$deadline_epoch" ]]; then
+  break
+fi
+sleep 2
+done
 
 echo
 echo "LangSmith smoke summary:"
@@ -109,7 +123,7 @@ echo "  - LangSmith project: $PROJECT_NAME"
 echo "  - recent LangSmith runs found: $recent_count"
 
 if [[ "$recent_count" -le 0 ]]; then
-  echo "LangSmith did not return any recent runs for project '$PROJECT_NAME'." >&2
+  echo "LangSmith did not return any recent runs for project '$PROJECT_NAME' within $VERIFICATION_TIMEOUT_SECONDS seconds." >&2
   exit 1
 fi
 

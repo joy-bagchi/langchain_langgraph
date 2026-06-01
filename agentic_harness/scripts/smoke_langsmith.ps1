@@ -5,7 +5,8 @@ param(
     [string]$InputPath = "examples/workflows/research_brief_input.json",
     [string]$StorageRoot = ".workflow_memory_langsmith_smoke",
     [string]$DbUrl = "",
-    [int]$RecentWindowSeconds = 180
+    [int]$RecentWindowSeconds = 180,
+    [int]$VerificationTimeoutSeconds = 30
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,7 +69,10 @@ try {
         --output-mode internal
     $runResult = Read-JsonOutput -Raw $runRaw
 
-    $verificationRaw = python -c @"
+    $verification = $null
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($VerificationTimeoutSeconds)
+    do {
+        $verificationRaw = python -c @"
 from datetime import datetime, timedelta, timezone
 import json
 from langsmith import Client
@@ -104,7 +108,12 @@ for run in runs:
 
 print(json.dumps({"recent_count": len(recent), "recent_runs": recent[:10]}, indent=2))
 "@
-    $verification = Read-JsonOutput -Raw $verificationRaw
+        $verification = Read-JsonOutput -Raw $verificationRaw
+        if ([int]$verification.recent_count -gt 0) {
+            break
+        }
+        Start-Sleep -Seconds 2
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
     Write-Host ""
     Write-Host "LangSmith smoke summary:"
@@ -114,7 +123,7 @@ print(json.dumps({"recent_count": len(recent), "recent_runs": recent[:10]}, inde
     Write-Host "  - recent LangSmith runs found: $($verification.recent_count)"
 
     if ([int]$verification.recent_count -le 0) {
-        throw "LangSmith did not return any recent runs for project '$ProjectName'."
+        throw "LangSmith did not return any recent runs for project '$ProjectName' within $VerificationTimeoutSeconds seconds."
     }
 
     Write-Host ""
