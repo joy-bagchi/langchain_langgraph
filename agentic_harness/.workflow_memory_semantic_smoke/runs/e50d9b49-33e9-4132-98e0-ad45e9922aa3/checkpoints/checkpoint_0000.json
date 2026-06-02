@@ -1,0 +1,158 @@
+{
+  "active_context": {
+    "compacted_history": "",
+    "compaction_decision": {
+      "estimated_tokens_after": 0,
+      "estimated_tokens_before": 0,
+      "reason": "",
+      "triggered": false,
+      "trimmed_history_items": 0,
+      "trimmed_memory_items": 0
+    },
+    "context_brief": "Workflow: Research Brief Workflow Step: capture_request Retrieved memory hits: 1.",
+    "current_task": "{input.topic}",
+    "estimated_tokens": 31,
+    "memory_summary": "Outline for What is an SABR model?: Create a research outline for: What is an SABR model?\n\nRelevant prior memory:\n",
+    "raw_memory_hits": [
+      {
+        "record": {
+          "content": "Outline for What is an SABR model?: Create a research outline for: What is an SABR model?\n\nRelevant prior memory:\n",
+          "created_at": "2026-06-02T03:29:05.782716+00:00",
+          "expires_at": null,
+          "memory_type": "decision",
+          "metadata": {},
+          "namespace": "semantic_smoke_035b9de7d950",
+          "record_id": "68488484-aee2-4962-b91e-a09391cbb3d3",
+          "source_run_id": "850a669a-a1f3-4343-89d7-1cc2f73d86e5",
+          "source_step_id": "draft_outline"
+        },
+        "score": 0.34283646941185
+      }
+    ],
+    "recent_history": [],
+    "step_id": "capture_request",
+    "token_budget": 1800,
+    "working_notes": ""
+  },
+  "agent_id": "research_analyst_semantic_smoke",
+  "agent_name": "Research Analyst Semantic Smoke",
+  "agent_role": "research_analyst",
+  "allowed_tools": [
+    "web_search"
+  ],
+  "checkpoint_index": 0,
+  "compaction_decision": {
+    "estimated_tokens_after": 0,
+    "estimated_tokens_before": 0,
+    "reason": "",
+    "triggered": false,
+    "trimmed_history_items": 0,
+    "trimmed_memory_items": 0
+  },
+  "context_policy": {
+    "compaction_strategy": "deterministic",
+    "max_memory_hits": 5,
+    "max_recent_history": 5,
+    "max_working_notes_chars": 1000,
+    "token_budget": 1800
+  },
+  "current_step": "draft_outline",
+  "events": [
+    {
+      "langsmith_project": "agentic-harness",
+      "run_id": "e50d9b49-33e9-4132-98e0-ad45e9922aa3",
+      "timestamp": "2026-06-02T03:29:07.470145+00:00",
+      "type": "run_started",
+      "workflow_id": "research_brief"
+    },
+    {
+      "langsmith_project": "agentic-harness",
+      "match_count": 1,
+      "step_id": "capture_request",
+      "timestamp": "2026-06-02T03:29:07.755749+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "langsmith_project": "agentic-harness",
+      "memory_hit_count": 1,
+      "recent_history_count": 0,
+      "step_id": "capture_request",
+      "timestamp": "2026-06-02T03:29:07.847321+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "langsmith_project": "agentic-harness",
+      "memory_service": "semantic_memory_service",
+      "next_step": "draft_outline",
+      "step_id": "capture_request",
+      "timestamp": "2026-06-02T03:29:08.071131+00:00",
+      "type": "step_executed"
+    }
+  ],
+  "execution_outcome": {
+    "completed_step_id": "capture_request",
+    "memory_content": null,
+    "next_step": "draft_outline",
+    "output": "Explain SABR model parameters and why the model is used in interest rate derivatives.",
+    "route": "checkpoint"
+  },
+  "input_payload": {
+    "topic": "Explain SABR model parameters and why the model is used in interest rate derivatives."
+  },
+  "invocation_id": "53f6b00c-365d-4e90-afb2-0e777935af18",
+  "last_error": null,
+  "memory_hits": [
+    {
+      "record": {
+        "content": "Outline for What is an SABR model?: Create a research outline for: What is an SABR model?\n\nRelevant prior memory:\n",
+        "created_at": "2026-06-02T03:29:05.782716+00:00",
+        "expires_at": null,
+        "memory_type": "decision",
+        "metadata": {},
+        "namespace": "semantic_smoke_035b9de7d950",
+        "record_id": "68488484-aee2-4962-b91e-a09391cbb3d3",
+        "source_run_id": "850a669a-a1f3-4343-89d7-1cc2f73d86e5",
+        "source_step_id": "draft_outline"
+      },
+      "score": 0.34283646941185
+    }
+  ],
+  "memory_policy": {
+    "consolidation_strategy": "merge_duplicates",
+    "max_durable_records": 20000,
+    "max_ephemeral_records": 250,
+    "namespace_strategy": "agent_or_workflow",
+    "suspend_on_idle": true
+  },
+  "named_outputs": {
+    "request": "Explain SABR model parameters and why the model is used in interest rate derivatives."
+  },
+  "pending_review": null,
+  "retry_counts": {},
+  "review_responses": {},
+  "run_id": "e50d9b49-33e9-4132-98e0-ad45e9922aa3",
+  "runtime_profile": "durable_research",
+  "status": "running",
+  "step_history": [
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {},
+      "next_step": "draft_outline",
+      "output": "Explain SABR model parameters and why the model is used in interest rate derivatives.",
+      "status": "succeeded",
+      "step_id": "capture_request",
+      "timestamp": "2026-06-02T03:29:08.071115+00:00"
+    }
+  ],
+  "step_outputs": {
+    "capture_request": "Explain SABR model parameters and why the model is used in interest rate derivatives."
+  },
+  "workflow_id": "research_brief",
+  "workflow_path": "C:\\Users\\joyba\\PycharmProjects\\langchain_langgraph\\agentic_harness\\.workflow_memory_semantic_smoke\\semantic_smoke_assets\\research_brief_semantic.md",
+  "workflow_title": "Research Brief Workflow",
+  "working_notes": []
+}

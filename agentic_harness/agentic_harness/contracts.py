@@ -443,6 +443,7 @@ class MemoryRecord:
     created_at: str = field(default_factory=utc_now)
     expires_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    structured_payload: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -455,6 +456,7 @@ class MemoryRecord:
         source_step_id: str,
         ttl_days: int | None = None,
         metadata: dict[str, Any] | None = None,
+        structured_payload: dict[str, Any] | None = None,
     ) -> "MemoryRecord":
         return cls(
             record_id=str(uuid4()),
@@ -465,6 +467,7 @@ class MemoryRecord:
             source_step_id=source_step_id,
             expires_at=expires_at_from_ttl(ttl_days),
             metadata=dict(metadata or {}),
+            structured_payload=dict(structured_payload or {}),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -482,6 +485,7 @@ class MemoryRecord:
             created_at=payload.get("created_at", utc_now()),
             expires_at=payload.get("expires_at"),
             metadata=dict(payload.get("metadata", {})),
+            structured_payload=dict(payload.get("structured_payload", {})),
         )
 
 
@@ -493,6 +497,8 @@ class MemoryQuery:
     text: str
     max_results: int = 5
     memory_types: list[str] = field(default_factory=list)
+    metadata_filters: dict[str, Any] = field(default_factory=dict)
+    structured_filters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

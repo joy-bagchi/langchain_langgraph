@@ -1,0 +1,52 @@
+[
+  {
+    "content": "Enterprise account renewal profile for Acme Corp.",
+    "created_at": "2026-06-02T03:35:38.274461+00:00",
+    "expires_at": null,
+    "memory_type": "profile",
+    "metadata": {
+      "owner": "sales_ops",
+      "source": "crm"
+    },
+    "namespace": "structured_verify_4e3a77fc09b9",
+    "record_id": "a9a226a7-705e-4565-a017-63855deeb150",
+    "source_run_id": "structured-run-1",
+    "source_step_id": "seed_structured_memory",
+    "structured_payload": {
+      "customer": {
+        "name": "Acme Corp",
+        "region": "emea",
+        "tier": "enterprise"
+      },
+      "renewal": {
+        "month": "2026-09",
+        "risk": "medium"
+      }
+    }
+  },
+  {
+    "content": "SMB account profile for Elm Co.",
+    "created_at": "2026-06-02T03:35:38.457046+00:00",
+    "expires_at": null,
+    "memory_type": "profile",
+    "metadata": {
+      "owner": "sales_ops",
+      "source": "crm"
+    },
+    "namespace": "structured_verify_4e3a77fc09b9",
+    "record_id": "f38b160a-0e7e-4297-a275-39ad1d50c9ea",
+    "source_run_id": "structured-run-2",
+    "source_step_id": "seed_structured_memory",
+    "structured_payload": {
+      "customer": {
+        "name": "Elm Co",
+        "region": "na",
+        "tier": "smb"
+      },
+      "renewal": {
+        "month": "2026-11",
+        "risk": "low"
+      }
+    }
+  }
+]

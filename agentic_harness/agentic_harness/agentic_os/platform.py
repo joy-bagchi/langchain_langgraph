@@ -14,6 +14,8 @@ from agentic_harness.agentic_os.memory_service import (
     EphemeralMemoryService,
     FilesystemMemoryService,
     MemoryServiceSelection,
+    SemanticMemoryService,
+    StructuredMemoryService,
 )
 from agentic_harness.agentic_os.observability_service import (
     EventObservabilityService,
@@ -72,6 +74,12 @@ def build_platform_services(
     )
     if memory_selection.service_type == "ephemeral":
         memory_service = EphemeralMemoryService()
+    elif memory_selection.service_type == "structured":
+        memory_root = Path(storage_root or Path.cwd() / ".workflow_memory")
+        memory_service = StructuredMemoryService(memory_root, database_url=database_url)
+    elif memory_selection.service_type == "semantic":
+        memory_root = Path(storage_root or Path.cwd() / ".workflow_memory")
+        memory_service = SemanticMemoryService(memory_root, database_url=database_url)
     else:
         memory_root = Path(storage_root or Path.cwd() / ".workflow_memory")
         memory_service = FilesystemMemoryService(memory_root, database_url=database_url)

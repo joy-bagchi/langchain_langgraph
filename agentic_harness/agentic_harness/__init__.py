@@ -12,6 +12,8 @@ from agentic_harness.agentic_os import (
 from agentic_harness.agentic_os.memory_service import (
     EphemeralMemoryService,
     FilesystemMemoryService,
+    SemanticMemoryService,
+    StructuredMemoryService,
 )
 from agentic_harness.agentic_os.evaluation_service import BasicEvaluationService
 from agentic_harness.agentic_os.observability_service import (
@@ -107,6 +109,8 @@ __all__ = [
     "DeclarativeWorkflowNode",
     "EphemeralMemoryService",
     "FilesystemMemoryService",
+    "SemanticMemoryService",
+    "StructuredMemoryService",
     "MarkdownWorkflowDefinitionService",
     "YamlAgentDefinitionService",
     "YamlDeclarativeWorkflowDefinitionService",

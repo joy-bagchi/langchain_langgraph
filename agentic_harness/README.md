@@ -159,7 +159,7 @@ name: Research Analyst
 role: research_analyst
 workflow_path: examples/workflows/research_brief.md
 llm_provider: none
-memory_service_type: filesystem
+memory_service_type: semantic
 allowed_tools: []
 ```
 
@@ -301,4 +301,75 @@ Templates can reference:
 - `{context_brief}`
 - `{current_task}`
 - `{context.*}` for fields from the assembled context packet
+
+## Structured and Semantic Memory
+
+The memory layer now supports a structured memory service in addition to the existing ephemeral, durable lexical, and semantic paths.
+
+- select it with `memory_service_type="structured"`
+- structured memory persists a first-class `structured_payload` on each memory record
+- recall supports `metadata_filters` and `structured_filters`, including dotted-path filters like `customer.tier`
+- structured recall stays inside the runtime ledger and does not require a vector backend
+
+- select semantic memory with `memory_service_type="semantic"`
+- on Postgres with `pgvector` available, semantic recall uses vector-backed nearest-neighbor lookup
+- on local SQLite or Postgres without `pgvector`, it falls back to deterministic embedded recall stored in the runtime ledger
+
+One-shot semantic memory smoke tests:
+
+```powershell
+pwsh -File scripts/smoke_semantic_memory.ps1
+```
+
+```bash
+bash scripts/smoke_semantic_memory.sh
+```
+
+Those scripts:
+
+- generate a temporary semantic-memory agent/workflow pair with an isolated memory namespace
+- run the workflow twice against the configured runtime ledger
+- verify that the second run recalls memory written by the first
+- confirm the Postgres `memory_embeddings` rows exist for the test namespace
+
+If you do not set `AGENTIC_HARNESS_DB_URL`, the semantic smoke test uses:
+
+```text
+postgresql://postgres:postgres@localhost:5432/agentic_harness
+```
+
+Programmatic example:
+
+```python
+from agentic_harness import MemoryQuery, MemoryRecord, build_platform_services
+
+services = build_platform_services(
+    storage_root=".workflow_memory",
+    memory_service_type="structured",
+)
+
+services.memory.remember(
+    MemoryRecord.create(
+        namespace="accounts",
+        memory_type="profile",
+        content="Enterprise renewal risk for Acme Corp.",
+        source_run_id="run-1",
+        source_step_id="capture_account",
+        structured_payload={
+            "customer": {"name": "Acme Corp", "tier": "enterprise", "region": "emea"},
+            "renewal": {"month": "2026-09", "risk": "medium"},
+        },
+    )
+)
+
+matches = services.memory.recall(
+    MemoryQuery(
+        namespace="accounts",
+        text="renewal",
+        structured_filters={"customer.tier": "enterprise"},
+    )
+)
+```
+
+This keeps structured and semantic memory inside the same service architecture as the rest of `agentic_os`: the runtime uses the selected memory service, and agents do not need custom storage code.
 

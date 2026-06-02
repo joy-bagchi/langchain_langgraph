@@ -1,0 +1,9 @@
+agent_id: research_analyst_semantic_smoke
+name: Research Analyst Semantic Smoke
+role: research_analyst
+workflow_path: ./research_brief_semantic.md
+llm_provider: none
+memory_service_type: semantic
+runtime_profile: durable_research
+allowed_tools:
+- web_search

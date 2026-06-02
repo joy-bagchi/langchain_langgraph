@@ -22,6 +22,10 @@ from agentic_harness import (
     DeclarativeWorkflowDefinition,
     DagWorkflowRunResult,
     EphemeralMemoryService,
+    MemoryQuery,
+    MemoryRecord,
+    SemanticMemoryService,
+    StructuredMemoryService,
     ToolExecutionRequest,
     WorkflowDagBlueprint,
     DefaultDagCompiler,
@@ -575,6 +579,110 @@ def test_platform_service_bundle_supports_ephemeral_memory(tmp_path: Path) -> No
     assert result["status"] == "completed"
     assert isinstance(services.memory, EphemeralMemoryService)
     assert services.memory.descriptor.implementation_id == "ephemeral_memory_service"
+
+
+def test_platform_service_bundle_supports_semantic_memory(tmp_path: Path) -> None:
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="semantic",
+    )
+
+    assert isinstance(services.memory, SemanticMemoryService)
+    assert "semantic_memory" in services.memory.descriptor.capabilities
+
+
+def test_semantic_memory_service_recalls_related_content(tmp_path: Path) -> None:
+    service = SemanticMemoryService(tmp_path / "runtime_store")
+    service.remember(
+        MemoryRecord.create(
+            namespace="quant_memory",
+            memory_type="fact",
+            content="SABR is a stochastic volatility model used in interest rate derivatives.",
+            source_run_id="run-1",
+            source_step_id="step-1",
+        )
+    )
+    service.remember(
+        MemoryRecord.create(
+            namespace="quant_memory",
+            memory_type="fact",
+            content="Black Scholes assumes constant volatility for option pricing.",
+            source_run_id="run-2",
+            source_step_id="step-2",
+        )
+    )
+
+    results = service.recall(
+        MemoryQuery(
+            namespace="quant_memory",
+            text="stochastic volatility smile model",
+            max_results=2,
+        )
+    )
+
+    assert results
+    assert "SABR" in results[0].record.content
+    assert results[0].score >= results[-1].score
+
+
+def test_platform_service_bundle_supports_structured_memory(tmp_path: Path) -> None:
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="structured",
+    )
+
+    assert isinstance(services.memory, StructuredMemoryService)
+    assert "structured_memory" in services.memory.descriptor.capabilities
+
+
+def test_structured_memory_service_filters_nested_payload_fields(tmp_path: Path) -> None:
+    service = StructuredMemoryService(tmp_path / "runtime_store")
+    service.remember(
+        MemoryRecord.create(
+            namespace="account_memory",
+            memory_type="profile",
+            content="Enterprise customer renewal scheduled for September.",
+            source_run_id="run-1",
+            source_step_id="step-1",
+            metadata={"source": "crm"},
+            structured_payload={
+                "customer": {"tier": "enterprise", "region": "emea"},
+                "renewal": {"month": "2026-09", "risk": "medium"},
+            },
+        )
+    )
+    service.remember(
+        MemoryRecord.create(
+            namespace="account_memory",
+            memory_type="profile",
+            content="SMB customer with low annual contract value.",
+            source_run_id="run-2",
+            source_step_id="step-2",
+            metadata={"source": "crm"},
+            structured_payload={
+                "customer": {"tier": "smb", "region": "na"},
+                "renewal": {"month": "2026-11", "risk": "low"},
+            },
+        )
+    )
+
+    results = service.recall(
+        MemoryQuery(
+            namespace="account_memory",
+            text="renewal",
+            max_results=5,
+            memory_types=["profile"],
+            metadata_filters={"source": "crm"},
+            structured_filters={
+                "customer.tier": "enterprise",
+                "customer.region": "emea",
+            },
+        )
+    )
+
+    assert len(results) == 1
+    assert results[0].record.structured_payload["renewal"]["month"] == "2026-09"
+    assert "Enterprise customer" in results[0].record.content
 
 
 def test_default_cognitive_service_descriptor_exposes_capabilities() -> None:

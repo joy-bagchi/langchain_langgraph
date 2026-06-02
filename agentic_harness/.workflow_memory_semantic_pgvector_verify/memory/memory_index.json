@@ -1,0 +1,28 @@
+[
+  {
+    "content": "SABR is a stochastic volatility model used in interest rate derivatives.",
+    "created_at": "2026-06-02T03:22:21.770718+00:00",
+    "expires_at": null,
+    "memory_type": "semantic",
+    "metadata": {
+      "topic": "finance"
+    },
+    "namespace": "semantic_pgvector_test",
+    "record_id": "2b687c48-a03c-4044-bc69-eb8032fd05e5",
+    "source_run_id": "semantic-pgvector-run-f668df46-36d8-45b2-be9f-a1f2c62f6819",
+    "source_step_id": "verify_pgvector"
+  },
+  {
+    "content": "LangGraph is used for stateful graph orchestration.",
+    "created_at": "2026-06-02T03:22:21.870018+00:00",
+    "expires_at": null,
+    "memory_type": "semantic",
+    "metadata": {
+      "topic": "agents"
+    },
+    "namespace": "semantic_pgvector_test",
+    "record_id": "0729d7ac-b127-4b29-92cf-771cae3fb0fd",
+    "source_run_id": "semantic-pgvector-run-c62228d5-e0d0-4e63-b4ca-00b65d6b42e3",
+    "source_step_id": "verify_pgvector"
+  }
+]

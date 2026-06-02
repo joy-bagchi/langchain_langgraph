@@ -40,6 +40,24 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _lookup_nested_value(payload: dict[str, Any], path: str) -> Any:
+    current: Any = payload
+    for segment in path.split("."):
+        if not isinstance(current, dict) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
+def _dict_matches_filters(payload: dict[str, Any], filters: dict[str, Any]) -> bool:
+    if not filters:
+        return True
+    for key, expected in filters.items():
+        if _lookup_nested_value(payload, key) != expected:
+            return False
+    return True
+
+
 class RuntimeLedger:
     """Durable runtime ledger backed by SQLite or Postgres."""
 
@@ -99,6 +117,22 @@ class RuntimeLedger:
             cursor = connection.cursor()
             for statement in statements:
                 cursor.execute(statement)
+
+    def _column_exists(self, table_name: str, column_name: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.cursor()
+            if self.scheme == "sqlite":
+                rows = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
+                return any(row["name"] == column_name for row in rows)
+            cursor.execute(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = %s AND column_name = %s
+                """,
+                (table_name, column_name),
+            )
+            return cursor.fetchone() is not None
 
     def _ensure_schema(self) -> None:
         statements = [
@@ -181,6 +215,25 @@ class RuntimeLedger:
             """,
         ]
         self._execute_script(statements)
+        if not self._column_exists("memory_records", "structured_payload_json"):
+            if self.scheme == "sqlite":
+                self._execute_script(
+                    [
+                        """
+                        ALTER TABLE memory_records
+                        ADD COLUMN structured_payload_json TEXT NOT NULL DEFAULT '{}'
+                        """
+                    ]
+                )
+            else:
+                self._execute_script(
+                    [
+                        """
+                        ALTER TABLE memory_records
+                        ADD COLUMN IF NOT EXISTS structured_payload_json TEXT NOT NULL DEFAULT '{}'
+                        """
+                    ]
+                )
 
     def save_run_state(self, state: dict[str, Any]) -> None:
         run_id = str(state["run_id"])
@@ -468,18 +521,35 @@ class RuntimeLedger:
                 created_at=existing.created_at,
                 expires_at=existing.expires_at,
                 metadata=merged_metadata,
+                structured_payload={**existing.structured_payload, **record.structured_payload},
             )
             with self._connect() as connection:
                 cursor = connection.cursor()
                 if self.scheme == "sqlite":
                     cursor.execute(
-                        "UPDATE memory_records SET metadata_json = ? WHERE record_id = ?",
-                        (json.dumps(merged_metadata, sort_keys=True), merged.record_id),
+                        """
+                        UPDATE memory_records
+                        SET metadata_json = ?, structured_payload_json = ?
+                        WHERE record_id = ?
+                        """,
+                        (
+                            json.dumps(merged_metadata, sort_keys=True),
+                            json.dumps(merged.structured_payload, sort_keys=True),
+                            merged.record_id,
+                        ),
                     )
                 else:
                     cursor.execute(
-                        "UPDATE memory_records SET metadata_json = %s WHERE record_id = %s",
-                        (json.dumps(merged_metadata, sort_keys=True), merged.record_id),
+                        """
+                        UPDATE memory_records
+                        SET metadata_json = %s, structured_payload_json = %s
+                        WHERE record_id = %s
+                        """,
+                        (
+                            json.dumps(merged_metadata, sort_keys=True),
+                            json.dumps(merged.structured_payload, sort_keys=True),
+                            merged.record_id,
+                        ),
                     )
             return merged
 
@@ -490,9 +560,9 @@ class RuntimeLedger:
                     """
                     INSERT INTO memory_records (
                         record_id, namespace, memory_type, content, source_run_id, source_step_id,
-                        created_at, expires_at, metadata_json
+                        created_at, expires_at, metadata_json, structured_payload_json
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record.record_id,
@@ -504,6 +574,7 @@ class RuntimeLedger:
                         record.created_at or now,
                         record.expires_at,
                         json.dumps(record.metadata, sort_keys=True),
+                        json.dumps(record.structured_payload, sort_keys=True),
                     ),
                 )
             else:
@@ -511,9 +582,9 @@ class RuntimeLedger:
                     """
                     INSERT INTO memory_records (
                         record_id, namespace, memory_type, content, source_run_id, source_step_id,
-                        created_at, expires_at, metadata_json
+                        created_at, expires_at, metadata_json, structured_payload_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         record.record_id,
@@ -525,6 +596,7 @@ class RuntimeLedger:
                         record.created_at or now,
                         record.expires_at,
                         json.dumps(record.metadata, sort_keys=True),
+                        json.dumps(record.structured_payload, sort_keys=True),
                     ),
                 )
         return record
@@ -535,7 +607,10 @@ class RuntimeLedger:
             if self.scheme == "sqlite":
                 row = cursor.execute(
                     """
-                    SELECT * FROM memory_records
+                    SELECT
+                        record_id, namespace, memory_type, content, source_run_id, source_step_id,
+                        created_at, expires_at, metadata_json, structured_payload_json
+                    FROM memory_records
                     WHERE namespace = ? AND memory_type = ? AND content = ?
                     LIMIT 1
                     """,
@@ -544,7 +619,10 @@ class RuntimeLedger:
             else:
                 cursor.execute(
                     """
-                    SELECT * FROM memory_records
+                    SELECT
+                        record_id, namespace, memory_type, content, source_run_id, source_step_id,
+                        created_at, expires_at, metadata_json, structured_payload_json
+                    FROM memory_records
                     WHERE namespace = %s AND memory_type = %s AND content = %s
                     LIMIT 1
                     """,
@@ -563,14 +641,23 @@ class RuntimeLedger:
                     placeholders = ", ".join("?" for _ in query.memory_types)
                     rows = cursor.execute(
                         f"""
-                        SELECT * FROM memory_records
+                        SELECT
+                            record_id, namespace, memory_type, content, source_run_id, source_step_id,
+                            created_at, expires_at, metadata_json, structured_payload_json
+                        FROM memory_records
                         WHERE namespace = ? AND memory_type IN ({placeholders})
                         """,
                         (query.namespace, *query.memory_types),
                     ).fetchall()
                 else:
                     rows = cursor.execute(
-                        "SELECT * FROM memory_records WHERE namespace = ?",
+                        """
+                        SELECT
+                            record_id, namespace, memory_type, content, source_run_id, source_step_id,
+                            created_at, expires_at, metadata_json, structured_payload_json
+                        FROM memory_records
+                        WHERE namespace = ?
+                        """,
                         (query.namespace,),
                     ).fetchall()
             else:
@@ -578,14 +665,23 @@ class RuntimeLedger:
                     placeholders = ", ".join("%s" for _ in query.memory_types)
                     cursor.execute(
                         f"""
-                        SELECT * FROM memory_records
+                        SELECT
+                            record_id, namespace, memory_type, content, source_run_id, source_step_id,
+                            created_at, expires_at, metadata_json, structured_payload_json
+                        FROM memory_records
                         WHERE namespace = %s AND memory_type IN ({placeholders})
                         """,
                         (query.namespace, *query.memory_types),
                     )
                 else:
                     cursor.execute(
-                        "SELECT * FROM memory_records WHERE namespace = %s",
+                        """
+                        SELECT
+                            record_id, namespace, memory_type, content, source_run_id, source_step_id,
+                            created_at, expires_at, metadata_json, structured_payload_json
+                        FROM memory_records
+                        WHERE namespace = %s
+                        """,
                         (query.namespace,),
                     )
                 rows = cursor.fetchall()
@@ -603,7 +699,15 @@ class RuntimeLedger:
                 expires_at = datetime.fromisoformat(record.expires_at)
                 if expires_at <= now:
                     continue
-            haystack = f"{record.content} {json.dumps(record.metadata, sort_keys=True)}".lower()
+            if not _dict_matches_filters(record.metadata, query.metadata_filters):
+                continue
+            if not _dict_matches_filters(record.structured_payload, query.structured_filters):
+                continue
+            haystack = (
+                f"{record.content} "
+                f"{json.dumps(record.metadata, sort_keys=True)} "
+                f"{json.dumps(record.structured_payload, sort_keys=True)}"
+            ).lower()
             score = 1.0 if not query_terms else 0.0
             if query_terms:
                 matches = sum(1 for term in query_terms if term in haystack)
@@ -631,6 +735,7 @@ class RuntimeLedger:
             created_at=_value("created_at", 6),
             expires_at=_value("expires_at", 7),
             metadata=json.loads(_value("metadata_json", 8) or "{}"),
+            structured_payload=json.loads(_value("structured_payload_json", 9) or "{}"),
         )
 
 
