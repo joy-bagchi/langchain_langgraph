@@ -9,7 +9,7 @@ from agentic_harness.agentic_os.context_service import DefaultContextService
 from agentic_harness.agentic_os.dag_compiler import DefaultDagCompiler
 from agentic_harness.agentic_os.dag_executor import DefaultDagExecutor
 from agentic_harness.agentic_os.evaluation_service import BasicEvaluationService
-from agentic_harness.agentic_os.guardrail_service import PassthroughGuardrailService
+from agentic_harness.agentic_os.guardrail_service import RuleBasedGuardrailService
 from agentic_harness.agentic_os.memory_service import (
     EphemeralMemoryService,
     FilesystemMemoryService,
@@ -45,7 +45,7 @@ class PlatformServiceBundle:
     context: DefaultContextService
     memory: object
     runtime_store: WorkflowRunStore
-    guardrails: PassthroughGuardrailService
+    guardrails: RuleBasedGuardrailService
     observability: EventObservabilityService
     tools: RegisteredToolService
     evaluation: BasicEvaluationService
@@ -105,7 +105,7 @@ def build_platform_services(
         context=DefaultContextService(),
         memory=memory_service,
         runtime_store=runtime_store,
-        guardrails=PassthroughGuardrailService(),
+        guardrails=RuleBasedGuardrailService(),
         observability=EventObservabilityService(
             langsmith_config=langsmith_config,
             langsmith_client=langsmith_client,

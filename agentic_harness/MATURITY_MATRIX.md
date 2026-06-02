@@ -45,7 +45,7 @@ Notes:
 | Context | Rule-based compaction/budgeting | Applies deterministic limits to context size and records compaction decisions | Verified | Implemented and surfaced in state and events | Add invocation-driven compaction and better heuristics |
 | Tools | Toolbox service contract | Provides a service boundary for tool registration, authorization, and execution | Production-Ready | Tools are routed through dedicated service interface | Add more tools and tool metadata |
 | Tools | `web_search` tool | Gives agents a built-in web search capability through the tool service | Production-Ready | Real research agent runs completed successfully using live search | Add fallback provider support and tool-health reporting |
-| Guardrails | Guardrail service hook | Exposes pre/post execution hook points for policy checks | Implemented | Hook exists in runtime before/after execution | Replace pass-through default with real policy engine |
+| Guardrails | Rule-based guardrail engine | Applies deterministic pre/post execution policy checks, blocks secret-like output, and escalates sensitive output into the review flow | Verified | Replaced the pass-through default with `RuleBasedGuardrailService`; targeted tests verify pre-step blocking, post-step escalation, and approved resume without rerunning the underlying step | Add richer rule packs, workflow-level policy defaults, and optional pre-step escalation reviews |
 | Evaluation | Basic evaluation service | Runs a lightweight post-execution evaluator over workflow and agent steps | Implemented | Replaced null placeholder with basic evaluator | Add critics, scoring, and routing influence |
 | Security | Security service boundary | Reserves a service seam for auth, authz, and policy enforcement | Scaffolded | Service boundary exists in architecture/service bundle | Implement real auth, authz, and identity policy |
 | Output Layer | Internal / artifact / response separation | Separates raw runtime state from public artifacts and caller-facing responses | Production-Ready | Caller-facing output is separated from internal OS state | Add more explicit typed artifact contracts |
@@ -60,8 +60,8 @@ Notes:
 
 These are the main slices that are not yet mature enough:
 
-1. Guardrails as a real policy engine.
-2. Evaluation and critics that can influence retries, escalation, or human review.
+1. Evaluation and critics that can influence retries, escalation, or human review.
+2. Richer guardrail policies, workflow-level defaults, and safer domain-specific rule packs.
 3. Invocation lifecycle management for suspend/revive beyond explicit human gates.
 4. Stronger memory lifecycle management across long-running and high-agent-count workloads.
 5. Security, auth, identity, and policy enforcement.

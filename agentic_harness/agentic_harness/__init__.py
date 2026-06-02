@@ -15,6 +15,7 @@ from agentic_harness.agentic_os.memory_service import (
     SemanticMemoryService,
     StructuredMemoryService,
 )
+from agentic_harness.agentic_os.guardrail_service import RuleBasedGuardrailService
 from agentic_harness.agentic_os.evaluation_service import BasicEvaluationService
 from agentic_harness.agentic_os.observability_service import (
     LangSmithConfig,
@@ -122,6 +123,7 @@ __all__ = [
     "PlatformServiceBundle",
     "RegisteredToolService",
     "ResponseEnvelope",
+    "RuleBasedGuardrailService",
     "RuntimeLedger",
     "StepExecutionResult",
     "StepHistoryEntry",

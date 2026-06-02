@@ -287,6 +287,39 @@ Prompt steps now run through an explicit context manager layer before execution.
 - working notes
 - a short `context_brief`
 
+## Guardrails
+
+The runtime now uses a rule-based guardrail engine by default.
+
+- pre-step guardrails can block execution before a step runs
+- post-step guardrails can block output or escalate it into the existing review/pause flow
+- step-level overrides live in the workflow step metadata under `guardrails:`
+- agent-level defaults can be provided through extra agent YAML metadata under `guardrails:`
+
+Example step-level policy:
+
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+guardrails:
+  pre:
+    max_input_chars: 8000
+    blocked_tool_ids: []
+  post:
+    max_output_chars: 12000
+    detect_secrets: true
+    detect_pii: true
+    escalate_patterns:
+      - "internal only"
+```
+
+Current default behavior:
+
+- outputs that look like secrets are blocked
+- outputs that look like PII, such as email addresses or SSNs, are escalated for review
+- an approved post-step guardrail review resumes without rerunning the underlying step
+
 The OS now also applies rule-based context budgeting:
 
 - runtime profiles provide default context and memory policies

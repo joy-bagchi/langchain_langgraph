@@ -14,6 +14,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentic_harness.__main__ import _build_agent_input_payload, build_parser
+from agentic_harness.contracts import WorkflowGraphState, WorkflowStep
+from agentic_harness.agentic_os.guardrail_service import GuardrailRequest, RuleBasedGuardrailService
 from agentic_harness.agentic_os.observability_service import ObservabilityRequest
 from agentic_harness.shared.services import ServiceEvent
 from agentic_harness import (
@@ -26,6 +28,7 @@ from agentic_harness import (
     MemoryRecord,
     SemanticMemoryService,
     StructuredMemoryService,
+    StepExecutionResult,
     ToolExecutionRequest,
     WorkflowDagBlueprint,
     DefaultDagCompiler,
@@ -683,6 +686,136 @@ def test_structured_memory_service_filters_nested_payload_fields(tmp_path: Path)
     assert len(results) == 1
     assert results[0].record.structured_payload["renewal"]["month"] == "2026-09"
     assert "Enterprise customer" in results[0].record.content
+
+
+def test_rule_based_guardrail_service_blocks_configured_tool_ids() -> None:
+    service = RuleBasedGuardrailService()
+    step = WorkflowStep(
+        step_id="call_tool",
+        title="Call Tool",
+        step_type="tool",
+        metadata={
+            "tool_id": "web_search",
+            "guardrails": {"pre": {"blocked_tool_ids": ["web_search"]}},
+        },
+    )
+
+    decision = service.evaluate(
+        GuardrailRequest(
+            phase="pre_step",
+            step=step,
+            state=WorkflowGraphState(current_step="call_tool", workflow_id="test"),
+            metadata={"tool_id": "web_search", "input_text": "{\"query\": \"secret\"}"},
+        )
+    )
+
+    assert not decision.allowed
+    assert decision.action == "block"
+    assert "web_search" in " ".join(decision.reasons)
+
+
+def test_guardrail_escalation_pauses_and_resume_uses_approved_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "guardrail_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: guardrail_workflow
+title: Guardrail Workflow
+entry_step: draft_message
+memory_namespace: guardrail_memory
+---
+
+# Guardrail Workflow
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+guardrails:
+  post:
+    detect_secrets: false
+    detect_pii: true
+```
+
+```prompt
+Draft a sensitive message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def guarded_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, Any]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        return StepExecutionResult(output="Contact analyst@example.com for the final report.")
+
+    first = start_workflow(
+        workflow_path,
+        {"topic": "guardrail"},
+        storage_root=storage_root,
+        executors={"prompt": guarded_prompt_executor},
+    )
+
+    assert first["status"] == "awaiting_review"
+    assert first["pending_review"]["review_type"] == "guardrail_post"
+    assert "analyst@example.com" in first["pending_review"]["candidate_output"]
+    assert call_count["prompt"] == 1
+
+    resumed = resume_workflow(
+        first["run_id"],
+        storage_root=storage_root,
+        decision="approved",
+        notes="approved after review",
+        executors={"prompt": guarded_prompt_executor},
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["named_outputs"]["message"] == "Contact analyst@example.com for the final report."
+    assert call_count["prompt"] == 1
+    assert resumed["step_history"][-1]["metadata"]["guardrail_review"] == "approved"
+
+
+def test_guardrail_blocks_secret_like_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "secret_guardrail_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: secret_guardrail_workflow
+title: Secret Guardrail Workflow
+entry_step: expose_secret
+memory_namespace: guardrail_memory
+---
+
+# Secret Guardrail Workflow
+
+## Step: expose_secret
+```yaml
+type: prompt
+id: expose_secret
+output_key: secret
+```
+
+```prompt
+Return a secret.
+```
+""",
+        encoding="utf-8",
+    )
+
+    def secret_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, Any]) -> StepExecutionResult:
+        return StepExecutionResult(output="sk-abcdefghijklmnopqrstuvwxyz123456")
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "guardrail"},
+        storage_root=storage_root,
+        executors={"prompt": secret_prompt_executor},
+    )
+
+    assert result["status"] == "failed"
+    assert "secret" in (result.get("last_error") or "").lower()
 
 
 def test_default_cognitive_service_descriptor_exposes_capabilities() -> None:

@@ -46,6 +46,61 @@ def _deepcopy_dict(payload: dict[str, Any] | None) -> dict[str, Any]:
     return deepcopy(payload or {})
 
 
+def _stringify_guardrail_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, sort_keys=True)
+    except TypeError:
+        return str(value)
+
+
+def _build_guardrail_request_metadata(step: WorkflowStep, state: WorkflowGraphState) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if step.step_type == "tool":
+        tool_id = str(step.metadata.get("tool_id", "")).strip()
+        metadata["tool_id"] = tool_id
+        argument_templates = step.metadata.get("arguments", {})
+        if isinstance(argument_templates, dict):
+            arguments = _render_tool_value(argument_templates, state)
+            if "query_template" in step.metadata and "query" not in arguments:
+                arguments["query"] = render_template(str(step.metadata["query_template"]), state)
+            metadata["input_text"] = _stringify_guardrail_value(arguments)
+    elif step.step_type == "collect":
+        if "input_key" in step.metadata:
+            metadata["input_text"] = _stringify_guardrail_value(
+                state.get("input_payload", {}).get(step.metadata["input_key"])
+            )
+        else:
+            metadata["input_text"] = _stringify_guardrail_value(state.get("input_payload", {}))
+    else:
+        metadata["input_text"] = render_template(step.prompt, state) if step.prompt else ""
+    return metadata
+
+
+def _build_guardrail_review_request(
+    *,
+    step: WorkflowStep,
+    phase: str,
+    reasons: list[str],
+    candidate_output: Any,
+) -> dict[str, Any]:
+    phase_label = "pre" if phase == "pre_step" else "post"
+    return {
+        "step_id": step.step_id,
+        "title": f"Guardrail Review: {step.title}",
+        "review_type": f"guardrail_{phase_label}",
+        "instructions": (
+            f"Guardrail policy escalated this {phase.replace('_', '-')} review.\n\n"
+            f"Reasons:\n- " + "\n- ".join(reasons)
+        ),
+        "candidate_output": candidate_output,
+        "guardrail_reasons": list(reasons),
+    }
+
+
 def _runtime_profile_defaults(profile_id: str | None) -> AgentRuntimeProfile:
     profile = (profile_id or "default").strip().lower()
     if profile == "durable_research":
@@ -308,37 +363,19 @@ def compile_workflow(
         step = definition.steps[step_id]
         retry_counts = dict(state.get("retry_counts", {}))
         events = list(state.get("events", []))
+        review_responses = dict(state.get("review_responses", {}))
         attempt = retry_counts.get(step_id, 0) + 1
-        authz = services.security.authorize(
-            AuthorizationRequest(
-                capability=f"step:{step.step_type}",
-                metadata={"step_id": step.step_id, "workflow_id": definition.workflow_id},
-            )
-        )
-        if not authz.allowed:
-            raise PermissionError(authz.reason)
-        pre_guardrail = services.guardrails.evaluate(
-            GuardrailRequest(phase="pre_step", step=step, state=state)
-        )
-        if not pre_guardrail.allowed:
-            raise PermissionError("; ".join(pre_guardrail.reasons) or "pre-step guardrail blocked execution")
 
-        try:
-            executor = executor_registry.get(step.step_type)
-            if executor is None:
-                raise ValueError(
-                    f"No executor registered for step type '{step.step_type}'."
-                )
-            result = executor(step, state, {})
-        except Exception as exc:
+        def _failure_state(exc: Exception, *, retryable: bool) -> WorkflowGraphState:
+            should_retry = retryable and attempt <= step.max_retries
             retry_counts[step_id] = attempt
             history = list(state.get("step_history", []))
             history.append(
                 StepHistoryEntry(
                     step_id=step_id,
-                    status="failed" if attempt > step.max_retries else "retrying",
+                    status="failed" if not should_retry else "retrying",
                     output=None,
-                    next_step=step_id if attempt <= step.max_retries else None,
+                    next_step=step_id if should_retry else None,
                     attempt=attempt,
                     metadata={"error": str(exc)},
                 ).to_dict()
@@ -352,18 +389,6 @@ def compile_workflow(
                     "error": str(exc),
                 },
             ))))
-            if attempt <= step.max_retries:
-                return {
-                    "retry_counts": retry_counts,
-                    "step_history": history,
-                    "events": events,
-                    "execution_outcome": {
-                        "route": "checkpoint",
-                        "completed_step_id": step_id,
-                    },
-                    "status": "running",
-                    "last_error": str(exc),
-                }
             return {
                 "retry_counts": retry_counts,
                 "step_history": history,
@@ -372,28 +397,140 @@ def compile_workflow(
                     "route": "checkpoint",
                     "completed_step_id": step_id,
                 },
-                "status": "failed",
-                "current_step": None,
+                "status": "running" if should_retry else "failed",
+                "current_step": step_id if should_retry else None,
                 "last_error": str(exc),
+                "review_responses": review_responses,
             }
+
+        guardrail_response = review_responses.get(step_id)
+        skip_post_guardrail = False
+        if isinstance(guardrail_response, dict) and guardrail_response.get("review_type") == "guardrail_post":
+            review_responses.pop(step_id, None)
+            decision = str(guardrail_response.get("decision", "")).strip().lower()
+            if decision == "rejected":
+                return _failure_state(
+                    PermissionError("guardrail review rejected output"),
+                    retryable=False,
+                )
+            if decision == "approved":
+                result = StepExecutionResult(
+                    output=guardrail_response.get("candidate_output"),
+                    metadata={
+                        "guardrail_review": "approved",
+                        "guardrail_reasons": list(guardrail_response.get("guardrail_reasons", [])),
+                    },
+                )
+                skip_post_guardrail = True
+            else:
+                return _failure_state(
+                    PermissionError("guardrail review expected approved or rejected"),
+                    retryable=False,
+                )
+        else:
+            result = None
+
+        authz = services.security.authorize(
+            AuthorizationRequest(
+                capability=f"step:{step.step_type}",
+                metadata={"step_id": step.step_id, "workflow_id": definition.workflow_id},
+            )
+        )
+        if not authz.allowed:
+            return _failure_state(PermissionError(authz.reason), retryable=False)
+
+        if result is None:
+            pre_guardrail = services.guardrails.evaluate(
+                GuardrailRequest(
+                    phase="pre_step",
+                    step=step,
+                    state=state,
+                    metadata=_build_guardrail_request_metadata(step, state),
+                )
+            )
+            if not pre_guardrail.allowed:
+                return _failure_state(
+                    PermissionError("; ".join(pre_guardrail.reasons) or "pre-step guardrail blocked execution"),
+                    retryable=False,
+                )
+
+            try:
+                executor = executor_registry.get(step.step_type)
+                if executor is None:
+                    raise ValueError(
+                        f"No executor registered for step type '{step.step_type}'."
+                    )
+                result = executor(step, state, {})
+            except Exception as exc:
+                return _failure_state(exc, retryable=True)
 
         step_outputs = dict(state.get("step_outputs", {}))
         named_outputs = dict(state.get("named_outputs", {}))
-        review_responses = dict(state.get("review_responses", {}))
         if result.output is not None:
             step_outputs[step_id] = result.output
             if step.output_key:
                 named_outputs[step.output_key] = result.output
-        post_guardrail = services.guardrails.evaluate(
-            GuardrailRequest(
-                phase="post_step",
-                step=step,
-                state={**state, "step_outputs": step_outputs, "named_outputs": named_outputs},
-                candidate_output=result.output,
+        post_guardrail = (
+            services.guardrails.evaluate(
+                GuardrailRequest(
+                    phase="post_step",
+                    step=step,
+                    state={**state, "step_outputs": step_outputs, "named_outputs": named_outputs},
+                    candidate_output=result.output,
+                    metadata={"output_text": _stringify_guardrail_value(result.output)},
+                )
             )
+            if not skip_post_guardrail
+            else None
         )
-        if not post_guardrail.allowed:
-            raise PermissionError("; ".join(post_guardrail.reasons) or "post-step guardrail blocked output")
+        if post_guardrail is not None and not post_guardrail.allowed:
+            if post_guardrail.action == "escalate":
+                history = list(state.get("step_history", []))
+                history.append(
+                    StepHistoryEntry(
+                        step_id=step_id,
+                        status="awaiting_review",
+                        output=result.output,
+                        next_step=step_id,
+                        attempt=attempt,
+                        metadata={
+                            "guardrail_action": "escalate",
+                            "guardrail_reasons": list(post_guardrail.reasons),
+                        },
+                    ).to_dict()
+                )
+                events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+                    event_type="guardrail_review_requested",
+                    payload={
+                        "timestamp": utc_now(),
+                        "step_id": step_id,
+                        "phase": "post_step",
+                        "reasons": list(post_guardrail.reasons),
+                    },
+                ))))
+                return {
+                    "step_outputs": step_outputs,
+                    "named_outputs": named_outputs,
+                    "step_history": history,
+                    "events": events,
+                    "pending_review": _build_guardrail_review_request(
+                        step=step,
+                        phase="post_step",
+                        reasons=post_guardrail.reasons,
+                        candidate_output=result.output,
+                    ),
+                    "status": "awaiting_review",
+                    "execution_outcome": {
+                        "route": "checkpoint",
+                        "completed_step_id": step_id,
+                    },
+                    "last_error": None,
+                    "review_responses": review_responses,
+                }
+            return _failure_state(
+                PermissionError("; ".join(post_guardrail.reasons) or "post-step guardrail blocked output"),
+                retryable=False,
+            )
         services.evaluation.evaluate(
             EvaluationRequest(
                 phase="step",
@@ -485,7 +622,7 @@ def compile_workflow(
                 "memory_content": result.memory_content,
             },
             "last_error": None,
-            "review_responses": review_responses,
+            "review_responses": {key: value for key, value in review_responses.items() if key != step_id},
         }
 
     def write_memory(state: WorkflowGraphState) -> WorkflowGraphState:
@@ -665,6 +802,7 @@ class WorkflowRunner:
             agent_id=None,
             agent_name=None,
             agent_role=None,
+            agent_metadata={},
             invocation_id=resolved_run_id,
             runtime_profile="default",
             allowed_tools=[],
@@ -743,7 +881,13 @@ class WorkflowRunner:
             step_id = pending_review.get("step_id") or state.get("current_step")
             if step_id:
                 review_responses = dict(state.get("review_responses", {}))
-                review_responses[step_id] = {"decision": decision, "notes": notes}
+                review_responses[step_id] = {
+                    "decision": decision,
+                    "notes": notes,
+                    "review_type": pending_review.get("review_type"),
+                    "candidate_output": pending_review.get("candidate_output"),
+                    "guardrail_reasons": list(pending_review.get("guardrail_reasons", [])),
+                }
                 state["review_responses"] = review_responses
             state["status"] = "running"
             state["pending_review"] = None
@@ -925,6 +1069,7 @@ def run_agent_workflow(
             "agent_id": agent_definition.agent_id,
             "agent_name": agent_definition.name,
             "agent_role": agent_definition.role,
+            "agent_metadata": dict(agent_definition.metadata),
             "invocation_id": run_id or str(uuid4()),
             "runtime_profile": runtime_profile.profile_id,
             "context_policy": runtime_profile.context_policy.to_dict(),
