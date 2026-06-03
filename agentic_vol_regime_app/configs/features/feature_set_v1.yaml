@@ -1,0 +1,12 @@
+feature_set_version: vol_regime_features_v1
+lookback_windows:
+  zscore_short: 22
+  rv_short: 5
+  rv_medium: 21
+  drawdown_window: 21
+required_symbols:
+  - SPY
+  - VIX
+  - VVIX
+  - VIX9D
+  - VIX3M

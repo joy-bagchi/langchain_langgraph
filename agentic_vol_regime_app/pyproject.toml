@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-vol-regime-app"
+version = "0.1.0"
+description = "POMDP-style volatility regime application built on agentic_harness."
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0", "agentic-harness"]
+
+[project.optional-dependencies]
+ibkr = ["ib-insync>=0.9.86"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

@@ -1,0 +1,18 @@
+watch:
+  vol_expansion_5d: 0.30
+  transition_belief: 0.20
+
+warning:
+  vol_expansion_5d: 0.42
+  transition_belief: 0.28
+  confirming_features_min: 2
+
+high_risk:
+  vix_spike_10d: 0.35
+  transition_belief: 0.32
+  high_vol_belief: 0.18
+  confirming_features_min: 2
+
+critical:
+  panic_belief: 0.24
+  vix_explosion_10d: 0.32

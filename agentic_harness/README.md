@@ -320,6 +320,85 @@ Current default behavior:
 - outputs that look like PII, such as email addresses or SSNs, are escalated for review
 - an approved post-step guardrail review resumes without rerunning the underlying step
 
+## Evaluation
+
+The runtime now also uses a rule-based evaluation service after step execution.
+
+- evaluation runs after guardrails
+- workflow-level defaults can be provided in workflow frontmatter under `evaluation:`
+- step-level overrides live in workflow step metadata under `evaluation:`
+- agent-level defaults can be provided through extra agent YAML metadata under `evaluation:`
+- evaluation can `allow`, `retry`, `escalate`, or `fail`
+- evaluation also supports a deterministic critic layer for richer scoring against workflow context
+
+Example workflow-level default:
+
+```yaml
+---
+workflow_id: research_brief
+title: Research Brief Workflow
+entry_step: capture_request
+memory_namespace: research_brief_memory
+evaluation:
+  min_output_chars: 40
+  critic:
+    enabled: true
+    required_output_keys:
+      - request
+    min_score: 0.8
+---
+```
+
+Example step-level policy:
+
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+max_retries: 1
+evaluation:
+  min_output_chars: 40
+  required_patterns:
+    - "approved"
+  escalate_patterns:
+    - "needs review"
+  retry_on_empty_output: true
+  critic:
+    enabled: true
+    required_terms:
+      - "SABR"
+      - "stochastic volatility"
+    required_step_ids:
+      - "capture_request"
+    required_output_keys:
+      - "request"
+    min_score: 0.8
+    on_below_threshold: escalate
+```
+
+Current behavior:
+
+- very short or empty outputs can trigger retry when retries are available
+- missing required patterns can escalate output into the existing review/pause flow
+- banned patterns can fail the step immediately
+- an approved post-step evaluation review resumes without rerunning the underlying step
+- critic scoring can check for required terms, prior step coverage, and required named outputs before allowing the step to pass
+
+## Testing
+
+The runtime now has enough production-grade surface that testing should be layered, not ad hoc.
+
+The current test strategy is tracked in:
+
+- [TEST_STRATEGY.md](/C:/Users/joyba/PycharmProjects/langchain_langgraph/agentic_harness/TEST_STRATEGY.md)
+
+That file groups tests into:
+
+- fast slice tests
+- runtime integration tests
+- infrastructure smoke tests
+- manual operator checks
+
 The OS now also applies rule-based context budgeting:
 
 - runtime profiles provide default context and memory policies

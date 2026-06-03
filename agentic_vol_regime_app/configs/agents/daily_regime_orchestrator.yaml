@@ -1,0 +1,13 @@
+agent_id: daily_regime_orchestrator
+name: Daily Regime Orchestrator
+role: volatility_regime_orchestrator
+workflow_path: ../workflows/daily_belief_report.md
+llm_provider: none
+memory_service_type: semantic
+runtime_profile: durable_research
+domain: volatility_regime
+guardrails:
+  post:
+    block_patterns:
+      - "(?i)execute live trade"
+      - "(?i)place live trade"

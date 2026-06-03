@@ -58,6 +58,7 @@ def build_platform_services(
     model_callable=None,
     memory_service_type: str = "filesystem",
     web_search_client=None,
+    ibkr_data_pipe=None,
     database_url: str | None = None,
     langsmith_tracing: bool | None = None,
     langsmith_api_key: str | None = None,
@@ -110,7 +111,10 @@ def build_platform_services(
             langsmith_config=langsmith_config,
             langsmith_client=langsmith_client,
         ),
-        tools=RegisteredToolService.with_defaults(web_search_client=web_search_client),
+        tools=RegisteredToolService.with_defaults(
+            web_search_client=web_search_client,
+            ibkr_data_pipe=ibkr_data_pipe,
+        ),
         evaluation=BasicEvaluationService(),
         security=PermissiveSecurityService(),
     )

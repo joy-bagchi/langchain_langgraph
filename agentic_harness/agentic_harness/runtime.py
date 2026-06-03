@@ -101,6 +101,25 @@ def _build_guardrail_review_request(
     }
 
 
+def _build_evaluation_review_request(
+    *,
+    step: WorkflowStep,
+    findings: list[str],
+    candidate_output: Any,
+) -> dict[str, Any]:
+    return {
+        "step_id": step.step_id,
+        "title": f"Evaluation Review: {step.title}",
+        "review_type": "evaluation_post",
+        "instructions": (
+            "Evaluation policy escalated this output for review.\n\n"
+            "Findings:\n- " + "\n- ".join(findings)
+        ),
+        "candidate_output": candidate_output,
+        "evaluation_findings": list(findings),
+    }
+
+
 def _runtime_profile_defaults(profile_id: str | None) -> AgentRuntimeProfile:
     profile = (profile_id or "default").strip().lower()
     if profile == "durable_research":
@@ -405,26 +424,32 @@ def compile_workflow(
 
         guardrail_response = review_responses.get(step_id)
         skip_post_guardrail = False
-        if isinstance(guardrail_response, dict) and guardrail_response.get("review_type") == "guardrail_post":
+        skip_evaluation = False
+        if isinstance(guardrail_response, dict) and guardrail_response.get("review_type") in {"guardrail_post", "evaluation_post"}:
+            review_payload = dict(guardrail_response)
             review_responses.pop(step_id, None)
-            decision = str(guardrail_response.get("decision", "")).strip().lower()
+            decision = str(review_payload.get("decision", "")).strip().lower()
+            review_type = str(review_payload.get("review_type", "")).strip().lower()
             if decision == "rejected":
                 return _failure_state(
-                    PermissionError("guardrail review rejected output"),
+                    PermissionError(f"{review_type} review rejected output"),
                     retryable=False,
                 )
             if decision == "approved":
                 result = StepExecutionResult(
-                    output=guardrail_response.get("candidate_output"),
+                    output=review_payload.get("candidate_output"),
                     metadata={
-                        "guardrail_review": "approved",
-                        "guardrail_reasons": list(guardrail_response.get("guardrail_reasons", [])),
+                        **({ "guardrail_review": "approved" } if review_type == "guardrail_post" else {}),
+                        f"{review_type}_review": "approved",
+                        "guardrail_reasons": list(review_payload.get("guardrail_reasons", [])),
+                        "evaluation_findings": list(review_payload.get("evaluation_findings", [])),
                     },
                 )
                 skip_post_guardrail = True
+                skip_evaluation = True
             else:
                 return _failure_state(
-                    PermissionError("guardrail review expected approved or rejected"),
+                    PermissionError(f"{review_type} review expected approved or rejected"),
                     retryable=False,
                 )
         else:
@@ -531,12 +556,77 @@ def compile_workflow(
                 PermissionError("; ".join(post_guardrail.reasons) or "post-step guardrail blocked output"),
                 retryable=False,
             )
-        services.evaluation.evaluate(
-            EvaluationRequest(
-                phase="step",
-                payload={"step_id": step_id, "status": result.status},
+        evaluation = (
+            services.evaluation.evaluate(
+                EvaluationRequest(
+                    phase="step",
+                    payload={
+                        "step_id": step_id,
+                        "status": result.status,
+                        "output": result.output,
+                        "output_text": _stringify_guardrail_value(result.output),
+                        "attempt": attempt,
+                        "max_retries": step.max_retries,
+                        "workflow_metadata": dict(definition.metadata),
+                        "step_metadata": dict(step.metadata),
+                        "agent_metadata": dict(state.get("agent_metadata", {})),
+                        "workflow_id": definition.workflow_id,
+                        "step_history": list(state.get("step_history", [])),
+                        "named_outputs": dict(named_outputs),
+                        "active_context": dict(state.get("active_context", {})),
+                    },
+                )
             )
+            if not skip_evaluation
+            else None
         )
+        if evaluation is not None and evaluation.action == "retry":
+            reason = "; ".join(evaluation.findings) or "evaluation requested retry"
+            return _failure_state(PermissionError(reason), retryable=True)
+        if evaluation is not None and evaluation.action == "escalate":
+            history = list(state.get("step_history", []))
+            history.append(
+                StepHistoryEntry(
+                    step_id=step_id,
+                    status="awaiting_review",
+                    output=result.output,
+                    next_step=step_id,
+                    attempt=attempt,
+                    metadata={
+                        "evaluation_action": "escalate",
+                        "evaluation_findings": list(evaluation.findings),
+                    },
+                ).to_dict()
+            )
+            events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+                event_type="evaluation_review_requested",
+                payload={
+                    "timestamp": utc_now(),
+                    "step_id": step_id,
+                    "findings": list(evaluation.findings),
+                },
+            ))))
+            return {
+                "step_outputs": step_outputs,
+                "named_outputs": named_outputs,
+                "step_history": history,
+                "events": events,
+                "pending_review": _build_evaluation_review_request(
+                    step=step,
+                    findings=evaluation.findings,
+                    candidate_output=result.output,
+                ),
+                "status": "awaiting_review",
+                "execution_outcome": {
+                    "route": "checkpoint",
+                    "completed_step_id": step_id,
+                },
+                "last_error": None,
+                "review_responses": review_responses,
+            }
+        if evaluation is not None and evaluation.action == "fail":
+            reason = "; ".join(evaluation.findings) or "evaluation failed output"
+            return _failure_state(PermissionError(reason), retryable=False)
 
         if result.awaiting_review:
             history = list(state.get("step_history", []))
@@ -588,7 +678,15 @@ def compile_workflow(
                 output=result.output,
                 next_step=next_step,
                 attempt=attempt,
-                metadata=dict(result.metadata),
+                metadata={
+                    **dict(result.metadata),
+                    "evaluation": {
+                        "status": evaluation.status if evaluation is not None else "approved_review",
+                        "action": evaluation.action if evaluation is not None else "allow",
+                        "findings": list(evaluation.findings) if evaluation is not None else [],
+                        "score": evaluation.score if evaluation is not None else 1.0,
+                    },
+                },
             ).to_dict()
         )
         events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(

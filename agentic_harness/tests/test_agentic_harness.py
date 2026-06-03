@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from agentic_harness.__main__ import _build_agent_input_payload, build_parser
 from agentic_harness.contracts import WorkflowGraphState, WorkflowStep
+from agentic_harness.agentic_os.evaluation_service import BasicEvaluationService, EvaluationRequest
 from agentic_harness.agentic_os.guardrail_service import GuardrailRequest, RuleBasedGuardrailService
 from agentic_harness.agentic_os.observability_service import ObservabilityRequest
 from agentic_harness.shared.services import ServiceEvent
@@ -818,6 +819,307 @@ Return a secret.
     assert "secret" in (result.get("last_error") or "").lower()
 
 
+def test_basic_evaluation_service_requests_retry_for_short_output() -> None:
+    service = BasicEvaluationService()
+
+    response = service.evaluate(
+        EvaluationRequest(
+            phase="step",
+            payload={
+                "status": "succeeded",
+                "output_text": "short",
+                "step_metadata": {"evaluation": {"min_output_chars": 20}},
+            },
+        )
+    )
+
+    assert response.status == "attention_required"
+    assert response.action == "retry"
+    assert any("shorter than 20 chars" in finding for finding in response.findings)
+
+
+def test_evaluation_retry_retries_step_until_output_passes(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "evaluation_retry_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: evaluation_retry_workflow
+title: Evaluation Retry Workflow
+entry_step: draft_message
+memory_namespace: evaluation_memory
+---
+
+# Evaluation Retry Workflow
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+max_retries: 1
+evaluation:
+  min_output_chars: 20
+```
+
+```prompt
+Draft a message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def retry_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        if call_count["prompt"] == 1:
+            return StepExecutionResult(output="short")
+        return StepExecutionResult(output="This output is long enough to satisfy evaluation.")
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "evaluation"},
+        storage_root=storage_root,
+        executors={"prompt": retry_prompt_executor},
+    )
+
+    assert result["status"] == "completed"
+    assert call_count["prompt"] == 2
+    assert result["named_outputs"]["message"] == "This output is long enough to satisfy evaluation."
+    assert result["step_history"][-1]["metadata"]["evaluation"]["action"] == "allow"
+
+
+def test_evaluation_escalation_pauses_and_resume_uses_approved_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "evaluation_review_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: evaluation_review_workflow
+title: Evaluation Review Workflow
+entry_step: draft_message
+memory_namespace: evaluation_memory
+---
+
+# Evaluation Review Workflow
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+evaluation:
+  required_patterns:
+    - "approved"
+```
+
+```prompt
+Draft a message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def evaluation_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        return StepExecutionResult(output="Needs analyst confirmation before release.")
+
+    first = start_workflow(
+        workflow_path,
+        {"topic": "evaluation"},
+        storage_root=storage_root,
+        executors={"prompt": evaluation_prompt_executor},
+    )
+
+    assert first["status"] == "awaiting_review"
+    assert first["pending_review"]["review_type"] == "evaluation_post"
+    assert call_count["prompt"] == 1
+
+    resumed = resume_workflow(
+        first["run_id"],
+        storage_root=storage_root,
+        decision="approved",
+        notes="approved by operator",
+        executors={"prompt": evaluation_prompt_executor},
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["named_outputs"]["message"] == "Needs analyst confirmation before release."
+    assert call_count["prompt"] == 1
+    assert resumed["step_history"][-1]["metadata"]["evaluation_post_review"] == "approved"
+
+
+def test_basic_evaluation_service_critic_scores_missing_terms_and_history() -> None:
+    service = BasicEvaluationService()
+
+    response = service.evaluate(
+        EvaluationRequest(
+            phase="step",
+            payload={
+                "status": "succeeded",
+                "output_text": "This summary mentions SABR but omits volatility context.",
+                "step_history": [{"step_id": "capture_request"}],
+                "named_outputs": {"request": "Explain SABR"},
+                "step_metadata": {
+                    "evaluation": {
+                        "critic": {
+                            "enabled": True,
+                            "required_terms": ["SABR", "stochastic volatility"],
+                            "required_step_ids": ["capture_request", "draft_outline"],
+                            "required_output_keys": ["request", "outline"],
+                            "min_score": 0.8,
+                            "on_below_threshold": "escalate",
+                        }
+                    }
+                },
+            },
+        )
+    )
+
+    assert response.action == "escalate"
+    assert response.status == "attention_required"
+    assert any("missing required term: stochastic volatility" in finding for finding in response.findings)
+    assert any("missing required prior step: draft_outline" in finding for finding in response.findings)
+    assert any("missing required output key: outline" in finding for finding in response.findings)
+    assert response.metadata["critic"]["score"] < 0.8
+
+
+def test_critic_escalation_pauses_and_resume_uses_approved_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "critic_review_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: critic_review_workflow
+title: Critic Review Workflow
+entry_step: capture_request
+memory_namespace: critic_memory
+---
+
+# Critic Review Workflow
+
+## Step: capture_request
+```yaml
+type: collect
+id: capture_request
+output_key: request
+next: draft_message
+input_key: topic
+memory:
+  enabled: false
+```
+
+```prompt
+{input.topic}
+```
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+evaluation:
+  critic:
+    enabled: true
+    required_terms:
+      - "SABR"
+      - "stochastic volatility"
+    required_step_ids:
+      - "capture_request"
+    required_output_keys:
+      - "request"
+    min_score: 1.0
+    on_below_threshold: escalate
+```
+
+```prompt
+Draft the message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def critic_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        return StepExecutionResult(output="SABR is important in rates.")
+
+    first = start_workflow(
+        workflow_path,
+        {"topic": "Explain SABR"},
+        storage_root=storage_root,
+        executors={"prompt": critic_prompt_executor},
+    )
+
+    assert first["status"] == "awaiting_review"
+    assert first["pending_review"]["review_type"] == "evaluation_post"
+    assert call_count["prompt"] == 1
+
+    resumed = resume_workflow(
+        first["run_id"],
+        storage_root=storage_root,
+        decision="approved",
+        notes="critic review approved",
+        executors={"prompt": critic_prompt_executor},
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["named_outputs"]["message"] == "SABR is important in rates."
+    assert call_count["prompt"] == 1
+    assert resumed["step_history"][-1]["metadata"]["evaluation_post_review"] == "approved"
+
+
+def test_workflow_level_evaluation_defaults_apply_to_steps(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow_default_eval.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: workflow_default_eval
+title: Workflow Default Evaluation
+entry_step: draft_message
+memory_namespace: evaluation_memory
+evaluation:
+  min_output_chars: 25
+---
+
+# Workflow Default Evaluation
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+max_retries: 1
+```
+
+```prompt
+Draft a message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def retry_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        if call_count["prompt"] == 1:
+            return StepExecutionResult(output="too short")
+        return StepExecutionResult(output="This output satisfies the workflow default evaluation policy.")
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "evaluation"},
+        storage_root=storage_root,
+        executors={"prompt": retry_prompt_executor},
+    )
+
+    assert result["status"] == "completed"
+    assert call_count["prompt"] == 2
+    assert result["step_history"][-1]["metadata"]["evaluation"]["action"] == "allow"
+
+
 def test_default_cognitive_service_descriptor_exposes_capabilities() -> None:
     cognitive = DefaultCognitiveService()
     assert cognitive.descriptor.service_name == "cognitive"
@@ -875,6 +1177,7 @@ def test_default_toolbox_registers_web_search_tool() -> None:
     services = build_platform_services(memory_service_type="ephemeral")
     tool_ids = [tool.tool_id for tool in services.tools.list_tools()]
     assert "web_search" in tool_ids
+    assert "ibkr_data_pipeline" in tool_ids
 
 
 def test_web_search_tool_executes_with_injected_client(tmp_path: Path) -> None:
@@ -928,6 +1231,69 @@ def test_web_search_tool_returns_unavailable_without_provider(tmp_path: Path, mo
 
     assert response.status == "unavailable"
     assert "reason" in response.metadata
+
+
+def test_ibkr_data_pipeline_tool_executes_with_injected_pipe(tmp_path: Path) -> None:
+    class FakeIBKRPipe:
+        def fetch_market_snapshot(self, request) -> object:
+            class Snapshot:
+                def to_dict(self_inner) -> dict:
+                    return {
+                        "schema_version": "observation.v1",
+                        "as_of": "2026-06-02T20:00:00Z",
+                        "source": "IBKR",
+                        "symbols": {
+                            request.symbol: {"last": 601.25, "volume": 81234000},
+                        },
+                        "history": {},
+                        "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
+                        "option_chain": {
+                            "underlying_symbol": request.symbol,
+                            "expirations": list(request.expirations) or ["20260620"],
+                            "strikes": list(request.strikes) or [600.0],
+                            "rights": list(request.rights),
+                            "option_quotes": [
+                                {
+                                    "symbol": "SPY   260620C00600000",
+                                    "expiry": "20260620",
+                                    "strike": 600.0,
+                                    "right": "C",
+                                    "bid": 10.1,
+                                    "ask": 10.4,
+                                    "volume": 1200,
+                                    "open_interest": 15000,
+                                    "greeks": {"delta": 0.49, "gamma": 0.03},
+                                }
+                            ],
+                        },
+                        "provider_metadata": {"port": 4001},
+                    }
+
+            return Snapshot()
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        ibkr_data_pipe=FakeIBKRPipe(),
+    )
+    response = services.tools.execute(
+        ToolExecutionRequest(
+            tool_id="ibkr_data_pipeline",
+            arguments={
+                "operation": "fetch_market_snapshot",
+                "symbol": "SPY",
+                "port": 4001,
+                "expiry_count": 1,
+                "strike_count": 1,
+            },
+        )
+    )
+
+    assert response.status == "succeeded"
+    assert response.output["source"] == "IBKR"
+    assert response.output["symbols"]["SPY"]["last"] == 601.25
+    assert response.output["option_chain"]["option_quotes"][0]["greeks"]["delta"] == 0.49
+    assert response.metadata["port"] == 4001
 
 
 def test_run_agent_parser_accepts_query_shortcut() -> None:

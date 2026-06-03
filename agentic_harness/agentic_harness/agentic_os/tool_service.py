@@ -131,7 +131,12 @@ class RegisteredToolService:
         return [self._definitions[key] for key in sorted(self._definitions)]
 
     @classmethod
-    def with_defaults(cls, *, web_search_client: Any | None = None) -> "RegisteredToolService":
+    def with_defaults(
+        cls,
+        *,
+        web_search_client: Any | None = None,
+        ibkr_data_pipe: Any | None = None,
+    ) -> "RegisteredToolService":
         """Create the default toolbox with built-in tools."""
         definitions = [
             ToolDefinition(
@@ -149,7 +154,53 @@ class RegisteredToolService:
                     "required": ["query"],
                 },
                 metadata={"provider": "tavily"},
-            )
+            ),
+            ToolDefinition(
+                tool_id="ibkr_data_pipeline",
+                name="IBKR Data Pipeline",
+                description=(
+                    "Fetch Interactive Brokers market data for an underlying and a selected "
+                    "option chain, including prices, volume, open interest, and Greeks."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "default": "fetch_market_snapshot",
+                            "enum": ["fetch_market_snapshot"],
+                        },
+                        "symbol": {"type": "string", "default": "SPY"},
+                        "host": {"type": "string", "default": "127.0.0.1"},
+                        "port": {"type": "integer", "default": 4001},
+                        "client_id": {"type": "integer", "default": 73},
+                        "market_data_type": {"type": "integer", "default": 1},
+                        "exchange": {"type": "string", "default": "SMART"},
+                        "option_exchange": {"type": "string", "default": "SMART"},
+                        "currency": {"type": "string", "default": "USD"},
+                        "rights": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "default": ["C", "P"],
+                        },
+                        "expiry_count": {"type": "integer", "default": 2},
+                        "strike_count": {"type": "integer", "default": 8},
+                        "expirations": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "default": [],
+                        },
+                        "strikes": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "default": [],
+                        },
+                        "min_days_to_expiry": {"type": "integer", "default": 0},
+                    },
+                    "required": ["operation"],
+                },
+                metadata={"provider": "interactive_brokers", "default_port": 4001},
+            ),
         ]
 
         def web_search_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:
@@ -188,8 +239,90 @@ class RegisteredToolService:
                 metadata={"tool_id": "web_search"},
             )
 
+        def ibkr_data_pipeline_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:
+            operation = str(request.arguments.get("operation", "fetch_market_snapshot")).strip().lower()
+            if operation != "fetch_market_snapshot":
+                return ToolExecutionResponse(
+                    status="error",
+                    metadata={
+                        "reason": f"unsupported operation '{operation}'",
+                        "tool_id": "ibkr_data_pipeline",
+                    },
+                )
+
+            try:
+                from agentic_vol_regime_app.data.ibkr_client import (
+                    IBKRConnectionConfig,
+                    IBKRDataPipe,
+                    IBKROptionChainRequest,
+                )
+            except ImportError as exc:
+                return ToolExecutionResponse(
+                    status="unavailable",
+                    metadata={
+                        "reason": (
+                            "agentic_vol_regime_app IBKR integration is not available. "
+                            f"{exc}"
+                        ),
+                        "tool_id": "ibkr_data_pipeline",
+                    },
+                )
+
+            arguments = dict(request.arguments)
+            pipe = ibkr_data_pipe
+            if pipe is None:
+                pipe = IBKRDataPipe(
+                    connection=IBKRConnectionConfig(
+                        host=str(arguments.get("host", "127.0.0.1")),
+                        port=int(arguments.get("port", 4001)),
+                        client_id=int(arguments.get("client_id", 73)),
+                        market_data_type=int(arguments.get("market_data_type", 1)),
+                    )
+                )
+
+            option_request = IBKROptionChainRequest(
+                symbol=str(arguments.get("symbol", "SPY")),
+                exchange=str(arguments.get("exchange", "SMART")),
+                currency=str(arguments.get("currency", "USD")),
+                option_exchange=str(arguments.get("option_exchange", "SMART")),
+                rights=tuple(
+                    str(item).upper() for item in arguments.get("rights", ["C", "P"])
+                ),
+                expiry_count=int(arguments.get("expiry_count", 2)),
+                strike_count=int(arguments.get("strike_count", 8)),
+                expirations=tuple(
+                    str(item) for item in arguments.get("expirations", [])
+                ),
+                strikes=tuple(
+                    float(item) for item in arguments.get("strikes", [])
+                ),
+                min_days_to_expiry=int(arguments.get("min_days_to_expiry", 0)),
+            )
+
+            try:
+                observation = pipe.fetch_market_snapshot(option_request)
+            except Exception as exc:
+                return ToolExecutionResponse(
+                    status="error",
+                    metadata={"reason": str(exc), "tool_id": "ibkr_data_pipeline"},
+                )
+            output = observation.to_dict() if hasattr(observation, "to_dict") else observation
+            return ToolExecutionResponse(
+                status="succeeded",
+                output=output,
+                metadata={
+                    "tool_id": "ibkr_data_pipeline",
+                    "operation": operation,
+                    "symbol": option_request.symbol,
+                    "port": int(arguments.get("port", 4001)),
+                },
+            )
+
         return cls(
             definitions=definitions,
-            handlers={"web_search": web_search_handler},
+            handlers={
+                "web_search": web_search_handler,
+                "ibkr_data_pipeline": ibkr_data_pipeline_handler,
+            },
         )
 
