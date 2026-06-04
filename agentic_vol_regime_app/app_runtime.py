@@ -13,7 +13,7 @@ ensure_repo_imports()
 from agentic_harness.agentic_os.platform import build_platform_services
 from agentic_harness.contracts import AgentRuntimeProfile, ContextPolicy, MemoryLifecyclePolicy
 from agentic_harness.definitions.agent_service import YamlAgentDefinitionService
-from agentic_harness.runtime import resume_workflow, start_workflow
+from agentic_harness.runtime import resume_workflow, run_agent_workflow, start_workflow
 
 from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.executors import build_executor_registry
@@ -21,6 +21,10 @@ from agentic_vol_regime_app.executors import build_executor_registry
 
 def default_agent_path() -> Path:
     return AppPaths.default().agents_dir / "daily_regime_orchestrator.yaml"
+
+
+def default_ibkr_agent_path() -> Path:
+    return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
 
 
 def _resolve_runtime_profile(profile_id: str) -> AgentRuntimeProfile:
@@ -157,6 +161,33 @@ def resume_daily_regime_run(
         services=services,
         executors=build_executor_registry(app_paths=app_paths, services=services),
         memory_service_type=agent_definition.memory_service_type,
+        database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
+
+
+def run_ibkr_market_data_agent(
+    *,
+    input_payload: dict[str, Any],
+    agent_path: str | Path | None = None,
+    storage_root: str | Path | None = None,
+    database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+) -> dict[str, Any]:
+    """Run the IBKR tool-backed market data agent through the harness runtime."""
+    resolved_agent_path = Path(agent_path or default_ibkr_agent_path()).resolve()
+    return run_agent_workflow(
+        resolved_agent_path,
+        input_payload,
+        storage_root=storage_root,
         database_url=database_url,
         langsmith_tracing=langsmith_tracing,
         langsmith_api_key=langsmith_api_key,

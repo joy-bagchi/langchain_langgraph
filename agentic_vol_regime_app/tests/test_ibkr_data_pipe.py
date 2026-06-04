@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from agentic_vol_regime_app.data.ibkr_client import (
     IBKRConnectionConfig,
     IBKRDataPipe,
     IBKROptionChainRequest,
+    _ensure_thread_event_loop,
 )
 from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
 
@@ -123,3 +125,19 @@ def test_market_data_loader_supports_ibkr_provider_payload() -> None:
     assert observation.source == "IBKR"
     assert observation.provider_metadata["client_id"] == 77
     assert observation.option_chain["expirations"] == ["20260620", "20260718"]
+
+
+def test_ensure_thread_event_loop_creates_one_when_missing(monkeypatch) -> None:
+    policy = asyncio.get_event_loop_policy()
+    original_get_event_loop = policy.get_event_loop
+
+    def missing_loop():
+        raise RuntimeError("There is no current event loop in thread 'ScriptRunner.scriptThread'.")
+
+    monkeypatch.setattr(policy, "get_event_loop", missing_loop)
+    try:
+        loop = _ensure_thread_event_loop()
+    finally:
+        monkeypatch.setattr(policy, "get_event_loop", original_get_event_loop)
+
+    assert isinstance(loop, asyncio.AbstractEventLoop)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -35,6 +36,22 @@ def _first_number(*values: Any) -> float | None:
         if number is not None:
             return number
     return None
+
+
+def _ensure_thread_event_loop() -> asyncio.AbstractEventLoop:
+    """Create a thread-local asyncio loop when the caller thread lacks one."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+    policy = asyncio.get_event_loop_policy()
+    try:
+        return policy.get_event_loop()
+    except RuntimeError:
+        loop = policy.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +110,7 @@ class IBKRLiveClient:
         self.connection = connection
 
     def fetch_market_snapshot(self, request: IBKROptionChainRequest) -> dict[str, Any]:
+        _ensure_thread_event_loop()
         try:
             from ib_insync import IB, Option, Stock
         except ImportError as exc:

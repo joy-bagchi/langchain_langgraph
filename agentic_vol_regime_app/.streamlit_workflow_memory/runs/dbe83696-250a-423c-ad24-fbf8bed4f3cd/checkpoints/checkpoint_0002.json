@@ -1,0 +1,217 @@
+{
+  "active_context": {
+    "compacted_history": "",
+    "compaction_decision": {
+      "estimated_tokens_after": 0,
+      "estimated_tokens_before": 0,
+      "reason": "",
+      "triggered": false,
+      "trimmed_history_items": 0,
+      "trimmed_memory_items": 0
+    },
+    "context_brief": "Workflow: IBKR SPY Snapshot Step: fetch_ibkr_snapshot",
+    "current_task": "Execute workflow step fetch_ibkr_snapshot",
+    "estimated_tokens": 11,
+    "memory_summary": "",
+    "raw_memory_hits": [],
+    "recent_history": [
+      {
+        "attempt": 1,
+        "memory_record_ids": [],
+        "metadata": {
+          "evaluation": {
+            "action": "allow",
+            "findings": [],
+            "score": 1.0,
+            "status": "passed"
+          }
+        },
+        "next_step": "fetch_ibkr_snapshot",
+        "output": "SPY",
+        "status": "succeeded",
+        "step_id": "capture_symbol",
+        "timestamp": "2026-06-04T03:08:41.067928+00:00"
+      }
+    ],
+    "step_id": "fetch_ibkr_snapshot",
+    "token_budget": 700,
+    "working_notes": ""
+  },
+  "agent_id": "ibkr_market_data_agent",
+  "agent_metadata": {
+    "domain": "volatility_regime"
+  },
+  "agent_name": "IBKR Market Data Agent",
+  "agent_role": "ibkr_market_data_agent",
+  "allowed_tools": [
+    "ibkr_data_pipeline"
+  ],
+  "checkpoint_index": 2,
+  "compaction_decision": {
+    "estimated_tokens_after": 0,
+    "estimated_tokens_before": 0,
+    "reason": "",
+    "triggered": false,
+    "trimmed_history_items": 0,
+    "trimmed_memory_items": 0
+  },
+  "context_policy": {
+    "compaction_strategy": "deterministic",
+    "max_memory_hits": 2,
+    "max_recent_history": 2,
+    "max_working_notes_chars": 300,
+    "token_budget": 700
+  },
+  "current_step": null,
+  "events": [
+    {
+      "langsmith_project": "agentic_harness",
+      "run_id": "dbe83696-250a-423c-ad24-fbf8bed4f3cd",
+      "timestamp": "2026-06-04T03:08:40.995766+00:00",
+      "type": "run_started",
+      "workflow_id": "ibkr_spy_snapshot"
+    },
+    {
+      "langsmith_project": "agentic_harness",
+      "match_count": 0,
+      "step_id": "capture_symbol",
+      "timestamp": "2026-06-04T03:08:41.022141+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "langsmith_project": "agentic_harness",
+      "memory_hit_count": 0,
+      "recent_history_count": 0,
+      "step_id": "capture_symbol",
+      "timestamp": "2026-06-04T03:08:41.045534+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "cognitive_service": "default_cognitive_service",
+      "langsmith_project": "agentic_harness",
+      "memory_service": "ephemeral_memory_service",
+      "next_step": "fetch_ibkr_snapshot",
+      "step_id": "capture_symbol",
+      "timestamp": "2026-06-04T03:08:41.067956+00:00",
+      "type": "step_executed"
+    },
+    {
+      "checkpoint_index": 1,
+      "current_step": "fetch_ibkr_snapshot",
+      "langsmith_project": "agentic_harness",
+      "status": "running",
+      "timestamp": "2026-06-04T03:08:41.088157+00:00",
+      "type": "checkpoint"
+    },
+    {
+      "langsmith_project": "agentic_harness",
+      "match_count": 0,
+      "step_id": "fetch_ibkr_snapshot",
+      "timestamp": "2026-06-04T03:08:41.108737+00:00",
+      "type": "memory_retrieved"
+    },
+    {
+      "compacted_history_present": false,
+      "langsmith_project": "agentic_harness",
+      "memory_hit_count": 0,
+      "recent_history_count": 1,
+      "step_id": "fetch_ibkr_snapshot",
+      "timestamp": "2026-06-04T03:08:41.129464+00:00",
+      "type": "context_prepared"
+    },
+    {
+      "attempt": 1,
+      "error": "There is no current event loop in thread 'ScriptRunner.scriptThread'.",
+      "langsmith_project": "agentic_harness",
+      "step_id": "fetch_ibkr_snapshot",
+      "timestamp": "2026-06-04T03:08:41.158560+00:00",
+      "type": "step_error"
+    },
+    {
+      "checkpoint_index": 2,
+      "current_step": null,
+      "langsmith_project": "agentic_harness",
+      "status": "failed",
+      "timestamp": "2026-06-04T03:08:41.183200+00:00",
+      "type": "checkpoint"
+    }
+  ],
+  "execution_outcome": {
+    "completed_step_id": "fetch_ibkr_snapshot",
+    "route": "checkpoint"
+  },
+  "input_payload": {
+    "client_id": 73,
+    "currency": "USD",
+    "exchange": "SMART",
+    "expiry_count": 2,
+    "host": "127.0.0.1",
+    "market_data_type": 1,
+    "min_days_to_expiry": 0,
+    "option_exchange": "SMART",
+    "port": 4001,
+    "strike_count": 8,
+    "symbol": "SPY"
+  },
+  "invocation_id": "63fb5f54-0620-4c78-b1e0-2fd6ab017843",
+  "last_error": "There is no current event loop in thread 'ScriptRunner.scriptThread'.",
+  "memory_hits": [],
+  "memory_policy": {
+    "consolidation_strategy": "merge_duplicates",
+    "max_durable_records": 500,
+    "max_ephemeral_records": 25,
+    "namespace_strategy": "agent_or_workflow",
+    "suspend_on_idle": true
+  },
+  "named_outputs": {
+    "requested_symbol": "SPY"
+  },
+  "pending_review": null,
+  "retry_counts": {
+    "fetch_ibkr_snapshot": 1
+  },
+  "review_responses": {},
+  "run_id": "dbe83696-250a-423c-ad24-fbf8bed4f3cd",
+  "runtime_profile": "short_task",
+  "status": "failed",
+  "step_history": [
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {
+        "evaluation": {
+          "action": "allow",
+          "findings": [],
+          "score": 1.0,
+          "status": "passed"
+        }
+      },
+      "next_step": "fetch_ibkr_snapshot",
+      "output": "SPY",
+      "status": "succeeded",
+      "step_id": "capture_symbol",
+      "timestamp": "2026-06-04T03:08:41.067928+00:00"
+    },
+    {
+      "attempt": 1,
+      "memory_record_ids": [],
+      "metadata": {
+        "error": "There is no current event loop in thread 'ScriptRunner.scriptThread'."
+      },
+      "next_step": null,
+      "output": null,
+      "status": "failed",
+      "step_id": "fetch_ibkr_snapshot",
+      "timestamp": "2026-06-04T03:08:41.158530+00:00"
+    }
+  ],
+  "step_outputs": {
+    "capture_symbol": "SPY"
+  },
+  "workflow_id": "ibkr_spy_snapshot",
+  "workflow_path": "C:\\Users\\joyba\\PycharmProjects\\langchain_langgraph\\agentic_vol_regime_app\\configs\\workflows\\ibkr_spy_snapshot.md",
+  "workflow_title": "IBKR SPY Snapshot",
+  "working_notes": []
+}

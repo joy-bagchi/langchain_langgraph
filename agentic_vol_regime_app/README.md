@@ -76,6 +76,48 @@ To resume a review-gated run:
 python -m agentic_vol_regime_app.cli resume --run-id <run_id> --decision approved --notes "reviewed"
 ```
 
+## Streamlit Frontend
+
+You can run the app with a Streamlit frontend. Install the UI dependency first:
+
+```bash
+pip install streamlit
+```
+
+Then launch it from the repo root:
+
+```bash
+streamlit run agentic_vol_regime_app/streamlit_app.py
+```
+
+The frontend currently supports:
+
+- running the deterministic daily belief workflow
+- fetching a live IBKR snapshot through the `ibkr_market_data_agent`
+- resuming a review-gated daily run
+
+The IBKR panel defaults to `127.0.0.1:4001`.
+
+## Run The IBKR Tool Agent
+
+This example agent uses the harness toolbox directly through the
+`ibkr_data_pipeline` tool. It does not use the app-owned deterministic
+executors.
+
+With a live TWS or IB Gateway on the default port `4001`:
+
+```bash
+python -m agentic_harness run-agent --agent agentic_vol_regime_app/configs/agents/ibkr_market_data_agent.yaml --input agentic_vol_regime_app/configs/sample_inputs/ibkr_spy_snapshot.json --audience agent
+```
+
+That route exercises:
+
+- YAML agent loading
+- markdown workflow execution
+- tool allowlisting
+- harness toolbox dispatch
+- the real `ibkr_data_pipeline` tool
+
 ## Files
 
 - `configs/agents/daily_regime_orchestrator.yaml` defines the example agent
