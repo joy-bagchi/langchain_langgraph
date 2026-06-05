@@ -716,7 +716,13 @@ class RuntimeLedger:
                 score = matches / len(query_terms)
             results.append(MemorySearchResult(record=record, score=score))
 
-        results.sort(key=lambda item: item.score, reverse=True)
+        results.sort(
+            key=lambda item: (
+                item.score,
+                item.record.created_at,
+            ),
+            reverse=True,
+        )
         return results[: query.max_results]
 
     def _memory_row_to_record(self, row: Any) -> MemoryRecord:

@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentic_vol_regime_app.app_runtime import resume_daily_regime_run, run_daily_regime_agent
+from agentic_vol_regime_app.app_runtime import (
+    load_latest_live_daily_observation,
+    resume_daily_regime_run,
+    run_daily_regime_agent,
+)
 
 
 class FakeDailyIBKRPipe:
@@ -219,6 +223,11 @@ def test_daily_regime_workflow_supports_live_ibkr_input(tmp_path: Path) -> None:
     assert result["named_outputs"]["observation"]["provider_metadata"]["port"] == 4001
     assert result["named_outputs"]["observation"]["option_chain"]["option_quotes"][0]["greeks"]["delta"] == 0.51
     assert result["named_outputs"]["daily_report"]["recommended_action"] == "NO_OVERWRITE"
+    latest_live_observation = load_latest_live_daily_observation(
+        storage_root=tmp_path / ".workflow_memory",
+    )
+    assert latest_live_observation is not None
+    assert latest_live_observation["symbols"]["SPY"]["last"] == 602.25
 
 
 def test_daily_regime_workflow_backfills_missing_live_vol_quotes(tmp_path: Path) -> None:

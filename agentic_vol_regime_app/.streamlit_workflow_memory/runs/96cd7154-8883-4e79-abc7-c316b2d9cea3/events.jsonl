@@ -1,0 +1,37 @@
+{"run_id": "96cd7154-8883-4e79-abc7-c316b2d9cea3", "timestamp": "2026-06-05T00:58:41.674495+00:00", "type": "run_started", "workflow_id": "daily_vol_regime_report"}
+{"match_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-05T00:58:41.717925+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-05T00:58:41.748386+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "validate_data_quality", "step_id": "ingest_market_data", "timestamp": "2026-06-05T00:58:41.800130+00:00", "type": "step_executed"}
+{"checkpoint_index": 1, "current_step": "validate_data_quality", "status": "running", "timestamp": "2026-06-05T00:58:41.836675+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "validate_data_quality", "timestamp": "2026-06-05T00:58:41.869500+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 1, "step_id": "validate_data_quality", "timestamp": "2026-06-05T00:58:41.906582+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "compute_features", "step_id": "validate_data_quality", "timestamp": "2026-06-05T00:58:41.965718+00:00", "type": "step_executed"}
+{"checkpoint_index": 2, "current_step": "compute_features", "status": "running", "timestamp": "2026-06-05T00:58:42.063831+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "compute_features", "timestamp": "2026-06-05T00:58:42.126293+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 1, "step_id": "compute_features", "timestamp": "2026-06-05T00:58:42.184243+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "update_belief_state", "step_id": "compute_features", "timestamp": "2026-06-05T00:58:42.238528+00:00", "type": "step_executed"}
+{"checkpoint_index": 3, "current_step": "update_belief_state", "status": "running", "timestamp": "2026-06-05T00:58:42.275875+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "update_belief_state", "timestamp": "2026-06-05T00:58:42.342239+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 2, "step_id": "update_belief_state", "timestamp": "2026-06-05T00:58:42.377189+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "estimate_transition_probabilities", "step_id": "update_belief_state", "timestamp": "2026-06-05T00:58:42.416230+00:00", "type": "step_executed"}
+{"checkpoint_index": 4, "current_step": "estimate_transition_probabilities", "status": "running", "timestamp": "2026-06-05T00:58:42.456285+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "estimate_transition_probabilities", "timestamp": "2026-06-05T00:58:42.494255+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 3, "step_id": "estimate_transition_probabilities", "timestamp": "2026-06-05T00:58:42.537190+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "generate_alerts", "step_id": "estimate_transition_probabilities", "timestamp": "2026-06-05T00:58:42.576964+00:00", "type": "step_executed"}
+{"checkpoint_index": 5, "current_step": "generate_alerts", "status": "running", "timestamp": "2026-06-05T00:58:42.615626+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "generate_alerts", "timestamp": "2026-06-05T00:58:42.658936+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 4, "step_id": "generate_alerts", "timestamp": "2026-06-05T00:58:42.704927+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "recommend_policy", "step_id": "generate_alerts", "timestamp": "2026-06-05T00:58:42.768123+00:00", "type": "step_executed"}
+{"checkpoint_index": 6, "current_step": "recommend_policy", "status": "running", "timestamp": "2026-06-05T00:58:42.827616+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "recommend_policy", "timestamp": "2026-06-05T00:58:42.908846+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "recommend_policy", "timestamp": "2026-06-05T00:58:42.960034+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "critic_review", "step_id": "recommend_policy", "timestamp": "2026-06-05T00:58:43.033849+00:00", "type": "step_executed"}
+{"checkpoint_index": 7, "current_step": "critic_review", "status": "running", "timestamp": "2026-06-05T00:58:43.080352+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "critic_review", "timestamp": "2026-06-05T00:58:43.154735+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "critic_review", "timestamp": "2026-06-05T00:58:43.212242+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "human_review_gate", "step_id": "critic_review", "timestamp": "2026-06-05T00:58:43.272058+00:00", "type": "step_executed"}
+{"checkpoint_index": 8, "current_step": "human_review_gate", "status": "running", "timestamp": "2026-06-05T00:58:43.314372+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "human_review_gate", "timestamp": "2026-06-05T00:58:43.396864+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "human_review_gate", "timestamp": "2026-06-05T00:58:43.445750+00:00", "type": "context_prepared"}
+{"step_id": "human_review_gate", "timestamp": "2026-06-05T00:58:43.493419+00:00", "type": "review_requested"}
+{"checkpoint_index": 9, "current_step": "human_review_gate", "status": "awaiting_review", "timestamp": "2026-06-05T00:58:43.537397+00:00", "type": "checkpoint"}

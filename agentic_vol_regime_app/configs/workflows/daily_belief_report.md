@@ -19,6 +19,9 @@ output_key: observation
 next: validate_data_quality
 memory:
   enabled: false
+guardrails:
+  post:
+    max_output_chars: 50000
 ```
 
 ## Step: validate_data_quality

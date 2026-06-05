@@ -20,6 +20,7 @@ _ensure_streamlit_imports()
 
 from agentic_vol_regime_app import (  # noqa: E402
     default_ibkr_agent_path,
+    load_latest_live_daily_observation,
     resume_daily_regime_run,
     run_daily_regime_agent,
     run_ibkr_market_data_agent,
@@ -94,6 +95,106 @@ def _render_runtime_diagnostics(st, result: dict[str, Any]) -> None:
             st.code(_pretty_json(latest_step), language="json")
 
 
+def _render_summary_card(st, *, label: str, value: str) -> None:
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid rgba(128, 128, 128, 0.25);
+            border-radius: 0.75rem;
+            padding: 0.85rem 0.95rem;
+            min-height: 5.5rem;
+            background: rgba(255, 255, 255, 0.02);
+        ">
+            <div style="
+                font-size: 0.78rem;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                color: rgba(120, 120, 120, 0.95);
+                margin-bottom: 0.45rem;
+            ">{label}</div>
+            <div style="
+                font-size: 1.05rem;
+                line-height: 1.25;
+                font-weight: 600;
+                word-break: break-word;
+            ">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _tone_for_regime(regime: str) -> tuple[str, str]:
+    value = regime.upper()
+    if value in {"HIGH_VOL_RISK_OFF", "PANIC_CONVEXITY_STRESS"}:
+        return ("#c62828", "#fdecea")
+    if value in {"VOL_EXPANSION_TRANSITION", "MID_VOL_CHOP"}:
+        return ("#a15c00", "#fff4db")
+    return ("#2e7d32", "#edf7ed")
+
+
+def _tone_for_alert(alert: str) -> tuple[str, str]:
+    value = alert.upper()
+    if value in {"HIGH_RISK", "CRITICAL"}:
+        return ("#c62828", "#fdecea")
+    if value in {"WARNING", "WATCH"}:
+        return ("#a15c00", "#fff4db")
+    return ("#2e7d32", "#edf7ed")
+
+
+def _tone_for_action(action: str) -> tuple[str, str]:
+    value = action.upper()
+    if value in {"MANUAL_REVIEW", "AGGRESSIVE_OVERWRITE"}:
+        return ("#c62828", "#fdecea")
+    if value in {"MEDIUM_OVERWRITE", "LIGHT_OVERWRITE", "REDUCE_RISK"}:
+        return ("#a15c00", "#fff4db")
+    return ("#2e7d32", "#edf7ed")
+
+
+def _render_color_summary_cards(st, *, regime: str, alert: str, action: str) -> None:
+    regime_fg, regime_bg = _tone_for_regime(regime)
+    alert_fg, alert_bg = _tone_for_alert(alert)
+    action_fg, action_bg = _tone_for_action(action)
+    st.subheader("Summary")
+    st.markdown(
+        f"""
+        <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem; margin-bottom: 1rem;">
+            <div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.85rem; padding: 0.9rem 1rem; background: rgba(255,255,255,0.02); min-height: 6rem;">
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(120, 120, 120, 0.95); margin-bottom: 0.45rem;">Current Regime</div>
+                <div><span style="background:{regime_bg}; color:{regime_fg}; padding:0.28rem 0.58rem; border-radius:999px; font-weight:700;">{regime}</span></div>
+            </div>
+            <div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.85rem; padding: 0.9rem 1rem; background: rgba(255,255,255,0.02); min-height: 6rem;">
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(120, 120, 120, 0.95); margin-bottom: 0.45rem;">Transition Risk</div>
+                <div><span style="background:{alert_bg}; color:{alert_fg}; padding:0.28rem 0.58rem; border-radius:999px; font-weight:700;">{alert}</span></div>
+            </div>
+            <div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.85rem; padding: 0.9rem 1rem; background: rgba(255,255,255,0.02); min-height: 6rem;">
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(120, 120, 120, 0.95); margin-bottom: 0.45rem;">Recommended Posture</div>
+                <div><span style="background:{action_bg}; color:{action_fg}; padding:0.28rem 0.58rem; border-radius:999px; font-weight:700;">{action}</span></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _strip_report_heading_and_summary(markdown: str) -> str:
+    lines = markdown.splitlines()
+    output: list[str] = []
+    skip = False
+    for line in lines:
+        if line.startswith("# Daily Volatility Regime Report"):
+            continue
+        if line.startswith("## Summary"):
+            skip = True
+            continue
+        if skip and line.startswith("## ") and line.strip() != "## Summary":
+            skip = False
+        if skip:
+            continue
+        output.append(line)
+    return "\n".join(output).strip()
+
+
 def _render_daily_result(st, result: dict[str, Any]) -> None:
     outputs = dict(result.get("named_outputs", {}))
     daily_report = dict(outputs.get("daily_report", {}))
@@ -103,21 +204,21 @@ def _render_daily_result(st, result: dict[str, Any]) -> None:
 
     _render_runtime_diagnostics(st, result)
 
-    st.subheader("Run Summary")
-    status_col, regime_col, alert_col, action_col = st.columns(4)
-    status_col.metric("Status", str(result.get("status", "")))
-    regime_col.metric(
-        "Top Regime",
+    top_regime = (
         max(dict(belief_state.get("beliefs", {})), key=dict(belief_state.get("beliefs", {})).get)
         if belief_state.get("beliefs")
-        else "n/a",
+        else "n/a"
     )
-    alert_col.metric("Alert", str(alert_record.get("severity", "n/a")))
-    action_col.metric("Action", str(policy.get("recommended_action", "n/a")))
+    _render_color_summary_cards(
+        st,
+        regime=top_regime,
+        alert=str(alert_record.get("severity", "n/a")),
+        action=str(policy.get("recommended_action", "n/a")),
+    )
 
     if daily_report.get("markdown"):
-        st.subheader("Report")
-        st.markdown(str(daily_report["markdown"]))
+        st.subheader("Daily Report")
+        st.markdown(_strip_report_heading_and_summary(str(daily_report["markdown"])))
 
     st.subheader("Belief Vector")
     beliefs = dict(belief_state.get("beliefs", {}))
@@ -188,6 +289,56 @@ def _render_ibkr_result(st, result: dict[str, Any]) -> None:
         st.code(_pretty_json(result), language="json")
 
 
+def _replace_last(history: dict[str, list[float]], key: str, value: float) -> None:
+    series = list(history.get(key, []))
+    if series:
+        series[-1] = value
+    else:
+        series = [value]
+    history[key] = series
+
+
+def _build_scenario_snapshot(
+    *,
+    base_observation: dict[str, Any],
+    vix_value: float,
+    vvix_vix_ratio: float,
+    term_symbol: str,
+    term_value: float,
+) -> dict[str, Any]:
+    snapshot = json.loads(json.dumps(base_observation))
+    symbols = dict(snapshot.get("symbols", {}))
+    history = {key: list(value) for key, value in dict(snapshot.get("history", {})).items()}
+
+    symbols.setdefault("VIX", {})["last"] = float(vix_value)
+    vvix_value = float(vix_value) * float(vvix_vix_ratio)
+    symbols.setdefault("VVIX", {})["last"] = vvix_value
+    symbols.setdefault(term_symbol, {})["last"] = float(term_value)
+
+    _replace_last(history, "VIX", float(vix_value))
+    _replace_last(history, "VVIX", vvix_value)
+    _replace_last(history, term_symbol, float(term_value))
+
+    snapshot["symbols"] = symbols
+    snapshot["history"] = history
+    snapshot["source"] = "scenario_from_memory"
+    quality = dict(snapshot.get("quality", {}))
+    warnings = list(quality.get("warnings", []))
+    warnings.append("Scenario mode modified VIX-related inputs from the latest live memory snapshot.")
+    quality["warnings"] = warnings
+    snapshot["quality"] = quality
+    provider_metadata = dict(snapshot.get("provider_metadata", {}))
+    provider_metadata["scenario_mode"] = True
+    provider_metadata["scenario_controls"] = {
+        "vix": float(vix_value),
+        "vvix_vix_ratio": float(vvix_vix_ratio),
+        "term_symbol": term_symbol,
+        "term_value": float(term_value),
+    }
+    snapshot["provider_metadata"] = provider_metadata
+    return snapshot
+
+
 def main() -> None:
     st = _load_streamlit()
 
@@ -218,18 +369,18 @@ def main() -> None:
         st.subheader("Deterministic Daily Workflow")
         default_daily_payload = load_json(DEFAULT_DAILY_INPUT)
         default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
-        use_live_ibkr = st.checkbox(
-            "Refresh regime inputs from live IBKR",
-            value=True,
+        mode = st.radio(
+            "Mode",
+            options=["Live IBKR", "Scenario", "Manual JSON"],
+            horizontal=True,
             help=(
-                "Keeps the original Daily Belief Report behavior, but refreshes SPY, VIX, "
-                "VVIX, VIX9D, VIX3M, history, and the SPY option chain from IBKR before the "
-                "workflow computes the report."
+                "Live IBKR refreshes the regime inputs from IBKR. Scenario mode disables the "
+                "live call and perturbs the latest live observation stored in memory."
             ),
         )
 
         effective_daily_payload: dict[str, Any]
-        if use_live_ibkr:
+        if mode == "Live IBKR":
             ibkr_defaults = dict(default_live_payload.get("ibkr", {}))
             with st.expander("Advanced IBKR Settings", expanded=False):
                 live_col1, live_col2, live_col3 = st.columns(3)
@@ -320,6 +471,79 @@ def main() -> None:
                 "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
             }
             st.caption("Using default symbol set: SPY, VIX, VVIX, VIX9D, and VIX3M.")
+        elif mode == "Scenario":
+            latest_live_observation = load_latest_live_daily_observation(
+                storage_root=storage_root,
+                database_url=database_url or None,
+            )
+            if latest_live_observation is None:
+                st.warning(
+                    "No live daily observation found in memory yet. Run the Daily Belief Report "
+                    "once in Live IBKR mode first."
+                )
+                effective_daily_payload = dict(default_daily_payload)
+            else:
+                base_symbols = dict(latest_live_observation.get("symbols", {}))
+                base_history = dict(latest_live_observation.get("history", {}))
+                term_symbol_options = ["VIX3M", "VIX6M", "VIX9M"]
+                base_vix = float(base_symbols.get("VIX", {}).get("last", 15.0))
+                base_vvix = float(base_symbols.get("VVIX", {}).get("last", base_vix * 5.5))
+                base_ratio = base_vvix / base_vix if base_vix else 5.5
+                default_term_symbol = "VIX3M"
+
+                st.caption(
+                    f"Scenario base loaded from live memory snapshot at "
+                    f"`{latest_live_observation.get('as_of', 'unknown')}`."
+                )
+                scenario_col1, scenario_col2 = st.columns(2)
+                term_symbol = scenario_col1.selectbox(
+                    "Term Structure Leg",
+                    options=term_symbol_options,
+                    index=term_symbol_options.index(default_term_symbol),
+                    format_func=lambda value: value.replace("VIX", "VIX ").replace("M", "M"),
+                )
+                term_base_value = float(
+                    base_symbols.get(term_symbol, {}).get(
+                        "last",
+                        base_symbols.get("VIX3M", {}).get("last", base_vix),
+                    )
+                )
+                vix_value = scenario_col1.slider(
+                    "VIX",
+                    min_value=8.0,
+                    max_value=max(40.0, base_vix + 20.0),
+                    value=float(base_vix),
+                    step=0.1,
+                )
+                vvix_vix_ratio = scenario_col2.slider(
+                    "VVIX / VIX Ratio",
+                    min_value=3.5,
+                    max_value=10.0,
+                    value=float(base_ratio),
+                    step=0.05,
+                )
+                term_value = scenario_col2.slider(
+                    f"{term_symbol}",
+                    min_value=8.0,
+                    max_value=max(45.0, term_base_value + 20.0),
+                    value=float(term_base_value),
+                    step=0.1,
+                )
+
+                scenario_snapshot = _build_scenario_snapshot(
+                    base_observation=latest_live_observation,
+                    vix_value=vix_value,
+                    vvix_vix_ratio=vvix_vix_ratio,
+                    term_symbol=term_symbol,
+                    term_value=term_value,
+                )
+                scenario_snapshot.setdefault("provider_metadata", {})["term_structure_symbol"] = term_symbol
+                effective_daily_payload = {
+                    "market_snapshot": scenario_snapshot,
+                    "report_root": str((APP_PATHS.root / "reports").resolve()),
+                }
+                with st.expander("Scenario Snapshot"):
+                    st.code(_pretty_json(scenario_snapshot), language="json")
         else:
             daily_json = st.text_area(
                 "Daily Input JSON",

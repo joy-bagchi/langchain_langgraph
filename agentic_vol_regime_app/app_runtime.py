@@ -11,9 +11,10 @@ from agentic_vol_regime_app._bootstrap import ensure_repo_imports
 ensure_repo_imports()
 
 from agentic_harness.agentic_os.platform import build_platform_services
-from agentic_harness.contracts import AgentRuntimeProfile, ContextPolicy, MemoryLifecyclePolicy
+from agentic_harness.contracts import AgentRuntimeProfile, ContextPolicy, MemoryLifecyclePolicy, MemoryQuery
 from agentic_harness.definitions.agent_service import YamlAgentDefinitionService
 from agentic_harness.runtime import resume_workflow, run_agent_workflow, start_workflow
+from agentic_harness.stores import FilesystemMemoryStore
 
 from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.executors import build_executor_registry
@@ -25,6 +26,12 @@ def default_agent_path() -> Path:
 
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
+
+
+def _resolve_memory_namespace(agent_path: str | Path | None = None) -> str:
+    resolved_agent_path = Path(agent_path or default_agent_path()).resolve()
+    agent_definition = YamlAgentDefinitionService().load(resolved_agent_path)
+    return agent_definition.memory_namespace or f"{agent_definition.agent_id}_memory"
 
 
 def _resolve_runtime_profile(profile_id: str) -> AgentRuntimeProfile:
@@ -125,6 +132,34 @@ def run_daily_regime_agent(
         "runtime_profile": agent_definition.runtime_profile,
     }
     return result
+
+
+def load_latest_live_daily_observation(
+    *,
+    agent_path: str | Path | None = None,
+    storage_root: str | Path | None = None,
+    database_url: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the latest live daily observation snapshot persisted in memory."""
+    namespace = _resolve_memory_namespace(agent_path)
+    store_root = Path(storage_root or Path.cwd() / ".workflow_memory")
+    memory_store = FilesystemMemoryStore(store_root, database_url=database_url)
+    matches = memory_store.recall(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=1,
+            memory_types=["live_observation_snapshot"],
+            structured_filters={"source_kind": "live_ibkr"},
+        )
+    )
+    if not matches:
+        return None
+    structured_payload = matches[0].record.structured_payload
+    observation = structured_payload.get("observation")
+    if isinstance(observation, dict):
+        return observation
+    return None
 
 
 def resume_daily_regime_run(

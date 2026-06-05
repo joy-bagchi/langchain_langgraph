@@ -104,6 +104,40 @@ def _merge_observations(
     )
 
 
+def _maybe_remember_live_observation(
+    *,
+    state: WorkflowGraphState,
+    step: WorkflowStep,
+    services,
+    observation: ObservationRecord,
+) -> None:
+    namespace = f"{state.get('agent_id') or state.get('workflow_id')}_memory"
+    services.memory.remember(
+        MemoryRecord.create(
+            namespace=namespace,
+            memory_type="live_observation_snapshot",
+            content=(
+                f"latest live daily observation {observation.as_of} "
+                f"SPY={observation.symbols.get('SPY', {}).get('last')} "
+                f"VIX={observation.symbols.get('VIX', {}).get('last')}"
+            ),
+            source_run_id=str(state["run_id"]),
+            source_step_id=step.step_id,
+            metadata={
+                "workflow_id": state.get("workflow_id"),
+                "agent_id": state.get("agent_id"),
+                "source_kind": "live_ibkr",
+                "observation_as_of": observation.as_of,
+            },
+            structured_payload={
+                "source_kind": "live_ibkr",
+                "observation_as_of": observation.as_of,
+                "observation": observation.to_dict(),
+            },
+        )
+    )
+
+
 def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
     """Create the app-specific executor registry."""
     threshold_config = load_yaml(app_paths.thresholds_dir / "alert_thresholds.yaml")
@@ -154,6 +188,12 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             observation = _merge_observations(
                 primary=live_observation,
                 fallback=_load_reference_observation(input_payload, app_paths=app_paths),
+            )
+            _maybe_remember_live_observation(
+                state=state,
+                step=step,
+                services=services,
+                observation=observation,
             )
             return StepExecutionResult(
                 output=observation.to_dict(),

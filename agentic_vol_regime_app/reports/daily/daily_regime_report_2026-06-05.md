@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-05T00:01:03.756298+00:00
+Date: 2026-06-05T02:54:16.489684+00:00
 
 ## Summary
 
@@ -28,8 +28,8 @@ Recommended posture: `NO_OVERWRITE`
 | VIX | 15.40 | Current implied-vol level |
 | VVIX | 85.50 | Vol-of-vol state |
 | VVIX/VIX | 5.55 | Convexity stress ratio |
-| VVIX/VIX z-score | 0.58 | Relative convexity stress |
-| VIX term structure | contango | Front/back of curve |
+| VVIX/VIX z-score | 0.57 | Relative convexity stress |
+| VIX term structure (VIX3M) | contango | Front/back of curve |
 | Realized vol trend | 0.004 | Short-vs-medium realized vol |
 
 ## Predictive Alerts

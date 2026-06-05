@@ -79,7 +79,7 @@ Recommended posture: `{policy_record.recommended_action}`
 | VVIX | {features.get("vvix", 0.0):.2f} | Vol-of-vol state |
 | VVIX/VIX | {features.get("vvix_vix_ratio", 0.0):.2f} | Convexity stress ratio |
 | VVIX/VIX z-score | {float(features.get("vvix_vix_z_22d", 0.0) or 0.0):.2f} | Relative convexity stress |
-| VIX term structure | {features.get("term_structure_state", "flat")} | Front/back of curve |
+| VIX term structure ({features.get("term_structure_symbol", "VIX3M")}) | {features.get("term_structure_state", "flat")} | Front/back of curve |
 | Realized vol trend | {float(features.get("realized_vol_acceleration", 0.0) or 0.0):.3f} | Short-vs-medium realized vol |
 
 ## Predictive Alerts

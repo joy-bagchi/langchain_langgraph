@@ -88,12 +88,19 @@ def compute_feature_record(
     vix_history = list(observation.history.get("VIX", []))
     vvix_history = list(observation.history.get("VVIX", []))
     vix9d_history = list(observation.history.get("VIX9D", []))
-    vix3m_history = list(observation.history.get("VIX3M", []))
+    term_structure_symbol = str(
+        observation.provider_metadata.get("term_structure_symbol", "VIX3M")
+    ).upper()
+    term_structure_history = list(
+        observation.history.get(term_structure_symbol, observation.history.get("VIX3M", []))
+    )
 
     vix = float(observation.symbols.get("VIX", {}).get("last", 0.0))
     vvix = float(observation.symbols.get("VVIX", {}).get("last", 0.0))
     vix9d = float(observation.symbols.get("VIX9D", {}).get("last", 0.0))
-    vix3m = float(observation.symbols.get("VIX3M", {}).get("last", 0.0))
+    term_structure_level = float(
+        observation.symbols.get(term_structure_symbol, observation.symbols.get("VIX3M", {})).get("last", 0.0)
+    )
     spy_last = float(observation.symbols.get("SPY", {}).get("last", 0.0))
 
     vvix_vix_ratio = vvix / vix if vix else 0.0
@@ -103,8 +110,8 @@ def compute_feature_record(
         if vix_value
     ]
     term_spread_history = [
-        vix3m_value - vix_value
-        for vix3m_value, vix_value in zip(vix3m_history[-zscore_short:], vix_history[-zscore_short:])
+        back_term_value - vix_value
+        for back_term_value, vix_value in zip(term_structure_history[-zscore_short:], vix_history[-zscore_short:])
     ]
 
     rv_5d = _annualized_realized_vol(spy_closes, rv_short)
@@ -120,9 +127,9 @@ def compute_feature_record(
         return value
 
     term_structure_state = "flat"
-    if vix3m - vix > 1.0:
+    if term_structure_level - vix > 1.0:
         term_structure_state = "contango"
-    elif vix3m - vix < -1.0:
+    elif term_structure_level - vix < -1.0:
         term_structure_state = "backwardation"
 
     features = {
@@ -130,7 +137,8 @@ def compute_feature_record(
         "vix": track("vix", vix),
         "vvix": track("vvix", vvix),
         "vix9d": track("vix9d", vix9d),
-        "vix3m": track("vix3m", vix3m),
+        "vix3m": track("vix3m", term_structure_level),
+        "term_structure_symbol": term_structure_symbol,
         "vvix_vix_ratio": track("vvix_vix_ratio", vvix_vix_ratio),
         "vvix_vix_z_22d": track("vvix_vix_z_22d", _zscore(vvix_vix_ratio, ratio_history[-zscore_short:])),
         "vix_21d_z": track("vix_21d_z", _zscore(vix, vix_history[-zscore_short:])),
@@ -142,7 +150,7 @@ def compute_feature_record(
             rv_5d - rv_21d if rv_5d is not None and rv_21d is not None else None,
         ),
         "vix_rv_spread": track("vix_rv_spread", (vix / 100.0) - rv_21d if rv_21d is not None else None),
-        "vix3m_minus_vix": track("vix3m_minus_vix", vix3m - vix),
+        "vix3m_minus_vix": track("vix3m_minus_vix", term_structure_level - vix),
         "term_structure_flattening": track(
             "term_structure_flattening",
             (term_spread_history[-1] - _safe_mean(term_spread_history[:-1])) if len(term_spread_history) >= 2 else None,
