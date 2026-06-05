@@ -155,6 +155,9 @@ class PolicyRecommendationRecord:
     rationale: list[str]
     risk_notes: list[str]
     requires_human_review: bool
+    overwrite_call_strike: float | None = None
+    overwrite_dte: int | None = None
+    overwrite_rationale: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _asdict(self)

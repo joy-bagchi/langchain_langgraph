@@ -52,6 +52,13 @@ def render_daily_markdown(
     risk_notes = "\n".join(f"- {item}" for item in policy_record.risk_notes) or "- None"
     drivers = "\n".join(f"- {item}" for item in alert_record.drivers) or "- None"
     critic_findings = "\n".join(f"- {item}" for item in critic_record.findings) or "- None"
+    overwrite_plan = "- None"
+    if policy_record.overwrite_call_strike is not None and policy_record.overwrite_dte is not None:
+        overwrite_plan = (
+            f"- Suggested call overwrite strike: `{policy_record.overwrite_call_strike:.2f}`\n"
+            f"- Suggested DTE: `{policy_record.overwrite_dte}`\n"
+            f"- Notes: {policy_record.overwrite_rationale or 'Derived from current SPY spot and regime posture.'}"
+        )
 
     return f"""# Daily Volatility Regime Report
 
@@ -100,6 +107,9 @@ Rationale:
 
 Risk notes:
 {risk_notes}
+
+Overwrite implementation:
+{overwrite_plan}
 
 ## Model Confidence
 

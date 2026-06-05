@@ -281,12 +281,13 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         state: WorkflowGraphState,
         _: dict[str, Any],
     ) -> StepExecutionResult:
-        from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, TransitionProbabilityRecord
+        from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, FeatureRecord, TransitionProbabilityRecord
 
+        feature_record = FeatureRecord(**dict(state["named_outputs"]["feature_record"]))
         belief_record = BeliefRecord(**dict(state["named_outputs"]["belief_state"]))
         transition_record = TransitionProbabilityRecord(**dict(state["named_outputs"]["transition_probabilities"]))
         alert_record = AlertRecord(**dict(state["named_outputs"]["alert_record"]))
-        recommendation = recommend_policy_action(belief_record, transition_record, alert_record)
+        recommendation = recommend_policy_action(feature_record, belief_record, transition_record, alert_record)
         return StepExecutionResult(output=recommendation.to_dict())
 
     def critic_review(

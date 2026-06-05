@@ -177,6 +177,20 @@ def _render_color_summary_cards(st, *, regime: str, alert: str, action: str) -> 
     )
 
 
+def _render_overwrite_plan(st, *, policy: dict[str, Any]) -> None:
+    strike = policy.get("overwrite_call_strike")
+    dte = policy.get("overwrite_dte")
+    rationale = str(policy.get("overwrite_rationale") or "").strip()
+    if strike is None or dte is None:
+        return
+    st.subheader("Overwrite Plan")
+    plan_col1, plan_col2 = st.columns(2)
+    _render_summary_card(plan_col1, label="Suggested Strike", value=f"{float(strike):.2f}")
+    _render_summary_card(plan_col2, label="Suggested DTE", value=str(int(dte)))
+    if rationale:
+        st.caption(rationale)
+
+
 def _strip_report_heading_and_summary(markdown: str) -> str:
     lines = markdown.splitlines()
     output: list[str] = []
@@ -215,6 +229,7 @@ def _render_daily_result(st, result: dict[str, Any]) -> None:
         alert=str(alert_record.get("severity", "n/a")),
         action=str(policy.get("recommended_action", "n/a")),
     )
+    _render_overwrite_plan(st, policy=policy)
 
     if daily_report.get("markdown"):
         st.subheader("Daily Report")

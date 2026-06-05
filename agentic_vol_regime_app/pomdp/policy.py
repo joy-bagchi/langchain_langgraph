@@ -2,10 +2,58 @@
 
 from __future__ import annotations
 
-from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, PolicyRecommendationRecord, TransitionProbabilityRecord
+import math
+
+from agentic_vol_regime_app.contracts import (
+    AlertRecord,
+    BeliefRecord,
+    FeatureRecord,
+    PolicyRecommendationRecord,
+    TransitionProbabilityRecord,
+)
+
+
+def _strike_increment(spot: float) -> float:
+    if spot >= 1000:
+        return 5.0
+    if spot >= 200:
+        return 1.0
+    return 0.5
+
+
+def _round_up_to_increment(value: float, increment: float) -> float:
+    if increment <= 0:
+        return value
+    return math.ceil(value / increment) * increment
+
+
+def _overwrite_contract(
+    *,
+    action: str,
+    spot: float | None,
+) -> tuple[float | None, int | None, str | None]:
+    if spot is None or spot <= 0:
+        return (None, None, None)
+    if action in {"NO_OVERWRITE", "MANUAL_REVIEW"}:
+        return (None, None, None)
+
+    increment = _strike_increment(spot)
+    offsets = {
+        "LIGHT_OVERWRITE": (0.005, 1, "Light overwrite keeps the call slightly out of the money."),
+        "MEDIUM_OVERWRITE": (0.008, 1, "Medium overwrite moves the call further out to balance premium and upside room."),
+        "AGGRESSIVE_OVERWRITE": (0.012, 1, "Aggressive overwrite caps closer upside risk with a tighter short-dated call."),
+        "REDUCE_OVERWRITE": (0.015, 2, "Reduced overwrite stance widens strike distance and extends DTE to preserve upside."),
+    }
+    pct_otm, dte, note = offsets.get(
+        action,
+        (0.006, 1, "Overwrite strike selected from the current spot and regime posture."),
+    )
+    strike = _round_up_to_increment(spot * (1.0 + pct_otm), increment)
+    return (float(strike), int(dte), note)
 
 
 def recommend_policy_action(
+    feature_record: FeatureRecord,
     belief_record: BeliefRecord,
     transition_record: TransitionProbabilityRecord,
     alert_record: AlertRecord,
@@ -53,6 +101,11 @@ def recommend_policy_action(
         rationale.append("Warning-level transition risk nudges posture away from zero overwrite.")
 
     confidence = round(min(0.95, max(belief_record.confidence, max(beliefs.values()) + 0.1)), 6)
+    spot = feature_record.features.get("spy_last")
+    overwrite_call_strike, overwrite_dte, overwrite_rationale = _overwrite_contract(
+        action=recommended_action,
+        spot=float(spot) if spot is not None else None,
+    )
     return PolicyRecommendationRecord(
         schema_version="policy_recommendation.v1",
         as_of=belief_record.as_of,
@@ -61,4 +114,7 @@ def recommend_policy_action(
         rationale=rationale[:4],
         risk_notes=risk_notes[:4],
         requires_human_review=requires_human_review or recommended_action == "MANUAL_REVIEW",
+        overwrite_call_strike=overwrite_call_strike,
+        overwrite_dte=overwrite_dte,
+        overwrite_rationale=overwrite_rationale,
     )

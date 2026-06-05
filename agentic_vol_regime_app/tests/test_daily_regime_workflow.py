@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, FeatureRecord, TransitionProbabilityRecord
 from agentic_vol_regime_app.app_runtime import (
     load_latest_live_daily_observation,
     resume_daily_regime_run,
     run_daily_regime_agent,
 )
+from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
 
 
 class FakeDailyIBKRPipe:
@@ -262,3 +264,62 @@ def test_daily_regime_workflow_backfills_missing_live_vol_quotes(tmp_path: Path)
     assert observation["symbols"]["VVIX"]["last"] == 101.0
     assert observation["history"]["VIX"][-1] == 18.4
     assert observation["quality"]["reference_backfill_applied"] is True
+
+
+def test_policy_recommendation_emits_overwrite_strike_and_dte() -> None:
+    feature_record = FeatureRecord(
+        schema_version="features.v1",
+        as_of="2026-06-04T20:00:00Z",
+        feature_set_version="vol_regime_features_v1",
+        features={"spy_last": 757.0},
+        missing_features=[],
+        lookback_windows={},
+    )
+    belief_record = BeliefRecord(
+        schema_version="belief.v1",
+        as_of="2026-06-04T20:00:00Z",
+        model_version="heuristic",
+        beliefs={
+            "STABLE_LOW_VOL_TREND": 0.18,
+            "VOL_EXPANSION_TRANSITION": 0.41,
+            "HIGH_VOL_RISK_OFF": 0.17,
+            "PANIC_CONVEXITY_STRESS": 0.05,
+            "POST_PANIC_COMPRESSION": 0.05,
+        },
+        belief_delta={},
+        entropy=0.8,
+        confidence=0.64,
+        drivers=[],
+    )
+    transition_record = TransitionProbabilityRecord(
+        schema_version="transition.v1",
+        as_of="2026-06-04T20:00:00Z",
+        model_version="heuristic",
+        transition_probabilities={"vol_expansion_5d": 0.36, "risk_off_transition_10d": 0.12},
+        top_predictive_factors=[],
+        confirming_features_count=3,
+    )
+    alert_record = AlertRecord(
+        schema_version="alert.v1",
+        alert_id="alert-1",
+        as_of="2026-06-04T20:00:00Z",
+        severity="WARNING",
+        alert_type="vol_transition",
+        headline="Expansion risk is building.",
+        probabilities={},
+        belief_state={},
+        drivers=[],
+        recommended_review=[],
+        requires_human_review=False,
+    )
+
+    recommendation = recommend_policy_action(
+        feature_record,
+        belief_record,
+        transition_record,
+        alert_record,
+    )
+
+    assert recommendation.recommended_action == "MEDIUM_OVERWRITE"
+    assert recommendation.overwrite_call_strike == 764.0
+    assert recommendation.overwrite_dte == 1

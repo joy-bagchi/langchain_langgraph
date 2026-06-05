@@ -1,0 +1,45 @@
+{"run_id": "a866c045-898b-496b-ab43-70fc6026698c", "timestamp": "2026-06-05T03:12:17.965972+00:00", "type": "run_started", "workflow_id": "daily_vol_regime_report"}
+{"match_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-05T03:12:18.004005+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-05T03:12:18.042122+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "validate_data_quality", "step_id": "ingest_market_data", "timestamp": "2026-06-05T03:12:18.083256+00:00", "type": "step_executed"}
+{"checkpoint_index": 1, "current_step": "validate_data_quality", "status": "running", "timestamp": "2026-06-05T03:12:18.120612+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "validate_data_quality", "timestamp": "2026-06-05T03:12:18.160554+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 1, "step_id": "validate_data_quality", "timestamp": "2026-06-05T03:12:18.196556+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "compute_features", "step_id": "validate_data_quality", "timestamp": "2026-06-05T03:12:18.237506+00:00", "type": "step_executed"}
+{"checkpoint_index": 2, "current_step": "compute_features", "status": "running", "timestamp": "2026-06-05T03:12:18.277093+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "compute_features", "timestamp": "2026-06-05T03:12:18.319001+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 1, "step_id": "compute_features", "timestamp": "2026-06-05T03:12:18.359561+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "update_belief_state", "step_id": "compute_features", "timestamp": "2026-06-05T03:12:18.399721+00:00", "type": "step_executed"}
+{"checkpoint_index": 3, "current_step": "update_belief_state", "status": "running", "timestamp": "2026-06-05T03:12:18.437029+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "update_belief_state", "timestamp": "2026-06-05T03:12:18.479559+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 2, "step_id": "update_belief_state", "timestamp": "2026-06-05T03:12:18.520087+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "estimate_transition_probabilities", "step_id": "update_belief_state", "timestamp": "2026-06-05T03:12:18.560672+00:00", "type": "step_executed"}
+{"checkpoint_index": 4, "current_step": "estimate_transition_probabilities", "status": "running", "timestamp": "2026-06-05T03:12:18.602833+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "estimate_transition_probabilities", "timestamp": "2026-06-05T03:12:18.645033+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 3, "step_id": "estimate_transition_probabilities", "timestamp": "2026-06-05T03:12:18.684544+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "generate_alerts", "step_id": "estimate_transition_probabilities", "timestamp": "2026-06-05T03:12:18.725098+00:00", "type": "step_executed"}
+{"checkpoint_index": 5, "current_step": "generate_alerts", "status": "running", "timestamp": "2026-06-05T03:12:18.774229+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "generate_alerts", "timestamp": "2026-06-05T03:12:18.817983+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 4, "step_id": "generate_alerts", "timestamp": "2026-06-05T03:12:18.866722+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "recommend_policy", "step_id": "generate_alerts", "timestamp": "2026-06-05T03:12:18.924134+00:00", "type": "step_executed"}
+{"checkpoint_index": 6, "current_step": "recommend_policy", "status": "running", "timestamp": "2026-06-05T03:12:18.982328+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "recommend_policy", "timestamp": "2026-06-05T03:12:19.024776+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "recommend_policy", "timestamp": "2026-06-05T03:12:19.062530+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "critic_review", "step_id": "recommend_policy", "timestamp": "2026-06-05T03:12:19.090162+00:00", "type": "step_executed"}
+{"checkpoint_index": 7, "current_step": "critic_review", "status": "running", "timestamp": "2026-06-05T03:12:19.113560+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "critic_review", "timestamp": "2026-06-05T03:12:19.139173+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "critic_review", "timestamp": "2026-06-05T03:12:19.164871+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "persist_artifacts", "step_id": "critic_review", "timestamp": "2026-06-05T03:12:19.191924+00:00", "type": "step_executed"}
+{"checkpoint_index": 8, "current_step": "persist_artifacts", "status": "running", "timestamp": "2026-06-05T03:12:19.217504+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "persist_artifacts", "timestamp": "2026-06-05T03:12:19.244556+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "persist_artifacts", "timestamp": "2026-06-05T03:12:19.269712+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "write_memory_candidates", "step_id": "persist_artifacts", "timestamp": "2026-06-05T03:12:19.293384+00:00", "type": "step_executed"}
+{"checkpoint_index": 9, "current_step": "write_memory_candidates", "status": "running", "timestamp": "2026-06-05T03:12:19.315714+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "write_memory_candidates", "timestamp": "2026-06-05T03:12:19.336917+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "write_memory_candidates", "timestamp": "2026-06-05T03:12:19.359116+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": "produce_daily_report", "step_id": "write_memory_candidates", "timestamp": "2026-06-05T03:12:19.405228+00:00", "type": "step_executed"}
+{"checkpoint_index": 10, "current_step": "produce_daily_report", "status": "running", "timestamp": "2026-06-05T03:12:19.443631+00:00", "type": "checkpoint"}
+{"match_count": 0, "step_id": "produce_daily_report", "timestamp": "2026-06-05T03:12:19.474577+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": true, "memory_hit_count": 0, "recent_history_count": 5, "step_id": "produce_daily_report", "timestamp": "2026-06-05T03:12:19.508913+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "semantic_memory_service", "next_step": null, "step_id": "produce_daily_report", "timestamp": "2026-06-05T03:12:19.541835+00:00", "type": "step_executed"}
+{"checkpoint_index": 11, "current_step": null, "status": "completed", "timestamp": "2026-06-05T03:12:19.568439+00:00", "type": "checkpoint"}

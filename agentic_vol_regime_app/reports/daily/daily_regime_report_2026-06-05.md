@@ -1,61 +1,69 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-05T02:54:16.489684+00:00
+Date: 2026-06-05T03:23:45.318898+00:00
 
 ## Summary
 
-Current regime belief favors: `Stable Low-Vol Trend`
+Current regime belief favors: `Vol Expansion Transition`
 
-Transition risk: `NONE`
+Transition risk: `WARNING`
 
-Recommended posture: `NO_OVERWRITE`
+Recommended posture: `MEDIUM_OVERWRITE`
 
 ## Belief State
 
 | Regime | Probability |
 |---|---:|
-| Stable Low-Vol Trend | 0.88 |
-| Mid-Vol Chop | 0.04 |
-| Vol Expansion Transition | 0.03 |
-| High-Vol Risk-Off | 0.02 |
-| Panic Convexity Stress | 0.01 |
-| Post-Panic Compression | 0.02 |
+| Stable Low-Vol Trend | 0.23 |
+| Mid-Vol Chop | 0.13 |
+| Vol Expansion Transition | 0.46 |
+| High-Vol Risk-Off | 0.13 |
+| Panic Convexity Stress | 0.02 |
+| Post-Panic Compression | 0.03 |
 
 ## Key Signals
 
 | Signal | Value | Interpretation |
 |---|---:|---|
-| VIX | 15.40 | Current implied-vol level |
-| VVIX | 85.50 | Vol-of-vol state |
-| VVIX/VIX | 5.55 | Convexity stress ratio |
-| VVIX/VIX z-score | 0.57 | Relative convexity stress |
-| VIX term structure (VIX3M) | contango | Front/back of curve |
+| VIX | 21.60 | Current implied-vol level |
+| VVIX | 129.60 | Vol-of-vol state |
+| VVIX/VIX | 6.00 | Convexity stress ratio |
+| VVIX/VIX z-score | 2.53 | Relative convexity stress |
+| VIX term structure (VIX3M) | backwardation | Front/back of curve |
 | Realized vol trend | 0.004 | Short-vs-medium realized vol |
 
 ## Predictive Alerts
 
-Severity: `NONE`
+Severity: `WARNING`
 
-Headline: No elevated predictive volatility alert
+Headline: Volatility expansion risk is rising with confirming signals
 
 Drivers:
+- VVIX/VIX z-score
+- term structure flattening
 - IV over realized-vol spread
+- term structure entered backwardation
 
 ## Policy Recommendation
 
-Recommended action: `NO_OVERWRITE`
+Recommended action: `MEDIUM_OVERWRITE`
 
 Rationale:
-- Stable low-volatility trend remains the dominant regime.
+- Transition risk is elevated and argues for additional premium capture.
 
 Risk notes:
-- Tight overwrites may truncate upside more than they help.
+- None
+
+Overwrite implementation:
+- Suggested call overwrite strike: `760.00`
+- Suggested DTE: `1`
+- Notes: Medium overwrite moves the call further out to balance premium and upside room.
 
 ## Model Confidence
 
-Confidence: 1.00
+Confidence: 0.78
 
-Uncertainty / entropy: 0.30
+Uncertainty / entropy: 0.78
 
 ## Critic Review
 

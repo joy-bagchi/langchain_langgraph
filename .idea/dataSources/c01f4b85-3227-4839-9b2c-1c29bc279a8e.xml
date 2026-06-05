@@ -3,15 +3,7 @@
   <database-model serializer="dbm" dbms="POSTGRES" family-id="POSTGRES" format-version="4.55">
     <root id="1">
       <DateStyle>mdy</DateStyle>
-      <Grants>1||-9223372036854775808|c|G
-1||10|c|G
-1||10|C|G
-1||10|T|G
-4||-9223372036854775808|c|G
-4||10|c|G
-4||10|C|G
-4||10|T|G</Grants>
-      <IntrospectionStateNumber>1356</IntrospectionStateNumber>
+      <IntrospectionStateNumber>1360</IntrospectionStateNumber>
       <ServerVersion>18.4</ServerVersion>
       <StartupTime>1780293501</StartupTime>
       <TimeZones>true ACDT
@@ -809,7 +801,7 @@ false Zulu
 14860||10|C|G
 14860||-9223372036854775808|U|G
 14860||10|U|G</Grants>
-      <IntrospectionStateNumber>1356</IntrospectionStateNumber>
+      <IntrospectionStateNumber>1360</IntrospectionStateNumber>
       <ObjectId>16614</ObjectId>
       <OwnerName>postgres</OwnerName>
     </database>
@@ -4938,11 +4930,11 @@ false Zulu
       <AutoIntrospectionLevel>3</AutoIntrospectionLevel>
       <Comment>standard public schema</Comment>
       <Current>1</Current>
-      <LastIntrospectionL1Xid>1356</LastIntrospectionL1Xid>
-      <LastIntrospectionL2Xid>1356</LastIntrospectionL2Xid>
-      <LastIntrospectionL3Xid>1356</LastIntrospectionL3Xid>
+      <LastIntrospectionL1Xid>1360</LastIntrospectionL1Xid>
+      <LastIntrospectionL2Xid>1360</LastIntrospectionL2Xid>
+      <LastIntrospectionL3Xid>1360</LastIntrospectionL3Xid>
       <LastIntrospectionLevel>3</LastIntrospectionLevel>
-      <LastIntrospectionLocalTimestamp>2026-06-02.03:32:54</LastIntrospectionLocalTimestamp>
+      <LastIntrospectionLocalTimestamp>2026-06-05.03:23:28</LastIntrospectionLocalTimestamp>
       <LastIntrospectionVersion>260210</LastIntrospectionVersion>
       <ObjectId>2200</ObjectId>
       <StateNumber>546</StateNumber>
@@ -7673,7 +7665,7 @@ false Zulu
     <table id="514" parent="298" name="memory_records">
       <DetailsLevel>2</DetailsLevel>
       <ObjectId>16670</ObjectId>
-      <StateNumber>800</StateNumber>
+      <StateNumber>1357</StateNumber>
       <AccessMethodId>2</AccessMethodId>
       <OwnerName>postgres</OwnerName>
     </table>
@@ -9519,7 +9511,15 @@ event_index</ColNames>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <index id="925" parent="514" name="memory_records_pkey">
+    <column id="925" parent="514" name="structured_payload_json">
+      <DefaultExpression>&apos;{}&apos;::text</DefaultExpression>
+      <NotNull>1</NotNull>
+      <Position>10</Position>
+      <StateNumber>1357</StateNumber>
+      <StoredType>text|0s</StoredType>
+      <TypeId>25</TypeId>
+    </column>
+    <index id="926" parent="514" name="memory_records_pkey">
       <ColNames>record_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>16683</ObjectId>
@@ -9531,7 +9531,7 @@ event_index</ColNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <index id="926" parent="514" name="idx_memory_records_namespace">
+    <index id="927" parent="514" name="idx_memory_records_namespace">
       <ColNames>namespace</ColNames>
       <ObjectId>17116</ObjectId>
       <StateNumber>1026</StateNumber>
@@ -9540,66 +9540,66 @@ event_index</ColNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="927" parent="514" name="memory_records_pkey">
+    <key id="928" parent="514" name="memory_records_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>16684</ObjectId>
       <Primary>1</Primary>
       <StateNumber>800</StateNumber>
       <UnderlyingIndexId>16683</UnderlyingIndexId>
     </key>
-    <column id="928" parent="515" name="run_id">
+    <column id="929" parent="515" name="run_id">
       <NotNull>1</NotNull>
       <Position>1</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="929" parent="515" name="workflow_id">
+    <column id="930" parent="515" name="workflow_id">
       <Position>2</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="930" parent="515" name="workflow_path">
+    <column id="931" parent="515" name="workflow_path">
       <Position>3</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="931" parent="515" name="status">
+    <column id="932" parent="515" name="status">
       <Position>4</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="932" parent="515" name="run_kind">
+    <column id="933" parent="515" name="run_kind">
       <Position>5</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="933" parent="515" name="state_json">
+    <column id="934" parent="515" name="state_json">
       <NotNull>1</NotNull>
       <Position>6</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="934" parent="515" name="created_at">
+    <column id="935" parent="515" name="created_at">
       <NotNull>1</NotNull>
       <Position>7</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <column id="935" parent="515" name="updated_at">
+    <column id="936" parent="515" name="updated_at">
       <NotNull>1</NotNull>
       <Position>8</Position>
       <StateNumber>800</StateNumber>
       <StoredType>text|0s</StoredType>
       <TypeId>25</TypeId>
     </column>
-    <index id="936" parent="515" name="runs_pkey">
+    <index id="937" parent="515" name="runs_pkey">
       <ColNames>run_id</ColNames>
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>16624</ObjectId>
@@ -9611,7 +9611,7 @@ event_index</ColNames>
       <CollationIds>100</CollationIds>
       <CollationParentNames>pg_catalog</CollationParentNames>
     </index>
-    <key id="937" parent="515" name="runs_pkey">
+    <key id="938" parent="515" name="runs_pkey">
       <NameSurrogate>1</NameSurrogate>
       <ObjectId>16625</ObjectId>
       <Primary>1</Primary>
