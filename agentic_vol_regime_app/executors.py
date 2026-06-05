@@ -16,6 +16,7 @@ from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
 from agentic_vol_regime_app.data.quality import validate_observation
 from agentic_vol_regime_app.features.build_features import compute_feature_record
 from agentic_vol_regime_app.pomdp.belief_update import update_belief_state
+from agentic_vol_regime_app.pomdp.ml_belief import update_belief_state_with_linear_regression
 from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
 from agentic_vol_regime_app.pomdp.transition_model import estimate_transition_probabilities
 from agentic_vol_regime_app.reports.daily_report import render_daily_markdown, write_daily_report
@@ -38,6 +39,18 @@ def _load_previous_belief(state: WorkflowGraphState) -> dict[str, float] | None:
 
 def _is_tool_allowed(state: WorkflowGraphState, tool_id: str) -> bool:
     return tool_id in {str(item) for item in state.get("allowed_tools", [])}
+
+
+def _belief_engine(state: WorkflowGraphState) -> str:
+    metadata = dict(state.get("agent_metadata", {}))
+    return str(metadata.get("belief_engine", "heuristic")).strip().lower()
+
+
+def _memory_namespace(state: WorkflowGraphState) -> str:
+    configured = state.get("memory_namespace")
+    if configured:
+        return str(configured)
+    return f"{state.get('agent_id') or state.get('workflow_id')}_memory"
 
 
 def _load_reference_observation(
@@ -111,7 +124,7 @@ def _maybe_remember_live_observation(
     services,
     observation: ObservationRecord,
 ) -> None:
-    namespace = f"{state.get('agent_id') or state.get('workflow_id')}_memory"
+    namespace = _memory_namespace(state)
     services.memory.remember(
         MemoryRecord.create(
             namespace=namespace,
@@ -230,15 +243,25 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         state: WorkflowGraphState,
         _: dict[str, Any],
     ) -> StepExecutionResult:
+        observation = load_market_snapshot(
+            {"market_snapshot": state["named_outputs"]["observation"]},
+            app_root=app_paths.root,
+        )
         feature_record = compute_feature_record(
-            load_market_snapshot({"market_snapshot": state["named_outputs"]["observation"]}, app_root=app_paths.root),
+            observation,
             feature_config=feature_config,
-        )
-        feature_record = feature_record.__class__(**state["named_outputs"]["feature_record"])
-        belief_record = update_belief_state(
-            feature_record,
-            previous_belief=_load_previous_belief(state),
-        )
+        ).__class__(**state["named_outputs"]["feature_record"])
+        if _belief_engine(state) == "ml_linear_regression":
+            belief_record = update_belief_state_with_linear_regression(
+                feature_record,
+                observation,
+                previous_belief=_load_previous_belief(state),
+            )
+        else:
+            belief_record = update_belief_state(
+                feature_record,
+                previous_belief=_load_previous_belief(state),
+            )
         return StepExecutionResult(output=belief_record.to_dict())
 
     def estimate_transition_probabilities_executor(
@@ -380,7 +403,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
 
         record_ids: list[str] = []
         if should_write:
-            namespace = f"{state.get('agent_id') or state.get('workflow_id')}_memory"
+            namespace = _memory_namespace(state)
             structured_payload = {
                 "as_of": belief_state.get("as_of"),
                 "alert_severity": alert_record.get("severity"),

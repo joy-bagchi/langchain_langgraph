@@ -1,0 +1,17 @@
+agent_id: daily_regime_ml_orchestrator
+name: Daily Regime ML Orchestrator
+role: volatility_regime_ml_orchestrator
+workflow_path: ../workflows/daily_belief_report.md
+llm_provider: none
+memory_service_type: semantic
+runtime_profile: durable_research
+memory_namespace: daily_regime_memory
+allowed_tools:
+  - ibkr_data_pipeline
+domain: volatility_regime
+belief_engine: ml_linear_regression
+guardrails:
+  post:
+    block_patterns:
+      - "(?i)execute live trade"
+      - "(?i)place live trade"

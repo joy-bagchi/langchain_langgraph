@@ -1,62 +1,56 @@
 {
   "alert_record": {
-    "alert_id": "62d37aa4-b6cf-486c-81c8-741f71c74002",
+    "alert_id": "af06ded3-c39f-467d-a738-6b371e73e55f",
     "alert_type": "PREDICTIVE_VOL_EXPANSION",
-    "as_of": "2026-06-05T03:23:45.318898+00:00",
+    "as_of": "2026-06-05T03:45:20.718728+00:00",
     "belief_state": {
-      "HIGH_VOL_RISK_OFF": 0.126627,
-      "PANIC_CONVEXITY_STRESS": 0.023133,
-      "VOL_EXPANSION_TRANSITION": 0.464631
+      "HIGH_VOL_RISK_OFF": 0.021831,
+      "PANIC_CONVEXITY_STRESS": 0.014634,
+      "VOL_EXPANSION_TRANSITION": 0.026664
     },
     "drivers": [
-      "VVIX/VIX z-score",
-      "term structure flattening",
-      "IV over realized-vol spread",
-      "term structure entered backwardation"
+      "IV over realized-vol spread"
     ],
-    "headline": "Volatility expansion risk is rising with confirming signals",
+    "headline": "No elevated predictive volatility alert",
     "probabilities": {
-      "vix_explosion_10d": 0.151115,
-      "vix_spike_10d": 0.540717,
-      "vol_expansion_5d": 0.95
+      "vix_explosion_10d": 0.063385,
+      "vix_spike_10d": 0.101009,
+      "vol_expansion_5d": 0.14448
     },
-    "recommended_review": [
-      "Review overwrite sizing before opening new tight caps."
-    ],
+    "recommended_review": [],
     "requires_human_review": false,
     "schema_version": "alert.v1",
-    "severity": "WARNING"
+    "severity": "NONE"
   },
   "belief_state": {
-    "as_of": "2026-06-05T03:23:45.318898+00:00",
+    "as_of": "2026-06-05T03:45:20.718728+00:00",
     "belief_delta": {
-      "HIGH_VOL_RISK_OFF": -0.04004,
-      "MID_VOL_CHOP": -0.04004,
-      "PANIC_CONVEXITY_STRESS": -0.143534,
-      "POST_PANIC_COMPRESSION": -0.138412,
-      "STABLE_LOW_VOL_TREND": 0.064062,
-      "VOL_EXPANSION_TRANSITION": 0.297964
+      "HIGH_VOL_RISK_OFF": -0.144836,
+      "MID_VOL_CHOP": -0.130673,
+      "PANIC_CONVEXITY_STRESS": -0.152033,
+      "POST_PANIC_COMPRESSION": -0.148793,
+      "STABLE_LOW_VOL_TREND": 0.716337,
+      "VOL_EXPANSION_TRANSITION": -0.140002
     },
     "beliefs": {
-      "HIGH_VOL_RISK_OFF": 0.126627,
-      "MID_VOL_CHOP": 0.126627,
-      "PANIC_CONVEXITY_STRESS": 0.023133,
-      "POST_PANIC_COMPRESSION": 0.028254,
-      "STABLE_LOW_VOL_TREND": 0.230729,
-      "VOL_EXPANSION_TRANSITION": 0.464631
+      "HIGH_VOL_RISK_OFF": 0.021831,
+      "MID_VOL_CHOP": 0.035993,
+      "PANIC_CONVEXITY_STRESS": 0.014634,
+      "POST_PANIC_COMPRESSION": 0.017874,
+      "STABLE_LOW_VOL_TREND": 0.883004,
+      "VOL_EXPANSION_TRANSITION": 0.026664
     },
-    "confidence": 0.77757,
+    "confidence": 1.0,
     "drivers": [
-      "Trend persistence remains supportive of a stable trend.",
-      "VVIX/VIX z-score is elevated versus recent history.",
-      "Term structure is flattening versus its recent average."
+      "VIX remains anchored in a low-volatility range.",
+      "Trend persistence remains supportive of a stable trend."
     ],
-    "entropy": 0.78457,
+    "entropy": 0.303283,
     "model_version": "belief_model_v1",
     "schema_version": "belief.v1"
   },
   "critic_review": {
-    "as_of": "2026-06-05T03:23:45.318898+00:00",
+    "as_of": "2026-06-05T03:45:20.718728+00:00",
     "findings": [
       "Deterministic checks found the daily report candidate internally consistent."
     ],
@@ -73,28 +67,28 @@
     "warnings": []
   },
   "feature_record": {
-    "as_of": "2026-06-05T03:23:45.318898+00:00",
+    "as_of": "2026-06-05T03:45:20.718728+00:00",
     "feature_set_version": "vol_regime_features_v1",
     "features": {
       "drawdown_21d": 0.006674301962797744,
       "realized_vol_acceleration": 0.004290705602123884,
       "rv_21d": 0.10544424109825482,
       "rv_5d": 0.1097349467003787,
-      "spy_last": 753.47,
-      "term_structure_flattening": -8.463809523809527,
-      "term_structure_state": "backwardation",
+      "spy_last": 753.45,
+      "term_structure_flattening": 0.5661904761904761,
+      "term_structure_state": "contango",
       "term_structure_symbol": "VIX3M",
       "trend_persistence_21d": 0.6666666666666666,
-      "vix": 21.6,
-      "vix3m": 16.4,
-      "vix3m_minus_vix": -5.200000000000003,
+      "vix": 15.4,
+      "vix3m": 19.22,
+      "vix3m_minus_vix": 3.8199999999999985,
       "vix9d": 12.32,
-      "vix9d_vix_ratio": 0.5703703703703703,
-      "vix_21d_z": 3.3108416339631366,
-      "vix_rv_spread": 0.11055575890174521,
-      "vvix": 129.60000000000002,
-      "vvix_vix_ratio": 6.000000000000001,
-      "vvix_vix_z_22d": 2.528394049060174
+      "vix9d_vix_ratio": 0.8,
+      "vix_21d_z": -1.6535463439967402,
+      "vix_rv_spread": 0.04855575890174518,
+      "vvix": 85.5,
+      "vvix_vix_ratio": 5.5519480519480515,
+      "vvix_vix_z_22d": 0.5705196945193057
     },
     "lookback_windows": {
       "drawdown_window": 21,
@@ -106,7 +100,7 @@
     "schema_version": "features.v1"
   },
   "observation": {
-    "as_of": "2026-06-05T03:23:45.318898+00:00",
+    "as_of": "2026-06-05T03:45:20.718728+00:00",
     "history": {
       "SPY_close": [
         709.54,
@@ -170,7 +164,7 @@
         16.05,
         15.77,
         16.06,
-        21.6
+        15.4
       ],
       "VIX3M": [
         21.48,
@@ -202,7 +196,7 @@
         19.43,
         19.49,
         19.76,
-        16.4
+        19.23
       ],
       "VIX6M": [
         23.31,
@@ -298,7 +292,7 @@
         91.6,
         90.53,
         89.8,
-        129.60000000000002
+        85.75
       ]
     },
     "option_chain": {
@@ -308,7 +302,7 @@
         "20260605",
         "20260608"
       ],
-      "fetched_at": "2026-06-05T03:22:44.201752+00:00",
+      "fetched_at": "2026-06-05T03:44:19.044755+00:00",
       "option_quotes": [
         {
           "ask": null,
@@ -382,9 +376,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -409,11 +403,11 @@
           "greeks": {
             "delta": null,
             "gamma": null,
-            "implied_vol": 0.14295276701236623,
+            "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -438,11 +432,11 @@
           "greeks": {
             "delta": null,
             "gamma": null,
-            "implied_vol": 0.12723450051654614,
+            "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -467,11 +461,11 @@
           "greeks": {
             "delta": null,
             "gamma": null,
-            "implied_vol": 0.13763654239276993,
+            "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -496,11 +490,11 @@
           "greeks": {
             "delta": null,
             "gamma": null,
-            "implied_vol": 0.1266288675215536,
+            "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -525,11 +519,11 @@
           "greeks": {
             "delta": null,
             "gamma": null,
-            "implied_vol": 0.13132548932587662,
+            "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -554,11 +548,11 @@
           "greeks": {
             "delta": null,
             "gamma": null,
-            "implied_vol": 0.12491959439573674,
+            "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -583,11 +577,11 @@
           "greeks": {
             "delta": null,
             "gamma": null,
-            "implied_vol": 0.12760221156035098,
+            "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -614,9 +608,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -643,9 +637,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -672,9 +666,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -701,9 +695,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -788,9 +782,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -817,9 +811,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -846,9 +840,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -875,9 +869,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -904,9 +898,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -933,9 +927,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -962,9 +956,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -991,9 +985,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -1020,9 +1014,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -1049,9 +1043,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -1078,9 +1072,9 @@
             "gamma": null,
             "implied_vol": null,
             "opt_price": null,
-            "pv_dividend": 0.0,
+            "pv_dividend": null,
             "theta": null,
-            "und_price": 756.5482177734375,
+            "und_price": null,
             "vega": null
           },
           "last": null,
@@ -1137,7 +1131,7 @@
         755.0,
         756.0
       ],
-      "underlying_price": 753.47,
+      "underlying_price": 753.45,
       "underlying_symbol": "SPY"
     },
     "provider_metadata": {
@@ -1156,15 +1150,7 @@
         "VIX3M",
         "VIX6M",
         "VIX9M"
-      ],
-      "scenario_controls": {
-        "term_symbol": "VIX3M",
-        "term_value": 16.4,
-        "vix": 21.6,
-        "vvix_vix_ratio": 6.0
-      },
-      "scenario_mode": true,
-      "term_structure_symbol": "VIX3M"
+      ]
     },
     "quality": {
       "is_complete": false,
@@ -1176,32 +1162,31 @@
       ],
       "stale_fields": [],
       "warnings": [
-        "unable to qualify contract for VIX9M",
-        "Scenario mode modified VIX-related inputs from the latest live memory snapshot."
+        "unable to qualify contract for VIX9M"
       ]
     },
     "schema_version": "observation.v1",
-    "source": "scenario_from_memory",
+    "source": "IBKR",
     "symbols": {
       "SPY": {
-        "ask": 753.56,
-        "bid": 753.46,
+        "ask": 753.5,
+        "bid": 753.45,
         "close": 757.090027,
-        "last": 753.47,
-        "volume": 87734.0
+        "last": 753.45,
+        "volume": 90136.0
       },
       "VIX": {
         "ask": null,
         "bid": null,
         "close": 15.4,
-        "last": 21.6,
+        "last": 15.4,
         "volume": null
       },
       "VIX3M": {
         "ask": null,
         "bid": null,
         "close": 19.22,
-        "last": 16.4,
+        "last": 19.22,
         "volume": null
       },
       "VIX6M": {
@@ -1222,43 +1207,43 @@
         "ask": null,
         "bid": null,
         "close": 85.5,
-        "last": 129.60000000000002,
+        "last": 85.5,
         "volume": null
       }
     }
   },
   "policy_recommendation": {
-    "as_of": "2026-06-05T03:23:45.318898+00:00",
-    "confidence": 0.77757,
-    "overwrite_call_strike": 760.0,
-    "overwrite_dte": 1,
-    "overwrite_rationale": "Medium overwrite moves the call further out to balance premium and upside room.",
+    "as_of": "2026-06-05T03:45:20.718728+00:00",
+    "confidence": 0.95,
+    "overwrite_call_strike": null,
+    "overwrite_dte": null,
+    "overwrite_rationale": null,
     "rationale": [
-      "Transition risk is elevated and argues for additional premium capture."
+      "Stable low-volatility trend remains the dominant regime."
     ],
-    "recommended_action": "MEDIUM_OVERWRITE",
+    "recommended_action": "NO_OVERWRITE",
     "requires_human_review": false,
-    "risk_notes": [],
+    "risk_notes": [
+      "Tight overwrites may truncate upside more than they help."
+    ],
     "schema_version": "policy_recommendation.v1"
   },
   "review_decision": null,
   "transition_probabilities": {
-    "as_of": "2026-06-05T03:23:45.318898+00:00",
-    "confirming_features_count": 3,
+    "as_of": "2026-06-05T03:45:20.718728+00:00",
+    "confirming_features_count": 1,
     "model_version": "transition_model_v1",
     "schema_version": "transition_probabilities.v1",
     "top_predictive_factors": [
-      "VVIX/VIX z-score",
-      "term structure flattening",
       "IV over realized-vol spread"
     ],
     "transition_probabilities": {
-      "risk_off_transition_10d": 0.25055,
-      "vix_explosion_10d": 0.151115,
-      "vix_spike_10d": 0.540717,
-      "vix_spike_5d": 0.52135,
-      "vol_compression_10d": 0.048088,
-      "vol_expansion_5d": 0.95
+      "risk_off_transition_10d": 0.087998,
+      "vix_explosion_10d": 0.063385,
+      "vix_spike_10d": 0.101009,
+      "vix_spike_5d": 0.076032,
+      "vol_compression_10d": 0.312516,
+      "vol_expansion_5d": 0.14448
     }
   }
 }

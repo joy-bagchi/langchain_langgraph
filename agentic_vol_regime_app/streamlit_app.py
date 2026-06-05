@@ -19,7 +19,9 @@ def _ensure_streamlit_imports() -> None:
 _ensure_streamlit_imports()
 
 from agentic_vol_regime_app import (  # noqa: E402
+    default_agent_path,
     default_ibkr_agent_path,
+    default_ml_agent_path,
     load_latest_live_daily_observation,
     resume_daily_regime_run,
     run_daily_regime_agent,
@@ -215,8 +217,11 @@ def _render_daily_result(st, result: dict[str, Any]) -> None:
     belief_state = dict(outputs.get("belief_state", {}))
     alert_record = dict(outputs.get("alert_record", {}))
     policy = dict(outputs.get("policy_recommendation", {}))
+    agent_name = str(dict(result.get("agent", {})).get("name", "")).strip()
 
     _render_runtime_diagnostics(st, result)
+    if agent_name:
+        st.caption(f"Agent engine: {agent_name}")
 
     top_regime = (
         max(dict(belief_state.get("beliefs", {})), key=dict(belief_state.get("beliefs", {})).get)
@@ -381,9 +386,18 @@ def main() -> None:
     )
 
     with daily_tab:
-        st.subheader("Deterministic Daily Workflow")
+        st.subheader("Daily Volatility Regime Workflow")
         default_daily_payload = load_json(DEFAULT_DAILY_INPUT)
         default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
+        agent_choice = st.radio(
+            "Regime Engine",
+            options=["Heuristic Agent", "ML Agent"],
+            horizontal=True,
+            help="Both agents use the same workflow and report surface. The ML agent swaps only the belief-state engine.",
+        )
+        selected_daily_agent_path = (
+            default_agent_path() if agent_choice == "Heuristic Agent" else default_ml_agent_path()
+        )
         mode = st.radio(
             "Mode",
             options=["Live IBKR", "Scenario", "Manual JSON"],
@@ -488,6 +502,7 @@ def main() -> None:
             st.caption("Using default symbol set: SPY, VIX, VVIX, VIX9D, and VIX3M.")
         elif mode == "Scenario":
             latest_live_observation = load_latest_live_daily_observation(
+                agent_path=selected_daily_agent_path,
                 storage_root=storage_root,
                 database_url=database_url or None,
             )
@@ -573,6 +588,7 @@ def main() -> None:
                 payload = dict(effective_daily_payload)
                 result = run_daily_regime_agent(
                     input_payload=payload,
+                    agent_path=selected_daily_agent_path,
                     storage_root=storage_root,
                     database_url=database_url or None,
                     langsmith_tracing=langsmith_tracing,

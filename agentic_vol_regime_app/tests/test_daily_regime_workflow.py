@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, FeatureRecord, TransitionProbabilityRecord
 from agentic_vol_regime_app.app_runtime import (
+    default_ml_agent_path,
     load_latest_live_daily_observation,
     resume_daily_regime_run,
     run_daily_regime_agent,
@@ -152,6 +153,22 @@ def test_daily_regime_workflow_completes_and_writes_report(tmp_path: Path) -> No
     assert result["named_outputs"]["memory_candidates"]["candidate_count"] >= 0
 
 
+def test_daily_regime_ml_agent_completes_with_linear_model(tmp_path: Path) -> None:
+    input_payload = _load_sample_input("daily_snapshot_watch.json")
+    input_payload["report_root"] = str(tmp_path / "reports")
+
+    result = run_daily_regime_agent(
+        input_payload=input_payload,
+        agent_path=default_ml_agent_path(),
+        storage_root=tmp_path / ".workflow_memory",
+    )
+
+    assert result["status"] == "completed"
+    assert result["named_outputs"]["belief_state"]["model_version"] == "linear_regression_regime_v1"
+    assert result["agent"]["agent_id"] == "daily_regime_ml_orchestrator"
+    assert result["named_outputs"]["daily_report"]["recommended_action"]
+
+
 def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> None:
     input_payload = {
         "market_snapshot": {
@@ -230,6 +247,41 @@ def test_daily_regime_workflow_supports_live_ibkr_input(tmp_path: Path) -> None:
     )
     assert latest_live_observation is not None
     assert latest_live_observation["symbols"]["SPY"]["last"] == 602.25
+
+
+def test_daily_regime_ml_agent_supports_live_ibkr_input(tmp_path: Path) -> None:
+    result = run_daily_regime_agent(
+        input_payload={
+            "data_provider": "ibkr",
+            "symbol": "SPY",
+            "ibkr": {
+                "host": "127.0.0.1",
+                "port": 4001,
+                "client_id": 73,
+                "market_data_type": 1,
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "index_exchange": "CBOE",
+                "expiry_count": 1,
+                "strike_count": 1,
+                "history_days": 30,
+            },
+            "report_root": str(tmp_path / "reports"),
+        },
+        agent_path=default_ml_agent_path(),
+        storage_root=tmp_path / ".workflow_memory",
+        ibkr_data_pipe=FakeDailyIBKRPipe(),
+    )
+
+    assert result["status"] == "completed"
+    assert result["named_outputs"]["belief_state"]["model_version"] == "linear_regression_regime_v1"
+    latest_live_observation = load_latest_live_daily_observation(
+        agent_path=default_ml_agent_path(),
+        storage_root=tmp_path / ".workflow_memory",
+    )
+    assert latest_live_observation is not None
+    assert latest_live_observation["symbols"]["VIX"]["last"] == 17.4
 
 
 def test_daily_regime_workflow_backfills_missing_live_vol_quotes(tmp_path: Path) -> None:

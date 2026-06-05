@@ -24,6 +24,10 @@ def default_agent_path() -> Path:
     return AppPaths.default().agents_dir / "daily_regime_orchestrator.yaml"
 
 
+def default_ml_agent_path() -> Path:
+    return AppPaths.default().agents_dir / "daily_regime_ml_orchestrator.yaml"
+
+
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
 
@@ -111,6 +115,7 @@ def run_daily_regime_agent(
             "agent_name": agent_definition.name,
             "agent_role": agent_definition.role,
             "agent_metadata": dict(agent_definition.metadata),
+            "memory_namespace": agent_definition.memory_namespace or f"{agent_definition.agent_id}_memory",
             "invocation_id": str(uuid4()),
             "runtime_profile": runtime_profile.profile_id,
             "context_policy": runtime_profile.context_policy.to_dict(),

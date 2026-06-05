@@ -520,6 +520,7 @@ class WorkflowGraphState(TypedDict, total=False):
     agent_name: str | None
     agent_role: str | None
     agent_metadata: dict[str, Any]
+    memory_namespace: str | None
     invocation_id: str | None
     runtime_profile: str | None
     allowed_tools: list[str]
