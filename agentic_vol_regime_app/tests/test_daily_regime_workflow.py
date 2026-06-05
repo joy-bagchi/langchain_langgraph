@@ -6,6 +6,124 @@ from pathlib import Path
 from agentic_vol_regime_app.app_runtime import resume_daily_regime_run, run_daily_regime_agent
 
 
+class FakeDailyIBKRPipe:
+    def fetch_vol_regime_snapshot(self, request) -> object:
+        class Snapshot:
+            def to_dict(self_inner) -> dict:
+                return {
+                    "schema_version": "observation.v1",
+                    "as_of": "2026-06-04T20:00:00Z",
+                    "source": "IBKR",
+                    "symbols": {
+                        request.option_chain.symbol: {
+                            "last": 602.25,
+                            "close": 601.84,
+                            "bid": 602.2,
+                            "ask": 602.3,
+                            "volume": 80421000,
+                        },
+                        "VIX": {"last": 17.4},
+                        "VVIX": {"last": 96.1},
+                        "VIX9D": {"last": 16.9},
+                        "VIX3M": {"last": 19.6},
+                    },
+                    "history": {
+                        "SPY_close": [576.0 + (index * 0.9) for index in range(30)],
+                        "VIX": [16.1 + (index * 0.05) for index in range(30)],
+                        "VVIX": [91.0 + (index * 0.18) for index in range(30)],
+                        "VIX9D": [15.7 + (index * 0.04) for index in range(30)],
+                        "VIX3M": [19.7 + (index * 0.01) for index in range(30)],
+                    },
+                    "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
+                    "option_chain": {
+                        "underlying_symbol": request.option_chain.symbol,
+                        "underlying_price": 602.25,
+                        "fetched_at": "2026-06-04T20:00:00Z",
+                        "exchange": request.option_chain.option_exchange,
+                        "currency": request.option_chain.currency,
+                        "expirations": ["20260620"],
+                        "strikes": [600.0],
+                        "rights": ["C", "P"],
+                        "option_quotes": [
+                            {
+                                "symbol": "SPY   260620C00600000",
+                                "expiry": "20260620",
+                                "strike": 600.0,
+                                "right": "C",
+                                "exchange": "SMART",
+                                "currency": "USD",
+                                "bid": 11.1,
+                                "ask": 11.4,
+                                "last": 11.25,
+                                "close": 10.9,
+                                "mark": 11.25,
+                                "volume": 1620,
+                                "open_interest": 13234,
+                                "greeks": {
+                                    "delta": 0.51,
+                                    "gamma": 0.03,
+                                    "theta": -0.16,
+                                    "vega": 0.12,
+                                    "implied_vol": 0.171,
+                                },
+                            }
+                        ],
+                    },
+                    "provider_metadata": {"port": 4001, "history_days": request.history_days},
+                }
+
+        return Snapshot()
+
+
+class FakeDailyIBKRSentinelPipe:
+    def fetch_vol_regime_snapshot(self, request) -> object:
+        class Snapshot:
+            def to_dict(self_inner) -> dict:
+                return {
+                    "schema_version": "observation.v1",
+                    "as_of": "2026-06-04T20:00:00Z",
+                    "source": "IBKR",
+                    "symbols": {
+                        request.option_chain.symbol: {
+                            "last": 602.25,
+                            "close": 601.84,
+                            "bid": 602.2,
+                            "ask": 602.3,
+                            "volume": 80421000,
+                        },
+                        "VIX": {"last": None},
+                        "VVIX": {"last": None},
+                        "VIX9D": {"last": 16.9},
+                        "VIX3M": {"last": 19.6},
+                    },
+                    "history": {
+                        "SPY_close": [576.0 + (index * 0.9) for index in range(30)],
+                        "VIX9D": [15.7 + (index * 0.04) for index in range(30)],
+                        "VIX3M": [19.7 + (index * 0.01) for index in range(30)],
+                    },
+                    "quality": {
+                        "is_complete": False,
+                        "warnings": ["VIX and VVIX unavailable from live quote"],
+                        "stale_fields": ["VIX.last", "VVIX.last"],
+                        "missing_history": ["VIX", "VVIX"],
+                    },
+                    "option_chain": {
+                        "underlying_symbol": request.option_chain.symbol,
+                        "underlying_price": 602.25,
+                        "fetched_at": "2026-06-04T20:00:00Z",
+                        "exchange": request.option_chain.option_exchange,
+                        "currency": request.option_chain.currency,
+                        "expirations": ["20260620"],
+                        "strikes": [600.0],
+                        "rights": ["C", "P"],
+                        "option_quotes": [],
+                    },
+                    "provider_metadata": {"port": 4001, "history_days": request.history_days},
+                }
+
+        return Snapshot()
+
+
 def _load_sample_input(name: str) -> dict:
     root = Path(__file__).resolve().parents[1]
     return json.loads((root / "configs" / "sample_inputs" / name).read_text(encoding="utf-8"))
@@ -70,3 +188,68 @@ def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> No
     assert resumed["status"] == "completed"
     assert resumed["named_outputs"]["review_decision"]["decision"] == "approved"
     assert Path(resumed["named_outputs"]["daily_report"]["report_path"]).exists()
+
+
+def test_daily_regime_workflow_supports_live_ibkr_input(tmp_path: Path) -> None:
+    result = run_daily_regime_agent(
+        input_payload={
+            "data_provider": "ibkr",
+            "symbol": "SPY",
+            "ibkr": {
+                "host": "127.0.0.1",
+                "port": 4001,
+                "client_id": 73,
+                "market_data_type": 1,
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "index_exchange": "CBOE",
+                "expiry_count": 1,
+                "strike_count": 1,
+                "history_days": 30,
+            },
+            "report_root": str(tmp_path / "reports"),
+        },
+        storage_root=tmp_path / ".workflow_memory",
+        ibkr_data_pipe=FakeDailyIBKRPipe(),
+    )
+
+    assert result["status"] == "completed"
+    assert result["named_outputs"]["observation"]["source"] == "IBKR"
+    assert result["named_outputs"]["observation"]["provider_metadata"]["port"] == 4001
+    assert result["named_outputs"]["observation"]["option_chain"]["option_quotes"][0]["greeks"]["delta"] == 0.51
+    assert result["named_outputs"]["daily_report"]["recommended_action"] == "NO_OVERWRITE"
+
+
+def test_daily_regime_workflow_backfills_missing_live_vol_quotes(tmp_path: Path) -> None:
+    sample_input = _load_sample_input("daily_snapshot_watch.json")
+    result = run_daily_regime_agent(
+        input_payload={
+            "data_provider": "ibkr",
+            "symbol": "SPY",
+            "ibkr": {
+                "host": "127.0.0.1",
+                "port": 4001,
+                "client_id": 73,
+                "market_data_type": 1,
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "index_exchange": "CBOE",
+                "expiry_count": 1,
+                "strike_count": 1,
+                "history_days": 30,
+            },
+            "reference_market_snapshot": dict(sample_input["market_snapshot"]),
+            "report_root": str(tmp_path / "reports"),
+        },
+        storage_root=tmp_path / ".workflow_memory",
+        ibkr_data_pipe=FakeDailyIBKRSentinelPipe(),
+    )
+
+    assert result["status"] == "completed"
+    observation = result["named_outputs"]["observation"]
+    assert observation["symbols"]["VIX"]["last"] == 18.4
+    assert observation["symbols"]["VVIX"]["last"] == 101.0
+    assert observation["history"]["VIX"][-1] == 18.4
+    assert observation["quality"]["reference_backfill_applied"] is True

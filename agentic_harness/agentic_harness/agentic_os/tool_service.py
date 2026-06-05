@@ -168,7 +168,7 @@ class RegisteredToolService:
                         "operation": {
                             "type": "string",
                             "default": "fetch_market_snapshot",
-                            "enum": ["fetch_market_snapshot"],
+                            "enum": ["fetch_market_snapshot", "fetch_vol_regime_snapshot"],
                         },
                         "symbol": {"type": "string", "default": "SPY"},
                         "host": {"type": "string", "default": "127.0.0.1"},
@@ -196,6 +196,13 @@ class RegisteredToolService:
                             "default": [],
                         },
                         "min_days_to_expiry": {"type": "integer", "default": 0},
+                        "history_days": {"type": "integer", "default": 30},
+                        "regime_symbols": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "default": ["SPY", "VIX", "VVIX", "VIX9D", "VIX3M"],
+                        },
+                        "index_exchange": {"type": "string", "default": "CBOE"},
                     },
                     "required": ["operation"],
                 },
@@ -241,7 +248,7 @@ class RegisteredToolService:
 
         def ibkr_data_pipeline_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:
             operation = str(request.arguments.get("operation", "fetch_market_snapshot")).strip().lower()
-            if operation != "fetch_market_snapshot":
+            if operation not in {"fetch_market_snapshot", "fetch_vol_regime_snapshot"}:
                 return ToolExecutionResponse(
                     status="error",
                     metadata={
@@ -255,6 +262,7 @@ class RegisteredToolService:
                     IBKRConnectionConfig,
                     IBKRDataPipe,
                     IBKROptionChainRequest,
+                    IBKRVolRegimeSnapshotRequest,
                 )
             except ImportError as exc:
                 return ToolExecutionResponse(
@@ -280,27 +288,32 @@ class RegisteredToolService:
                     )
                 )
 
-            option_request = IBKROptionChainRequest(
-                symbol=str(arguments.get("symbol", "SPY")),
-                exchange=str(arguments.get("exchange", "SMART")),
-                currency=str(arguments.get("currency", "USD")),
-                option_exchange=str(arguments.get("option_exchange", "SMART")),
-                rights=tuple(
-                    str(item).upper() for item in arguments.get("rights", ["C", "P"])
-                ),
-                expiry_count=int(arguments.get("expiry_count", 2)),
-                strike_count=int(arguments.get("strike_count", 8)),
-                expirations=tuple(
-                    str(item) for item in arguments.get("expirations", [])
-                ),
-                strikes=tuple(
-                    float(item) for item in arguments.get("strikes", [])
-                ),
-                min_days_to_expiry=int(arguments.get("min_days_to_expiry", 0)),
-            )
-
             try:
-                observation = pipe.fetch_market_snapshot(option_request)
+                if operation == "fetch_vol_regime_snapshot":
+                    observation = pipe.fetch_vol_regime_snapshot(
+                        IBKRVolRegimeSnapshotRequest.from_payload(arguments)
+                    )
+                else:
+                    observation = pipe.fetch_market_snapshot(
+                        IBKROptionChainRequest(
+                            symbol=str(arguments.get("symbol", "SPY")),
+                            exchange=str(arguments.get("exchange", "SMART")),
+                            currency=str(arguments.get("currency", "USD")),
+                            option_exchange=str(arguments.get("option_exchange", "SMART")),
+                            rights=tuple(
+                                str(item).upper() for item in arguments.get("rights", ["C", "P"])
+                            ),
+                            expiry_count=int(arguments.get("expiry_count", 2)),
+                            strike_count=int(arguments.get("strike_count", 8)),
+                            expirations=tuple(
+                                str(item) for item in arguments.get("expirations", [])
+                            ),
+                            strikes=tuple(
+                                float(item) for item in arguments.get("strikes", [])
+                            ),
+                            min_days_to_expiry=int(arguments.get("min_days_to_expiry", 0)),
+                        )
+                    )
             except Exception as exc:
                 return ToolExecutionResponse(
                     status="error",
@@ -313,7 +326,7 @@ class RegisteredToolService:
                 metadata={
                     "tool_id": "ibkr_data_pipeline",
                     "operation": operation,
-                    "symbol": option_request.symbol,
+                    "symbol": str(arguments.get("symbol", "SPY")),
                     "port": int(arguments.get("port", 4001)),
                 },
             )

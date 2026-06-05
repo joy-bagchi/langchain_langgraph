@@ -40,6 +40,7 @@ def _load_streamlit():
 
 APP_PATHS = AppPaths.default()
 DEFAULT_DAILY_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_watch.json"
+DEFAULT_DAILY_LIVE_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_ibkr_live.json"
 DEFAULT_IBKR_INPUT = APP_PATHS.sample_inputs_dir / "ibkr_spy_snapshot.json"
 
 
@@ -216,15 +217,121 @@ def main() -> None:
     with daily_tab:
         st.subheader("Deterministic Daily Workflow")
         default_daily_payload = load_json(DEFAULT_DAILY_INPUT)
-        daily_json = st.text_area(
-            "Daily Input JSON",
-            value=_pretty_json(default_daily_payload),
-            height=360,
-            key="daily_json",
+        default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
+        use_live_ibkr = st.checkbox(
+            "Refresh regime inputs from live IBKR",
+            value=True,
+            help=(
+                "Keeps the original Daily Belief Report behavior, but refreshes SPY, VIX, "
+                "VVIX, VIX9D, VIX3M, history, and the SPY option chain from IBKR before the "
+                "workflow computes the report."
+            ),
         )
+
+        effective_daily_payload: dict[str, Any]
+        if use_live_ibkr:
+            ibkr_defaults = dict(default_live_payload.get("ibkr", {}))
+            with st.expander("Advanced IBKR Settings", expanded=False):
+                live_col1, live_col2, live_col3 = st.columns(3)
+                live_host = live_col1.text_input(
+                    "IBKR Host",
+                    value=str(ibkr_defaults.get("host", "127.0.0.1")),
+                    key="daily_live_host",
+                )
+                live_port = live_col2.number_input(
+                    "IBKR Port",
+                    value=int(ibkr_defaults.get("port", 4001)),
+                    step=1,
+                    key="daily_live_port",
+                )
+                live_client_id = live_col3.number_input(
+                    "Client ID",
+                    value=int(ibkr_defaults.get("client_id", 73)),
+                    step=1,
+                    key="daily_live_client_id",
+                )
+
+                live_cfg1, live_cfg2, live_cfg3, live_cfg4 = st.columns(4)
+                live_market_data_type = live_cfg1.number_input(
+                    "Market Data Type",
+                    value=int(ibkr_defaults.get("market_data_type", 1)),
+                    step=1,
+                    key="daily_live_market_data_type",
+                )
+                live_history_days = live_cfg2.number_input(
+                    "History Days",
+                    value=int(ibkr_defaults.get("history_days", 30)),
+                    step=1,
+                    key="daily_live_history_days",
+                )
+                live_expiry_count = live_cfg3.number_input(
+                    "Expiry Count",
+                    value=int(ibkr_defaults.get("expiry_count", 2)),
+                    step=1,
+                    key="daily_live_expiry_count",
+                )
+                live_strike_count = live_cfg4.number_input(
+                    "Strike Count",
+                    value=int(ibkr_defaults.get("strike_count", 8)),
+                    step=1,
+                    key="daily_live_strike_count",
+                )
+
+                live_cfg5, live_cfg6, live_cfg7 = st.columns(3)
+                live_exchange = live_cfg5.text_input(
+                    "Exchange",
+                    value=str(ibkr_defaults.get("exchange", "SMART")),
+                    key="daily_live_exchange",
+                )
+                live_option_exchange = live_cfg6.text_input(
+                    "Option Exchange",
+                    value=str(ibkr_defaults.get("option_exchange", "SMART")),
+                    key="daily_live_option_exchange",
+                )
+                live_index_exchange = live_cfg7.text_input(
+                    "Index Exchange",
+                    value=str(ibkr_defaults.get("index_exchange", "CBOE")),
+                    key="daily_live_index_exchange",
+                )
+
+                live_currency = st.text_input(
+                    "Currency",
+                    value=str(ibkr_defaults.get("currency", "USD")),
+                    key="daily_live_currency",
+                )
+
+            effective_daily_payload = {
+                "data_provider": "ibkr",
+                "symbol": str(default_live_payload.get("symbol", "SPY")),
+                "ibkr": {
+                    "host": live_host.strip() or "127.0.0.1",
+                    "port": int(live_port),
+                    "client_id": int(live_client_id),
+                    "market_data_type": int(live_market_data_type),
+                    "exchange": live_exchange.strip() or "SMART",
+                    "option_exchange": live_option_exchange.strip() or "SMART",
+                    "currency": live_currency.strip() or "USD",
+                    "index_exchange": live_index_exchange.strip() or "CBOE",
+                    "expiry_count": int(live_expiry_count),
+                    "strike_count": int(live_strike_count),
+                    "history_days": int(live_history_days),
+                    "min_days_to_expiry": 0,
+                },
+                "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
+            }
+            st.caption("Using default symbol set: SPY, VIX, VVIX, VIX9D, and VIX3M.")
+        else:
+            daily_json = st.text_area(
+                "Daily Input JSON",
+                value=_pretty_json(default_daily_payload),
+                height=360,
+                key="daily_json",
+            )
+            effective_daily_payload = _parse_json_text(daily_json, fallback=default_daily_payload)
+
         if st.button("Run Daily Workflow", type="primary"):
             try:
-                payload = _parse_json_text(daily_json, fallback=default_daily_payload)
+                payload = dict(effective_daily_payload)
                 result = run_daily_regime_agent(
                     input_payload=payload,
                     storage_root=storage_root,

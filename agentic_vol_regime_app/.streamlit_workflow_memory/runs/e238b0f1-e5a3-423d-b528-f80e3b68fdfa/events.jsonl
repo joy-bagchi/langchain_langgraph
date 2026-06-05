@@ -1,0 +1,5 @@
+{"run_id": "e238b0f1-e5a3-423d-b528-f80e3b68fdfa", "timestamp": "2026-06-04T13:46:20.009141+00:00", "type": "run_started", "workflow_id": "daily_vol_regime_report"}
+{"match_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-04T13:46:20.140455+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-04T13:46:20.232184+00:00", "type": "context_prepared"}
+{"attempt": 1, "error": "candidate output exceeded guardrail limit of 16000 chars", "step_id": "ingest_market_data", "timestamp": "2026-06-04T13:47:41.771015+00:00", "type": "step_error"}
+{"checkpoint_index": 1, "current_step": null, "status": "failed", "timestamp": "2026-06-04T13:47:41.875290+00:00", "type": "checkpoint"}

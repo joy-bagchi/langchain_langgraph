@@ -1,0 +1,9 @@
+{"langsmith_project": "agentic-harness", "run_id": "0d3a743d-b175-43a0-9c56-72a09329c614", "timestamp": "2026-06-04T13:19:41.414932+00:00", "type": "run_started", "workflow_id": "ibkr_spy_snapshot"}
+{"langsmith_project": "agentic-harness", "match_count": 0, "step_id": "capture_symbol", "timestamp": "2026-06-04T13:19:41.428856+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "langsmith_project": "agentic-harness", "memory_hit_count": 0, "recent_history_count": 0, "step_id": "capture_symbol", "timestamp": "2026-06-04T13:19:41.442023+00:00", "type": "context_prepared"}
+{"attempt": 1, "cognitive_service": "default_cognitive_service", "langsmith_project": "agentic-harness", "memory_service": "ephemeral_memory_service", "next_step": "fetch_ibkr_snapshot", "step_id": "capture_symbol", "timestamp": "2026-06-04T13:19:41.455446+00:00", "type": "step_executed"}
+{"checkpoint_index": 1, "current_step": "fetch_ibkr_snapshot", "langsmith_project": "agentic-harness", "status": "running", "timestamp": "2026-06-04T13:19:41.469825+00:00", "type": "checkpoint"}
+{"langsmith_project": "agentic-harness", "match_count": 0, "step_id": "fetch_ibkr_snapshot", "timestamp": "2026-06-04T13:19:41.487254+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "langsmith_project": "agentic-harness", "memory_hit_count": 0, "recent_history_count": 1, "step_id": "fetch_ibkr_snapshot", "timestamp": "2026-06-04T13:19:41.501442+00:00", "type": "context_prepared"}
+{"attempt": 1, "error": "name 'option_request' is not defined", "langsmith_project": "agentic-harness", "step_id": "fetch_ibkr_snapshot", "timestamp": "2026-06-04T13:19:41.516948+00:00", "type": "step_error"}
+{"checkpoint_index": 2, "current_step": null, "langsmith_project": "agentic-harness", "status": "failed", "timestamp": "2026-06-04T13:19:41.532110+00:00", "type": "checkpoint"}

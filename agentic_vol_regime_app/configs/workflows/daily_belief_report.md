@@ -152,6 +152,7 @@ memory:
   enabled: false
 guardrails:
   post:
+    max_output_chars: 50000
     block_patterns:
       - "(?i)execute live trade"
       - "(?i)place live trade"

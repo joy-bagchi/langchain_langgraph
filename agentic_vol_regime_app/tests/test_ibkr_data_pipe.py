@@ -7,6 +7,7 @@ from agentic_vol_regime_app.data.ibkr_client import (
     IBKRConnectionConfig,
     IBKRDataPipe,
     IBKROptionChainRequest,
+    IBKRVolRegimeSnapshotRequest,
     _ensure_thread_event_loop,
 )
 from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
@@ -84,6 +85,42 @@ class FakeIBKRClient:
             },
         }
 
+    def fetch_vol_regime_snapshot(self, request: IBKRVolRegimeSnapshotRequest) -> dict:
+        option_request = request.option_chain
+        return {
+            "schema_version": "observation.v1",
+            "as_of": "2026-06-02T20:00:00Z",
+            "source": "IBKR",
+            "symbols": {
+                option_request.symbol: {
+                    "last": 599.12,
+                    "close": 598.44,
+                    "bid": 599.1,
+                    "ask": 599.14,
+                    "volume": 81234000,
+                },
+                "VIX": {"last": 17.8},
+                "VVIX": {"last": 95.2},
+                "VIX9D": {"last": 17.1},
+                "VIX3M": {"last": 19.3},
+            },
+            "history": {
+                "SPY_close": [580.0 + index for index in range(30)],
+                "VIX": [16.0 + (index * 0.08) for index in range(30)],
+                "VVIX": [92.0 + (index * 0.25) for index in range(30)],
+                "VIX9D": [15.8 + (index * 0.07) for index in range(30)],
+                "VIX3M": [19.8 + (index * 0.03) for index in range(30)],
+            },
+            "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
+            "option_chain": self.fetch_market_snapshot(option_request)["option_chain"],
+            "provider_metadata": {
+                "host": self.connection.host,
+                "port": self.connection.port,
+                "client_id": self.connection.client_id,
+                "history_days": request.history_days,
+            },
+        }
+
 
 def test_ibkr_data_pipe_normalizes_option_chain_snapshot() -> None:
     pipe = IBKRDataPipe(
@@ -125,6 +162,30 @@ def test_market_data_loader_supports_ibkr_provider_payload() -> None:
     assert observation.source == "IBKR"
     assert observation.provider_metadata["client_id"] == 77
     assert observation.option_chain["expirations"] == ["20260620", "20260718"]
+
+
+def test_ibkr_data_pipe_normalizes_vol_regime_snapshot() -> None:
+    pipe = IBKRDataPipe(
+        connection=IBKRConnectionConfig(host="127.0.0.1", port=4001, client_id=73),
+        client_factory=FakeIBKRClient,
+    )
+
+    observation = pipe.fetch_vol_regime_snapshot(
+        IBKRVolRegimeSnapshotRequest.from_payload(
+            {
+                "symbol": "SPY",
+                "port": 4001,
+                "history_days": 30,
+                "expiry_count": 2,
+                "strike_count": 2,
+            }
+        )
+    )
+
+    assert observation.source == "IBKR"
+    assert observation.symbols["VIX"]["last"] == 17.8
+    assert len(observation.history["SPY_close"]) == 30
+    assert observation.provider_metadata["history_days"] == 30
 
 
 def test_ensure_thread_event_loop_creates_one_when_missing(monkeypatch) -> None:

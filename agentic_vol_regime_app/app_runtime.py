@@ -73,6 +73,7 @@ def run_daily_regime_agent(
     langsmith_endpoint: str | None = None,
     langsmith_project: str | None = None,
     langsmith_workspace_id: str | None = None,
+    ibkr_data_pipe=None,
 ) -> dict[str, Any]:
     """Run the default daily volatility-regime workflow."""
     resolved_agent_path = Path(agent_path or default_agent_path()).resolve()
@@ -88,6 +89,7 @@ def run_daily_regime_agent(
         langsmith_endpoint=langsmith_endpoint,
         langsmith_project=langsmith_project,
         langsmith_workspace_id=langsmith_workspace_id,
+        ibkr_data_pipe=ibkr_data_pipe,
     )
     result = start_workflow(
         agent_definition.workflow_path,

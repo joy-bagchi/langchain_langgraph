@@ -5,6 +5,8 @@ workflow_path: ../workflows/daily_belief_report.md
 llm_provider: none
 memory_service_type: semantic
 runtime_profile: durable_research
+allowed_tools:
+  - ibkr_data_pipeline
 domain: volatility_regime
 guardrails:
   post:

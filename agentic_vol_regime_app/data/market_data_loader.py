@@ -35,7 +35,7 @@ def load_market_snapshot(
             pipe = data_pipe or IBKRDataPipe(
                 connection=IBKRConnectionConfig(
                     host=str(ibkr_payload.get("host", "127.0.0.1")),
-                    port=int(ibkr_payload.get("port", 7497)),
+                    port=int(ibkr_payload.get("port", 4001)),
                     client_id=int(ibkr_payload.get("client_id", 73)),
                     readonly=bool(ibkr_payload.get("readonly", True)),
                     timeout_seconds=float(ibkr_payload.get("timeout_seconds", 10.0)),

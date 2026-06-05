@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from agentic_harness.agentic_os.tool_service import ToolExecutionRequest
 from agentic_harness.contracts import MemoryRecord, StepExecutionResult, WorkflowGraphState, WorkflowStep
 
 from agentic_vol_regime_app.alerts.predictive_alerts import build_alert_record
 from agentic_vol_regime_app.config import AppPaths, load_yaml
-from agentic_vol_regime_app.contracts import CriticReviewRecord
+from agentic_vol_regime_app.contracts import CriticReviewRecord, ObservationRecord
 from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
 from agentic_vol_regime_app.data.quality import validate_observation
 from agentic_vol_regime_app.features.build_features import compute_feature_record
@@ -35,6 +36,74 @@ def _load_previous_belief(state: WorkflowGraphState) -> dict[str, float] | None:
     return None
 
 
+def _is_tool_allowed(state: WorkflowGraphState, tool_id: str) -> bool:
+    return tool_id in {str(item) for item in state.get("allowed_tools", [])}
+
+
+def _load_reference_observation(
+    input_payload: dict[str, Any],
+    *,
+    app_paths: AppPaths,
+) -> ObservationRecord | None:
+    reference_snapshot = input_payload.get("reference_market_snapshot")
+    if isinstance(reference_snapshot, dict):
+        return load_market_snapshot({"market_snapshot": reference_snapshot}, app_root=app_paths.root)
+
+    reference_path = input_payload.get("reference_snapshot_path")
+    if reference_path:
+        return load_market_snapshot({"snapshot_path": reference_path}, app_root=app_paths.root)
+    return None
+
+
+def _merge_observations(
+    *,
+    primary: ObservationRecord,
+    fallback: ObservationRecord | None,
+) -> ObservationRecord:
+    if fallback is None:
+        return primary
+
+    primary_quality = validate_observation(primary)
+    if primary_quality.get("is_complete", False):
+        return primary
+
+    merged_symbols: dict[str, dict[str, Any]] = {
+        key: dict(value) for key, value in fallback.symbols.items()
+    }
+    for symbol, primary_payload in primary.symbols.items():
+        merged_payload = dict(merged_symbols.get(symbol, {}))
+        for field, value in dict(primary_payload).items():
+            if value not in {None, ""}:
+                merged_payload[field] = value
+        merged_symbols[symbol] = merged_payload
+
+    merged_history = dict(fallback.history)
+    for key, values in primary.history.items():
+        if values:
+            merged_history[key] = list(values)
+
+    merged_quality = dict(primary.quality)
+    merged_warnings = list(dict(primary.quality).get("warnings", []))
+    merged_warnings.append("Reference snapshot backfill applied for missing regime inputs.")
+    merged_quality["warnings"] = merged_warnings
+    merged_quality["reference_backfill_applied"] = True
+
+    merged_provider_metadata = dict(fallback.provider_metadata)
+    merged_provider_metadata.update(primary.provider_metadata)
+    merged_provider_metadata["reference_backfill_source"] = fallback.source
+
+    return ObservationRecord(
+        schema_version=primary.schema_version,
+        as_of=primary.as_of,
+        source=f"{primary.source}+reference_backfill",
+        symbols=merged_symbols,
+        history=merged_history,
+        quality=merged_quality,
+        option_chain=dict(primary.option_chain or fallback.option_chain),
+        provider_metadata=merged_provider_metadata,
+    )
+
+
 def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
     """Create the app-specific executor registry."""
     threshold_config = load_yaml(app_paths.thresholds_dir / "alert_thresholds.yaml")
@@ -45,7 +114,57 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         state: WorkflowGraphState,
         _: dict[str, Any],
     ) -> StepExecutionResult:
-        observation = load_market_snapshot(dict(state.get("input_payload", {})), app_root=app_paths.root)
+        input_payload = dict(state.get("input_payload", {}))
+        provider = str(input_payload.get("data_provider", "")).strip().lower()
+        if provider == "ibkr":
+            tool_id = "ibkr_data_pipeline"
+            if not _is_tool_allowed(state, tool_id):
+                raise RuntimeError(
+                    "Daily regime orchestrator is not allowed to use the 'ibkr_data_pipeline' tool."
+                )
+            ibkr_payload = dict(input_payload.get("ibkr", {}))
+            tool_response = services.tools.execute(
+                ToolExecutionRequest(
+                    tool_id=tool_id,
+                    arguments={
+                        "operation": "fetch_vol_regime_snapshot",
+                        "symbol": input_payload.get("symbol", ibkr_payload.get("symbol", "SPY")),
+                        **ibkr_payload,
+                    },
+                    metadata={
+                        "run_id": str(state.get("run_id", "")),
+                        "workflow_id": str(state.get("workflow_id", "")),
+                        "step_id": step.step_id,
+                    },
+                )
+            )
+            if tool_response.status != "succeeded":
+                reason = str(tool_response.metadata.get("reason", "unknown tool failure"))
+                raise RuntimeError(f"ibkr_data_pipeline failed: {reason}")
+            if not isinstance(tool_response.output, dict):
+                raise RuntimeError("ibkr_data_pipeline returned a non-dictionary snapshot payload.")
+            if not dict(tool_response.output).get("symbols"):
+                raise RuntimeError(
+                    "ibkr_data_pipeline returned an empty snapshot without any symbols."
+                )
+            live_observation = load_market_snapshot(
+                {"market_snapshot": tool_response.output},
+                app_root=app_paths.root,
+            )
+            observation = _merge_observations(
+                primary=live_observation,
+                fallback=_load_reference_observation(input_payload, app_paths=app_paths),
+            )
+            return StepExecutionResult(
+                output=observation.to_dict(),
+                metadata={
+                    "data_provider": "ibkr",
+                    "tool_id": tool_id,
+                    "source": observation.source,
+                },
+            )
+
+        observation = load_market_snapshot(input_payload, app_root=app_paths.root)
         return StepExecutionResult(output=observation.to_dict())
 
     def validate_data_quality(
