@@ -4,9 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import math
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
+
+# Patch for Windows asyncio ConnectionResetError: [WinError 10054]
+if sys.platform == "win32":
+    from functools import wraps
+    from asyncio.proactor_events import _ProactorBasePipeTransport
+
+    _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+    @wraps(_orig_call_connection_lost)
+    def _patched_call_connection_lost(self, exc):
+        try:
+            _orig_call_connection_lost(self, exc)
+        except ConnectionResetError:
+            # On Windows, this error is common when the remote host (TWS/Gateway)
+            # forcibly closes the connection. It can be safely ignored during
+            # the connection loss sequence.
+            pass
+
+    _ProactorBasePipeTransport._call_connection_lost = _patched_call_connection_lost
+
 
 from agentic_vol_regime_app.contracts import (
     ObservationRecord,

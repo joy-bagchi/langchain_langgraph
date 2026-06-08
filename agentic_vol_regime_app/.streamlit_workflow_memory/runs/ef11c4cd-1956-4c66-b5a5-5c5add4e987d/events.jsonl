@@ -1,0 +1,5 @@
+{"run_id": "ef11c4cd-1956-4c66-b5a5-5c5add4e987d", "timestamp": "2026-06-05T13:44:41.203893+00:00", "type": "run_started", "workflow_id": "daily_vol_regime_report"}
+{"match_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-05T13:44:41.461464+00:00", "type": "memory_retrieved"}
+{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-05T13:44:41.697924+00:00", "type": "context_prepared"}
+{"attempt": 1, "error": "ibkr_data_pipeline failed: [WinError 1225] The remote computer refused the network connection", "step_id": "ingest_market_data", "timestamp": "2026-06-05T13:44:49.359057+00:00", "type": "step_error"}
+{"checkpoint_index": 1, "current_step": null, "status": "failed", "timestamp": "2026-06-05T13:44:49.800255+00:00", "type": "checkpoint"}
