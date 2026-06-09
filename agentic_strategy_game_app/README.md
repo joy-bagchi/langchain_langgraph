@@ -18,12 +18,12 @@ Slice 1 is implemented:
 - a deterministic single-turn engine
 - a simulation calendar in the UI that ticks through the active quarter
 - autonomous quarter rollover when time elapses without player action
+- an LLM-backed VC / angel investor agent that can interrogate a fundraising pitch
 
 This slice does not yet include:
 
-- a simulation engine
-- multi-turn progression
-- rule-based or LLM decision providers
+- non-player companies making autonomous strategic decisions
+- deal execution mutating company balance sheets after a VC decision
 
 ## Scenario
 
@@ -78,6 +78,7 @@ The current UI supports:
 - a deterministic quarter-advance loop for player actions
 - a top-right simulation calendar with in-quarter date progression
 - autonomous world progression when the quarter expires
+- a `VC Raise` tab where the founder can pitch an LLM-backed investor agent and negotiate
 
 The UI now supports a deterministic one-turn simulation loop. Multi-turn
 ecosystem reactions and non-player agents still come next.

@@ -27,12 +27,21 @@ from agentic_strategy_game_app.dashboard import (  # noqa: E402
     market_force_rows,
     strategic_pressure_summary,
 )
-from agentic_strategy_game_app.contracts import WorldState  # noqa: E402
+from agentic_strategy_game_app.app_runtime import run_vc_investor_agent  # noqa: E402
+from agentic_strategy_game_app.contracts import VCPitchSessionState, WorldState  # noqa: E402
 from agentic_strategy_game_app.engine import StrategyGameEngine  # noqa: E402
 from agentic_strategy_game_app.player_strategy import interpret_player_strategy  # noqa: E402
 from agentic_strategy_game_app.runtime_loop import synchronize_world_with_elapsed_time  # noqa: E402
 from agentic_strategy_game_app.scenarios import list_scenarios  # noqa: E402
 from agentic_strategy_game_app.simulation_clock import build_simulation_calendar_payload, simulated_date_label  # noqa: E402
+from agentic_strategy_game_app.vc_pitch import (  # noqa: E402
+    append_player_pitch_message,
+    apply_vc_agent_response,
+    build_vc_agent_input_payload,
+    create_vc_pitch_session,
+    extract_vc_agent_output_payload,
+    parse_vc_agent_response,
+)
 
 
 def _load_streamlit():
@@ -195,6 +204,91 @@ def _render_turn_result(st, *, turn_result: dict | None) -> None:
         )
 
 
+def _run_vc_pitch_round(
+    session: VCPitchSessionState,
+    *,
+    max_rounds: int,
+) -> tuple[VCPitchSessionState, dict[str, object]]:
+    payload = build_vc_agent_input_payload(session, max_rounds=max_rounds)
+    result = run_vc_investor_agent(
+        input_payload=payload,
+        storage_root=Path("agentic_strategy_game_app/.workflow_memory"),
+    )
+    raw_response = extract_vc_agent_output_payload(result)
+    parsed = parse_vc_agent_response(raw_response)
+    return apply_vc_agent_response(session, parsed), result
+
+
+def _render_vc_transcript(st, session: VCPitchSessionState) -> None:
+    st.markdown("**Pitch Transcript**")
+    if not session.transcript:
+        st.caption("No VC conversation has started yet.")
+        return
+    for turn in session.transcript:
+        if turn.speaker == "player":
+            label = "Founder"
+            accent = "rgba(31, 111, 235, 0.08)"
+            border = "rgba(31, 111, 235, 0.28)"
+        else:
+            label = "VC"
+            accent = "rgba(180, 83, 9, 0.08)"
+            border = "rgba(180, 83, 9, 0.28)"
+        st.markdown(
+            f"""
+            <div style="
+                border: 1px solid {border};
+                border-radius: 0.85rem;
+                padding: 0.85rem 1rem;
+                margin-bottom: 0.65rem;
+                background: {accent};
+            ">
+                <div style="font-size:0.76rem; text-transform:uppercase; letter-spacing:0.05em; color:rgba(105,105,105,0.95); margin-bottom:0.45rem;">
+                    {label} · Round {turn.round_number}
+                </div>
+                <div style="font-size:0.96rem; line-height:1.45; white-space:pre-wrap;">{turn.content}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_vc_decision(st, session: VCPitchSessionState) -> None:
+    latest = session.latest_agent_response
+    if latest is None:
+        return
+    decision = latest.decision
+    signal_col, focus_col = st.columns([1.2, 1.8])
+    _render_summary_card(
+        signal_col,
+        label="VC Signal",
+        value=latest.tentative_signal.replace("_", " ").title(),
+        caption=f"Session status: {session.status.replace('_', ' ')}",
+    )
+    focus_text = ", ".join(latest.diligence_focus) if latest.diligence_focus else "No explicit diligence focus logged."
+    _render_summary_card(
+        focus_col,
+        label="Diligence Focus",
+        value=focus_text,
+    )
+    if decision is None:
+        if latest.followup_questions:
+            st.markdown("**Current VC Questions**")
+            for question in latest.followup_questions:
+                st.markdown(f"- {question}")
+        return
+    st.markdown("**Investment Decision**")
+    decision_cols = st.columns(4)
+    _render_summary_card(decision_cols[0], label="Outcome", value=decision.outcome.replace("_", " ").title())
+    _render_summary_card(decision_cols[1], label="Amount Offered", value=f"${decision.amount_offered:,.0f}")
+    _render_summary_card(decision_cols[2], label="Equity Requested", value=f"{decision.equity_requested * 100:.1f}%")
+    _render_summary_card(decision_cols[3], label="Founder Ask", value=f"${session.capital_requested:,.0f} for {session.equity_offered * 100:.1f}%")
+    st.caption(decision.rationale or latest.summary)
+    if decision.terms:
+        st.markdown("**Terms And Conditions**")
+        for term in decision.terms:
+            st.markdown(f"- {term}")
+
+
 def _render_player_strategy(st, world, *, max_actions: int):
     st.subheader("Player Strategy")
     company_options = list(world.companies)
@@ -303,6 +397,148 @@ def _render_player_strategy(st, world, *, max_actions: int):
     return interpretation, should_run_turn
 
 
+def _render_vc_pitch_panel(
+    st,
+    *,
+    world: WorldState,
+    state_vc_session_key: str,
+    state_vc_result_key: str,
+) -> None:
+    st.subheader("VC Raise")
+    st.caption(
+        "This is the first non-player LLM-backed agent. The founder pitches, the investor grills on growth, projections, "
+        "evidence, and market realism, then decides or negotiates."
+    )
+    current_session_payload = st.session_state.get(state_vc_session_key)
+    current_session = (
+        VCPitchSessionState.from_dict(current_session_payload)
+        if isinstance(current_session_payload, dict)
+        else None
+    )
+
+    controls_col, transcript_col = st.columns([1.1, 1.45])
+    with controls_col:
+        if current_session is None:
+            company_options = list(world.companies)
+            default_actor_index = company_options.index("ai_native_startup") if "ai_native_startup" in company_options else 0
+            actor_id = st.selectbox(
+                "Pitching Company",
+                options=company_options,
+                index=default_actor_index,
+                format_func=lambda value: world.companies[value].name,
+                key="vc_pitch_actor_id",
+            )
+            capital_requested = st.number_input(
+                "Capital Requested",
+                min_value=250000.0,
+                max_value=100_000_000.0,
+                value=2_500_000.0,
+                step=250_000.0,
+                format="%.0f",
+                key="vc_capital_requested",
+            )
+            equity_offered_percent = st.slider(
+                "Equity Offered (%)",
+                min_value=1.0,
+                max_value=49.0,
+                value=12.0,
+                step=0.5,
+                key="vc_equity_offered_percent",
+            )
+            max_rounds = st.slider(
+                "Max VC Rounds Before Decision",
+                min_value=1,
+                max_value=6,
+                value=3,
+                step=1,
+                key="vc_max_rounds",
+            )
+            strategy_summary = st.text_area(
+                "Fundraising Strategy",
+                value=(
+                    "We want to raise capital to accelerate productized AI workflows, expand enterprise GTM, "
+                    "and turn early adoption into a repeatable revenue engine."
+                ),
+                height=160,
+                key="vc_strategy_summary",
+            )
+            start_pitch = st.button("Start VC Pitch", type="primary", key="start_vc_pitch")
+            st.caption("Requires an LLM-capable `agentic_harness` environment, for example `OPENAI_API_KEY` in your shell.")
+            if start_pitch:
+                try:
+                    session = create_vc_pitch_session(
+                        world=world,
+                        actor_id=actor_id,
+                        capital_requested=float(capital_requested),
+                        equity_offered=float(equity_offered_percent) / 100.0,
+                        strategy_summary=strategy_summary,
+                    )
+                    opening_message = (
+                        f"We are raising ${capital_requested:,.0f} for {equity_offered_percent:.1f}% of the business. "
+                        f"Our strategy is: {strategy_summary}"
+                    )
+                    session = append_player_pitch_message(session, opening_message)
+                    session, result = _run_vc_pitch_round(session, max_rounds=int(max_rounds))
+                    st.session_state[state_vc_session_key] = session.to_dict()
+                    st.session_state[state_vc_result_key] = result
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+        else:
+            latest = current_session.latest_agent_response
+            top_cols = st.columns(3)
+            _render_summary_card(top_cols[0], label="Pitching Company", value=current_session.company_name)
+            _render_summary_card(top_cols[1], label="Capital Requested", value=f"${current_session.capital_requested:,.0f}")
+            _render_summary_card(top_cols[2], label="Equity Offered", value=f"{current_session.equity_offered * 100:.1f}%")
+            _render_vc_decision(st, current_session)
+            if latest and latest.mode != "decision":
+                st.markdown("**Founder Response**")
+                answer = st.text_area(
+                    "Answer the investor's latest questions",
+                    height=180,
+                    key="vc_founder_answer",
+                )
+                action_cols = st.columns([1.0, 1.0, 2.0])
+                submit_answer = action_cols[0].button("Submit Answer", type="primary", key="submit_vc_answer")
+                reset_pitch = action_cols[1].button("Reset VC Session", key="reset_vc_session_active")
+                if submit_answer:
+                    if not answer.strip():
+                        st.warning("Enter a founder response before submitting.")
+                    else:
+                        try:
+                            max_rounds = int(st.session_state.get("vc_max_rounds", 3))
+                            updated = append_player_pitch_message(current_session, answer)
+                            updated, result = _run_vc_pitch_round(updated, max_rounds=max_rounds)
+                            st.session_state[state_vc_session_key] = updated.to_dict()
+                            st.session_state[state_vc_result_key] = result
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(str(exc))
+                if reset_pitch:
+                    st.session_state.pop(state_vc_session_key, None)
+                    st.session_state.pop(state_vc_result_key, None)
+                    st.session_state.pop("vc_founder_answer", None)
+                    st.rerun()
+            else:
+                if st.button("Reset VC Session", key="reset_vc_session_done"):
+                    st.session_state.pop(state_vc_session_key, None)
+                    st.session_state.pop(state_vc_result_key, None)
+                    st.session_state.pop("vc_founder_answer", None)
+                    st.rerun()
+
+    with transcript_col:
+        if current_session is None:
+            st.info("Start a VC pitch to open the investor conversation, diligence questions, and eventual term sheet decision.")
+        else:
+            _render_vc_transcript(st, current_session)
+            with st.expander("VC Session JSON"):
+                st.code(_pretty_json(current_session.to_dict()), language="json")
+            latest = current_session.latest_agent_response
+            if latest is not None and latest.raw_response.strip():
+                with st.expander("Raw VC Agent Response"):
+                    st.code(latest.raw_response, language="json")
+
+
 def _render_clock_fragment(
     st,
     *,
@@ -398,6 +634,8 @@ def main() -> None:
     state_latest_turn_key = "strategy_game_latest_turn"
     state_clock_anchor_key = "strategy_game_clock_anchor_epoch"
     state_notice_key = "strategy_game_clock_notice"
+    state_vc_session_key = "strategy_game_vc_session"
+    state_vc_result_key = "strategy_game_vc_result"
 
     if (
         reset_simulation
@@ -411,6 +649,9 @@ def main() -> None:
         st.session_state[state_latest_turn_key] = None
         st.session_state[state_clock_anchor_key] = time.time()
         st.session_state[state_notice_key] = None
+        st.session_state.pop(state_vc_session_key, None)
+        st.session_state.pop(state_vc_result_key, None)
+        st.session_state.pop("vc_founder_answer", None)
 
     world = WorldState.from_dict(st.session_state[state_world_key])
     pressure_summary = strategic_pressure_summary(world.market_forces)
@@ -483,8 +724,8 @@ def main() -> None:
     _render_pressure_cards(st, pressure_summary)
     _render_turn_result(st, turn_result=st.session_state.get(state_latest_turn_key))
 
-    overview_tab, companies_tab, ecosystem_tab, turn_log_tab, diagnostics_tab = st.tabs(
-        ["Market Forces", "Companies", "Ecosystem", "Turn Log", "Diagnostics"]
+    overview_tab, companies_tab, ecosystem_tab, vc_raise_tab, turn_log_tab, diagnostics_tab = st.tabs(
+        ["Market Forces", "Companies", "Ecosystem", "VC Raise", "Turn Log", "Diagnostics"]
     )
 
     with overview_tab:
@@ -506,6 +747,14 @@ def main() -> None:
         st.dataframe(ecosystem_rows(world), use_container_width=True, hide_index=True)
         st.caption(
             "These profiles define strategic personalities and incentives for company and non-company actors."
+        )
+
+    with vc_raise_tab:
+        _render_vc_pitch_panel(
+            st,
+            world=world,
+            state_vc_session_key=state_vc_session_key,
+            state_vc_result_key=state_vc_result_key,
         )
 
     with turn_log_tab:

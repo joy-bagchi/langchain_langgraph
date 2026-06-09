@@ -303,6 +303,154 @@ class StrategyInterpretation:
 
 
 @dataclass(slots=True)
+class VCPitchTurn:
+    speaker: str
+    content: str
+    round_number: int
+
+    def __post_init__(self) -> None:
+        if self.speaker not in {"player", "vc_agent"}:
+            raise ValueError("speaker must be 'player' or 'vc_agent'.")
+        if not self.content.strip():
+            raise ValueError("content is required.")
+        if self.round_number < 0:
+            raise ValueError("round_number must be non-negative.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return _asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "VCPitchTurn":
+        return cls(**dict(payload))
+
+
+@dataclass(slots=True)
+class VCPitchDecision:
+    outcome: str
+    amount_offered: float
+    equity_requested: float
+    terms: list[str] = field(default_factory=list)
+    rationale: str = ""
+
+    def __post_init__(self) -> None:
+        if self.outcome not in {"decline", "fund", "counter_offer"}:
+            raise ValueError("outcome must be decline, fund, or counter_offer.")
+        _non_negative("amount_offered", float(self.amount_offered))
+        _bounded("equity_requested", float(self.equity_requested))
+
+    def to_dict(self) -> dict[str, Any]:
+        return _asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "VCPitchDecision":
+        return cls(**dict(payload))
+
+
+@dataclass(slots=True)
+class VCPitchAgentResponse:
+    mode: str
+    summary: str
+    diligence_focus: list[str] = field(default_factory=list)
+    followup_questions: list[str] = field(default_factory=list)
+    tentative_signal: str = "undecided"
+    decision: VCPitchDecision | None = None
+    raw_response: str = ""
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"questioning", "decision"}:
+            raise ValueError("mode must be questioning or decision.")
+        if not self.summary.strip():
+            raise ValueError("summary is required.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "summary": self.summary,
+            "diligence_focus": list(self.diligence_focus),
+            "followup_questions": list(self.followup_questions),
+            "tentative_signal": self.tentative_signal,
+            "decision": self.decision.to_dict() if self.decision else None,
+            "raw_response": self.raw_response,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "VCPitchAgentResponse":
+        decision_payload = payload.get("decision")
+        return cls(
+            mode=str(payload["mode"]),
+            summary=str(payload["summary"]),
+            diligence_focus=list(payload.get("diligence_focus", [])),
+            followup_questions=list(payload.get("followup_questions", [])),
+            tentative_signal=str(payload.get("tentative_signal", "undecided")),
+            decision=VCPitchDecision.from_dict(dict(decision_payload)) if decision_payload else None,
+            raw_response=str(payload.get("raw_response", "")),
+        )
+
+
+@dataclass(slots=True)
+class VCPitchSessionState:
+    session_id: str
+    actor_id: str
+    company_name: str
+    capital_requested: float
+    equity_offered: float
+    strategy_summary: str
+    round_number: int = 0
+    status: str = "active"
+    transcript: list[VCPitchTurn] = field(default_factory=list)
+    latest_agent_response: VCPitchAgentResponse | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.session_id.strip():
+            raise ValueError("session_id is required.")
+        if not self.actor_id.strip():
+            raise ValueError("actor_id is required.")
+        if not self.company_name.strip():
+            raise ValueError("company_name is required.")
+        if not self.strategy_summary.strip():
+            raise ValueError("strategy_summary is required.")
+        _non_negative("capital_requested", float(self.capital_requested))
+        _bounded("equity_offered", float(self.equity_offered))
+        if self.round_number < 0:
+            raise ValueError("round_number must be non-negative.")
+        if self.status not in {"active", "decision_made"}:
+            raise ValueError("status must be active or decision_made.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "actor_id": self.actor_id,
+            "company_name": self.company_name,
+            "capital_requested": self.capital_requested,
+            "equity_offered": self.equity_offered,
+            "strategy_summary": self.strategy_summary,
+            "round_number": self.round_number,
+            "status": self.status,
+            "transcript": [turn.to_dict() for turn in self.transcript],
+            "latest_agent_response": self.latest_agent_response.to_dict() if self.latest_agent_response else None,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "VCPitchSessionState":
+        latest_payload = payload.get("latest_agent_response")
+        return cls(
+            session_id=str(payload["session_id"]),
+            actor_id=str(payload["actor_id"]),
+            company_name=str(payload["company_name"]),
+            capital_requested=float(payload["capital_requested"]),
+            equity_offered=float(payload["equity_offered"]),
+            strategy_summary=str(payload["strategy_summary"]),
+            round_number=int(payload.get("round_number", 0)),
+            status=str(payload.get("status", "active")),
+            transcript=[VCPitchTurn.from_dict(dict(item)) for item in payload.get("transcript", [])],
+            latest_agent_response=VCPitchAgentResponse.from_dict(dict(latest_payload)) if latest_payload else None,
+            metadata=dict(payload.get("metadata", {})),
+        )
+
+
+@dataclass(slots=True)
 class PendingEffect:
     effect_id: str
     actor_id: str
