@@ -1,68 +1,65 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-09T03:08:26.593747+00:00
+Date: 2026-06-09T12:50:42.580337+00:00
 
 ## Summary
 
 Current regime belief favors: `Stable Low-Vol Trend`
 
-Transition risk: `WATCH`
+Transition risk: `NONE`
 
-Recommended posture: `MEDIUM_OVERWRITE`
+Recommended posture: `NO_OVERWRITE`
 
 ## Belief State
 
 | Regime | Probability |
 |---|---:|
-| Stable Low-Vol Trend | 0.54 |
-| Mid-Vol Chop | 0.13 |
-| Vol Expansion Transition | 0.24 |
-| High-Vol Risk-Off | 0.04 |
-| Panic Convexity Stress | 0.02 |
-| Post-Panic Compression | 0.03 |
+| Stable Low-Vol Trend | 0.86 |
+| Mid-Vol Chop | 0.03 |
+| Vol Expansion Transition | 0.06 |
+| High-Vol Risk-Off | 0.02 |
+| Panic Convexity Stress | 0.01 |
+| Post-Panic Compression | 0.02 |
 
 ## Key Signals
 
 | Signal | Value | Interpretation |
 |---|---:|---|
-| VIX | 18.92 | Current implied-vol level |
+| VIX | 18.08 | Current implied-vol level |
 | VVIX | 93.08 | Vol-of-vol state |
-| VVIX/VIX | 4.92 | Convexity stress ratio |
-| VVIX/VIX z-score | -1.85 | Relative convexity stress |
+| VVIX/VIX | 5.15 | Convexity stress ratio |
+| VVIX/VIX z-score | -0.63 | Relative convexity stress |
 | VIX term structure (VIX3M) | contango | Front/back of curve |
-| Realized vol trend | 0.079 | Short-vs-medium realized vol |
+| Realized vol trend | 0.085 | Short-vs-medium realized vol |
 
 ## Predictive Alerts
 
-Severity: `WATCH`
+Severity: `NONE`
 
-Headline: Transition probability has risen but confirmation remains limited
+Headline: No elevated predictive volatility alert
 
 Drivers:
 - realized volatility acceleration
-- term structure flattening
 - IV over realized-vol spread
 
 ## Policy Recommendation
 
-Recommended action: `MEDIUM_OVERWRITE`
+Recommended action: `NO_OVERWRITE`
 
 Rationale:
-- Transition risk is elevated and argues for additional premium capture.
+- Stable low-volatility trend remains the dominant regime.
 
 Risk notes:
-- None
+- Tight overwrites may truncate upside more than they help.
 
 Overwrite implementation:
-- Suggested call overwrite strike: `747.00`
-- Suggested DTE: `1`
-- Notes: Medium overwrite moves the call further out to balance premium and upside room.
+- None
 
 ## Model Confidence
 
-Confidence: 0.86
+Confidence: 1.00
 
-Uncertainty / entropy: 0.70
+Uncertainty / entropy: 0.35
 
 ## Critic Review
 
