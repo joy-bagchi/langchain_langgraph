@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-09T02:48:05.366806+00:00
+Date: 2026-06-09T03:08:26.593747+00:00
 
 ## Summary
 

@@ -1,8 +1,8 @@
 {
   "alert_record": {
-    "alert_id": "33680d4c-6035-45b4-88b7-aaf318cf69f2",
+    "alert_id": "da3656f0-0a73-43f0-a900-327cfe8a8871",
     "alert_type": "PREDICTIVE_VOL_EXPANSION",
-    "as_of": "2026-06-09T02:48:05.366806+00:00",
+    "as_of": "2026-06-09T03:08:26.593747+00:00",
     "belief_state": {
       "HIGH_VOL_RISK_OFF": 0.03607,
       "PANIC_CONVEXITY_STRESS": 0.024178,
@@ -27,7 +27,7 @@
     "severity": "WATCH"
   },
   "belief_state": {
-    "as_of": "2026-06-09T02:48:05.366806+00:00",
+    "as_of": "2026-06-09T03:08:26.593747+00:00",
     "belief_delta": {
       "HIGH_VOL_RISK_OFF": -0.130597,
       "MID_VOL_CHOP": -0.034316,
@@ -55,7 +55,7 @@
     "schema_version": "belief.v1"
   },
   "critic_review": {
-    "as_of": "2026-06-09T02:48:05.366806+00:00",
+    "as_of": "2026-06-09T03:08:26.593747+00:00",
     "findings": [
       "Deterministic checks found the daily report candidate internally consistent."
     ],
@@ -72,14 +72,14 @@
     "warnings": []
   },
   "feature_record": {
-    "as_of": "2026-06-09T02:48:05.366806+00:00",
+    "as_of": "2026-06-09T03:08:26.593747+00:00",
     "feature_set_version": "vol_regime_features_v1",
     "features": {
       "drawdown_21d": 0.02752655898266257,
       "realized_vol_acceleration": 0.07924197069711092,
       "rv_21d": 0.13959584077269782,
       "rv_5d": 0.21883781146980874,
-      "spy_last": 740.21,
+      "spy_last": 740.38,
       "term_structure_flattening": -1.2757142857142885,
       "term_structure_state": "contango",
       "term_structure_symbol": "VIX3M",
@@ -105,7 +105,7 @@
     "schema_version": "features.v1"
   },
   "observation": {
-    "as_of": "2026-06-09T02:48:05.366806+00:00",
+    "as_of": "2026-06-09T03:08:26.593747+00:00",
     "history": {
       "SPY_close": [
         716.26,
@@ -307,7 +307,7 @@
         "20260609",
         "20260610"
       ],
-      "fetched_at": "2026-06-09T02:47:03.689072+00:00",
+      "fetched_at": "2026-06-09T03:07:24.658020+00:00",
       "option_quotes": [
         {
           "ask": null,
@@ -321,7 +321,7 @@
           "greeks": {
             "delta": 0.5803290025969373,
             "gamma": 0.05865560185363869,
-            "implied_vol": 0.176384093328108,
+            "implied_vol": 0.1754087175960805,
             "opt_price": 3.383364766090967,
             "pv_dividend": 0.0,
             "theta": -2.177167307294309,
@@ -348,14 +348,14 @@
           "exchange": "SMART",
           "expiry": "20260609",
           "greeks": {
-            "delta": null,
-            "gamma": null,
-            "implied_vol": null,
-            "opt_price": null,
-            "pv_dividend": null,
-            "theta": null,
-            "und_price": null,
-            "vega": null
+            "delta": -0.4157206203155759,
+            "gamma": 0.05881902040214759,
+            "implied_vol": 0.1754087175960805,
+            "opt_price": 2.0246183673412657,
+            "pv_dividend": 0.0,
+            "theta": -2.0161302259274403,
+            "und_price": 739.0601806640625,
+            "vega": 0.15411265351377024
           },
           "last": null,
           "last_size": null,
@@ -377,14 +377,14 @@
           "exchange": "SMART",
           "expiry": "20260609",
           "greeks": {
-            "delta": null,
-            "gamma": null,
-            "implied_vol": null,
-            "opt_price": null,
-            "pv_dividend": null,
-            "theta": null,
-            "und_price": null,
-            "vega": null
+            "delta": 0.5257583339738966,
+            "gamma": 0.06091182898102637,
+            "implied_vol": 0.17241369617660107,
+            "opt_price": 2.822864475493032,
+            "pv_dividend": 0.0,
+            "theta": -2.401725170731101,
+            "und_price": 739.0601806640625,
+            "vega": 0.15461784042264393
           },
           "last": null,
           "last_size": null,
@@ -406,14 +406,14 @@
           "exchange": "SMART",
           "expiry": "20260609",
           "greeks": {
-            "delta": null,
-            "gamma": null,
-            "implied_vol": null,
-            "opt_price": null,
-            "pv_dividend": null,
-            "theta": null,
-            "und_price": null,
-            "vega": null
+            "delta": -0.4760190283512428,
+            "gamma": 0.06125933809972022,
+            "implied_vol": 0.17246548563561043,
+            "opt_price": 2.4340828048842855,
+            "pv_dividend": 0.0,
+            "theta": -2.2802467992807585,
+            "und_price": 739.0601806640625,
+            "vega": 0.1545819099965322
           },
           "last": null,
           "last_size": null,
@@ -430,36 +430,65 @@
           "ask_size": 0.0,
           "bid": null,
           "bid_size": 0.0,
-          "close": null,
+          "close": 3.79,
           "currency": "USD",
           "exchange": "SMART",
           "expiry": "20260609",
           "greeks": {
-            "delta": null,
-            "gamma": null,
-            "implied_vol": null,
-            "opt_price": null,
-            "pv_dividend": null,
-            "theta": null,
-            "und_price": null,
-            "vega": null
+            "delta": 0.46396452883345135,
+            "gamma": 0.06248668132515876,
+            "implied_vol": 0.16876050247192423,
+            "opt_price": 2.2598968776425963,
+            "pv_dividend": 0.0,
+            "theta": -2.217379854381897,
+            "und_price": 739.0601806640625,
+            "vega": 0.1551793266205248
           },
           "last": null,
           "last_size": null,
-          "mark": null,
+          "mark": 3.79,
           "multiplier": "100",
           "open_interest": null,
           "right": "C",
           "strike": 740.0,
           "symbol": "SPY   260609C00740000",
-          "volume": null
+          "volume": 0.0
         },
         {
           "ask": null,
           "ask_size": 0.0,
           "bid": null,
           "bid_size": 0.0,
-          "close": null,
+          "close": 5.99,
+          "currency": "USD",
+          "exchange": "SMART",
+          "expiry": "20260609",
+          "greeks": {
+            "delta": -0.5382559280012043,
+            "gamma": 0.06290942178238672,
+            "implied_vol": 0.1664780944025412,
+            "opt_price": 2.8730310382325785,
+            "pv_dividend": 0.0,
+            "theta": -2.0976147939136913,
+            "und_price": 739.0601806640625,
+            "vega": 0.15502156347206952
+          },
+          "last": null,
+          "last_size": null,
+          "mark": 5.99,
+          "multiplier": "100",
+          "open_interest": null,
+          "right": "P",
+          "strike": 740.0,
+          "symbol": "SPY   260609P00740000",
+          "volume": 0.0
+        },
+        {
+          "ask": null,
+          "ask_size": 0.0,
+          "bid": null,
+          "bid_size": 0.0,
+          "close": 3.32,
           "currency": "USD",
           "exchange": "SMART",
           "expiry": "20260609",
@@ -475,100 +504,71 @@
           },
           "last": null,
           "last_size": null,
-          "mark": null,
-          "multiplier": "100",
-          "open_interest": null,
-          "right": "P",
-          "strike": 740.0,
-          "symbol": "SPY   260609P00740000",
-          "volume": null
-        },
-        {
-          "ask": null,
-          "ask_size": 0.0,
-          "bid": null,
-          "bid_size": 0.0,
-          "close": null,
-          "currency": "USD",
-          "exchange": "SMART",
-          "expiry": "20260609",
-          "greeks": {
-            "delta": 0.402657657398119,
-            "gamma": 0.06230729528607193,
-            "implied_vol": 0.16371820578908097,
-            "opt_price": 1.7886352567753925,
-            "pv_dividend": 0.0,
-            "theta": -1.7878061831077354,
-            "und_price": 739.0601806640625,
-            "vega": 0.14968660037625625
-          },
-          "last": null,
-          "last_size": null,
-          "mark": null,
+          "mark": 3.32,
           "multiplier": "100",
           "open_interest": null,
           "right": "C",
           "strike": 741.0,
           "symbol": "SPY   260609C00741000",
-          "volume": null
+          "volume": 0.0
         },
         {
           "ask": null,
           "ask_size": 0.0,
           "bid": null,
           "bid_size": 0.0,
-          "close": null,
+          "close": 6.53,
           "currency": "USD",
           "exchange": "SMART",
           "expiry": "20260609",
           "greeks": {
-            "delta": -0.602607847016478,
-            "gamma": 0.06271656693295738,
-            "implied_vol": 0.16371820578908097,
-            "opt_price": 3.3883074228133476,
-            "pv_dividend": 0.0,
-            "theta": -1.654114246755786,
-            "und_price": 739.0601806640625,
-            "vega": 0.14938291597218756
+            "delta": null,
+            "gamma": null,
+            "implied_vol": null,
+            "opt_price": null,
+            "pv_dividend": null,
+            "theta": null,
+            "und_price": null,
+            "vega": null
           },
           "last": null,
           "last_size": null,
-          "mark": null,
+          "mark": 6.53,
           "multiplier": "100",
           "open_interest": null,
           "right": "P",
           "strike": 741.0,
           "symbol": "SPY   260609P00741000",
-          "volume": null
+          "volume": 0.0
         },
         {
           "ask": null,
           "ask_size": 0.0,
           "bid": null,
           "bid_size": 0.0,
-          "close": null,
+          "close": 2.89,
           "currency": "USD",
           "exchange": "SMART",
           "expiry": "20260609",
           "greeks": {
-            "delta": 0.3358916801755229,
-            "gamma": 0.06021632987802368,
-            "implied_vol": 0.15966004884596707,
-            "opt_price": 1.3486235828356803,
-            "pv_dividend": 0.0,
-            "theta": -1.34862313454724,
-            "und_price": 739.0601806640625,
-            "vega": 0.13874657380032107
+            "delta": null,
+            "gamma": null,
+            "implied_vol": null,
+            "opt_price": null,
+            "pv_dividend": null,
+            "theta": null,
+            "und_price": null,
+            "vega": null
           },
           "last": null,
           "last_size": null,
-          "mark": null,
+          "mark": 2.89,
           "multiplier": "100",
           "open_interest": null,
           "right": "C",
           "strike": 742.0,
           "symbol": "SPY   260609C00742000",
-          "volume": null
+          "volume": 0.0
         },
         {
           "ask": null,
@@ -1020,7 +1020,7 @@
         742.5,
         743.0
       ],
-      "underlying_price": 740.21,
+      "underlying_price": 740.38,
       "underlying_symbol": "SPY"
     },
     "provider_metadata": {
@@ -1058,11 +1058,11 @@
     "source": "IBKR",
     "symbols": {
       "SPY": {
-        "ask": 740.25,
-        "bid": 740.17,
+        "ask": 740.43,
+        "bid": 740.33,
         "close": 739.219971,
-        "last": 740.21,
-        "volume": 56839.0
+        "last": 740.38,
+        "volume": 61343.0
       },
       "VIX": {
         "ask": null,
@@ -1102,7 +1102,7 @@
     }
   },
   "policy_recommendation": {
-    "as_of": "2026-06-09T02:48:05.366806+00:00",
+    "as_of": "2026-06-09T03:08:26.593747+00:00",
     "confidence": 0.855209,
     "overwrite_call_strike": 747.0,
     "overwrite_dte": 1,
@@ -1117,7 +1117,7 @@
   },
   "review_decision": null,
   "transition_probabilities": {
-    "as_of": "2026-06-09T02:48:05.366806+00:00",
+    "as_of": "2026-06-09T03:08:26.593747+00:00",
     "confirming_features_count": 3,
     "model_version": "transition_model_v1",
     "schema_version": "transition_probabilities.v1",

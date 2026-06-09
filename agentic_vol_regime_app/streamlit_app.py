@@ -193,6 +193,93 @@ def _render_overwrite_plan(st, *, policy: dict[str, Any]) -> None:
         st.caption(rationale)
 
 
+def _extract_governance_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in list(result.get("step_history", [])):
+        metadata = dict(item.get("metadata", {}))
+        evaluation = dict(metadata.get("evaluation", {}))
+        rows.append(
+            {
+                "step": str(item.get("step_id", "")),
+                "status": str(item.get("status", "")),
+                "guardrail": str(metadata.get("guardrail_action", "allow")),
+                "evaluation": str(evaluation.get("action", "allow")),
+                "score": evaluation.get("score"),
+                "review_trigger": (
+                    "guardrail"
+                    if metadata.get("guardrail_action") == "escalate"
+                    else "evaluation"
+                    if metadata.get("evaluation_action") == "escalate"
+                    else ""
+                ),
+                "notes": " | ".join(
+                    [
+                        *[str(reason) for reason in list(metadata.get("guardrail_reasons", []))],
+                        *[str(finding) for finding in list(evaluation.get("findings", []))],
+                    ]
+                ),
+            }
+        )
+    return rows
+
+
+def _render_governance_panel(
+    st,
+    *,
+    result: dict[str, Any],
+    critic_review: dict[str, Any],
+    policy: dict[str, Any],
+) -> None:
+    pending_review = dict(result.get("pending_review") or {})
+    review_decision = dict(result.get("named_outputs", {})).get("review_decision") or {}
+    step_rows = _extract_governance_rows(result)
+
+    st.subheader("Controls and Governance")
+
+    critic_verdict = str(critic_review.get("verdict", "n/a"))
+    policy_action = str(policy.get("recommended_action", "n/a"))
+    review_type = str(pending_review.get("review_type", "none")) if pending_review else "none"
+    human_decision = str(dict(review_decision).get("decision", "none")) if review_decision else "none"
+
+    gov_col1, gov_col2, gov_col3, gov_col4 = st.columns(4)
+    _render_summary_card(gov_col1, label="Critic Verdict", value=critic_verdict)
+    _render_summary_card(gov_col2, label="Policy Action", value=policy_action)
+    _render_summary_card(gov_col3, label="Pending Review", value=review_type)
+    _render_summary_card(gov_col4, label="Human Decision", value=human_decision)
+
+    findings = list(critic_review.get("findings", []))
+    risk_notes = list(policy.get("risk_notes", []))
+    rationale = list(policy.get("rationale", []))
+
+    summary_lines: list[str] = []
+    if findings:
+        summary_lines.append("Critic: " + " | ".join(str(item) for item in findings))
+    if rationale:
+        summary_lines.append("Policy rationale: " + " | ".join(str(item) for item in rationale))
+    if risk_notes:
+        summary_lines.append("Risk notes: " + " | ".join(str(item) for item in risk_notes))
+    if pending_review:
+        summary_lines.append(
+            "Pending review trigger: "
+            + str(pending_review.get("review_type", "review"))
+            + " | "
+            + " | ".join(str(item) for item in pending_review.get("guardrail_reasons", []) or pending_review.get("evaluation_findings", []))
+        )
+    elif review_decision:
+        review_notes = str(dict(review_decision).get("notes") or "").strip()
+        summary_lines.append(
+            "Review resolution: "
+            + str(dict(review_decision).get("decision", "unknown"))
+            + (f" | {review_notes}" if review_notes else "")
+        )
+
+    if summary_lines:
+        st.caption("\n\n".join(summary_lines))
+
+    if step_rows:
+        st.dataframe(step_rows, use_container_width=True, hide_index=True)
+
+
 def _strip_report_heading_and_summary(markdown: str) -> str:
     lines = markdown.splitlines()
     output: list[str] = []
@@ -217,6 +304,7 @@ def _render_daily_result(st, result: dict[str, Any]) -> None:
     belief_state = dict(outputs.get("belief_state", {}))
     alert_record = dict(outputs.get("alert_record", {}))
     policy = dict(outputs.get("policy_recommendation", {}))
+    critic_review = dict(outputs.get("critic_review", {}))
     agent_name = str(dict(result.get("agent", {})).get("name", "")).strip()
 
     _render_runtime_diagnostics(st, result)
@@ -235,6 +323,7 @@ def _render_daily_result(st, result: dict[str, Any]) -> None:
         action=str(policy.get("recommended_action", "n/a")),
     )
     _render_overwrite_plan(st, policy=policy)
+    _render_governance_panel(st, result=result, critic_review=critic_review, policy=policy)
 
     if daily_report.get("markdown"):
         st.subheader("Daily Report")
