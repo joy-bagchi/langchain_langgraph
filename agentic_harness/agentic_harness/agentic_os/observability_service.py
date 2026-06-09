@@ -52,6 +52,18 @@ class ObservabilityService(Protocol):
     def flush(self) -> None:
         """Flush buffered observability sinks."""
 
+    def trace_span(
+        self,
+        name: str,
+        *,
+        run_type: str = "chain",
+        inputs: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        project_name: str | None = None,
+    ):
+        """Return a context manager for a traced child span."""
+
 
 def _env_truthy(name: str) -> bool:
     raw = os.getenv(name, "").strip().lower()
@@ -86,10 +98,12 @@ class EventObservabilityService:
         langsmith_config: LangSmithConfig | None = None,
         langsmith_client: Any | None = None,
         tracing_context_factory: Callable[..., Any] | None = None,
+        trace_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.langsmith_config = langsmith_config or resolve_langsmith_config()
         self._langsmith_client = None
         self._tracing_context_factory = tracing_context_factory
+        self._trace_factory = trace_factory
         metadata = {"sinks": ["local_events"]}
 
         if self.langsmith_config.enabled:
@@ -100,7 +114,7 @@ class EventObservabilityService:
             elif self.langsmith_config.api_key:
                 try:
                     from langsmith import Client
-                    from langsmith.run_helpers import tracing_context
+                    from langsmith.run_helpers import trace, tracing_context
 
                     self._langsmith_client = Client(
                         api_key=self.langsmith_config.api_key,
@@ -108,6 +122,7 @@ class EventObservabilityService:
                         workspace_id=self.langsmith_config.workspace_id,
                     )
                     self._tracing_context_factory = tracing_context
+                    self._trace_factory = trace
                 except Exception as exc:  # pragma: no cover - defensive fallback
                     metadata["langsmith_error"] = str(exc)
             else:
@@ -154,4 +169,26 @@ class EventObservabilityService:
     def flush(self) -> None:
         if self._langsmith_client is not None:
             self._langsmith_client.flush()
+
+    def trace_span(
+        self,
+        name: str,
+        *,
+        run_type: str = "chain",
+        inputs: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        project_name: str | None = None,
+    ):
+        if not self.langsmith_config.enabled or self._langsmith_client is None or self._trace_factory is None:
+            return nullcontext()
+        return self._trace_factory(
+            name=name,
+            run_type=run_type,
+            inputs=inputs or {},
+            tags=tags or [],
+            metadata=metadata or {},
+            project_name=project_name or self.langsmith_config.project,
+            client=self._langsmith_client,
+        )
 

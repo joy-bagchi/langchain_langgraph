@@ -1865,6 +1865,20 @@ def test_platform_services_enable_langsmith_without_disabling_local_events(tmp_p
         captured["context_kwargs"] = kwargs
         yield
 
+    class FakeTrace:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            captured.setdefault("trace_calls", []).append(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def end(self, *, outputs=None):
+            captured.setdefault("trace_outputs", []).append(outputs)
+
     services = build_platform_services(
         storage_root=tmp_path / "runtime_store",
         langsmith_tracing=True,
@@ -1873,6 +1887,7 @@ def test_platform_services_enable_langsmith_without_disabling_local_events(tmp_p
         langsmith_client=FakeClient(),
     )
     services.observability._tracing_context_factory = fake_tracing_context
+    services.observability._trace_factory = lambda **kwargs: FakeTrace(**kwargs)
 
     event = services.observability.record(
         ObservabilityRequest(
@@ -1887,13 +1902,88 @@ def test_platform_services_enable_langsmith_without_disabling_local_events(tmp_p
         metadata={"run_id": "run-123"},
     ):
         pass
+    with services.observability.trace_span(
+        "test-span",
+        run_type="tool",
+        inputs={"foo": "bar"},
+        tags=["test"],
+        metadata={"run_id": "run-123"},
+    ) as span:
+        span.end(outputs={"ok": True})
     services.observability.flush()
 
     assert event["type"] == "checkpoint"
     assert "langsmith_project" in event
     assert "langsmith_tracing" in services.observability.descriptor.capabilities
     assert captured["context_kwargs"]["project_name"] == "agentic-harness-tests"
+    assert captured["trace_calls"][0]["name"] == "test-span"
+    assert captured["trace_outputs"][0] == {"ok": True}
     assert captured["flushed"] is True
+
+
+def test_workflow_runtime_emits_langsmith_execution_tree(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+    captured: dict[str, object] = {"trace_calls": [], "trace_outputs": []}
+
+    class FakeClient:
+        def flush(self, timeout=None) -> None:
+            captured["flushed"] = True
+
+    @contextmanager
+    def fake_tracing_context(**kwargs):
+        captured["context_kwargs"] = kwargs
+        yield
+
+    class FakeTrace:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.metadata = dict(kwargs.get("metadata") or {})
+            captured["trace_calls"].append(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def end(self, *, outputs=None):
+            captured["trace_outputs"].append(outputs)
+
+    services = build_platform_services(
+        storage_root=storage_root,
+        langsmith_tracing=True,
+        langsmith_project="agentic-harness-tests",
+        langsmith_api_key="test-key",
+        langsmith_client=FakeClient(),
+    )
+    services.observability._tracing_context_factory = fake_tracing_context
+    services.observability._trace_factory = lambda **kwargs: FakeTrace(**kwargs)
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+        services=services,
+    )
+
+    span_names = [call["name"] for call in captured["trace_calls"]]
+
+    assert result["status"] == "completed"
+    assert "workflow_run:onboarding_workflow" in span_names
+    assert "memory_retrieval:capture_request" in span_names
+    assert "context_preparation:capture_request" in span_names
+    assert "step_executor:capture_request" in span_names
+    assert "guardrail_pre:classify_request" in span_names
+    assert "prompt:classify_request" in span_names
+    assert "evaluation:classify_request" in span_names
+    assert "memory_write:classify_request" in span_names
+    assert captured["context_kwargs"]["project_name"] == "agentic-harness-tests"
+    assert any(
+        isinstance(output, dict) and output.get("named_outputs", {}).get("summary")
+        for output in captured["trace_outputs"]
+    )
 
 
 def test_resolve_langsmith_config_uses_explicit_and_env_inputs(monkeypatch) -> None:

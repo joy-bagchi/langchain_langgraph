@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
+from agentic_harness.agentic_os.platform import build_platform_services
 from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, FeatureRecord, TransitionProbabilityRecord
 from agentic_vol_regime_app.app_runtime import (
     default_ml_agent_path,
@@ -10,6 +12,7 @@ from agentic_vol_regime_app.app_runtime import (
     resume_daily_regime_run,
     run_daily_regime_agent,
 )
+import agentic_vol_regime_app.app_runtime as app_runtime
 from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
 
 
@@ -375,3 +378,71 @@ def test_policy_recommendation_emits_overwrite_strike_and_dte() -> None:
     assert recommendation.recommended_action == "MEDIUM_OVERWRITE"
     assert recommendation.overwrite_call_strike == 764.0
     assert recommendation.overwrite_dte == 1
+
+
+def test_app_runtime_emits_agentic_vol_regime_app_trace_layer(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, list[dict]] = {"trace_calls": [], "trace_outputs": []}
+
+    class FakeClient:
+        def flush(self, timeout=None) -> None:
+            return None
+
+    @contextmanager
+    def fake_tracing_context(**kwargs):
+        yield
+
+    class FakeTrace:
+        def __init__(self, **kwargs) -> None:
+            captured["trace_calls"].append(kwargs)
+            self.metadata = dict(kwargs.get("metadata") or {})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def end(self, *, outputs=None):
+            captured["trace_outputs"].append(outputs)
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="semantic",
+        langsmith_tracing=True,
+        langsmith_project="agentic-harness-tests",
+        langsmith_api_key="test-key",
+        langsmith_client=FakeClient(),
+        ibkr_data_pipe=FakeDailyIBKRPipe(),
+    )
+    services.observability._tracing_context_factory = fake_tracing_context
+    services.observability._trace_factory = lambda **kwargs: FakeTrace(**kwargs)
+
+    monkeypatch.setattr(app_runtime, "build_platform_services", lambda **kwargs: services)
+
+    result = run_daily_regime_agent(
+        input_payload={
+            "data_provider": "ibkr",
+            "symbol": "SPY",
+            "ibkr": {
+                "host": "127.0.0.1",
+                "port": 4001,
+                "client_id": 73,
+                "market_data_type": 1,
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "index_exchange": "CBOE",
+                "expiry_count": 1,
+                "strike_count": 1,
+                "history_days": 30,
+            },
+            "report_root": str(tmp_path / "reports"),
+        },
+        storage_root=tmp_path / ".workflow_memory",
+        langsmith_tracing=True,
+    )
+
+    span_names = [call["name"] for call in captured["trace_calls"]]
+
+    assert result["status"] == "completed"
+    assert "agentic_vol_regime_app:run_daily_regime_agent" in span_names

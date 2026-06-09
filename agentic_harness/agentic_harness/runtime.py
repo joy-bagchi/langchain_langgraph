@@ -57,6 +57,48 @@ def _stringify_guardrail_value(value: Any) -> str:
         return str(value)
 
 
+def _trace_safe_payload(value: Any, *, max_string_chars: int = 1000, max_items: int = 10, depth: int = 0) -> Any:
+    if depth >= 4:
+        return "<truncated>"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= max_string_chars else f"{value[:max_string_chars]}...<truncated>"
+    if isinstance(value, dict):
+        items = list(value.items())[:max_items]
+        result = {
+            str(key): _trace_safe_payload(item, max_string_chars=max_string_chars, max_items=max_items, depth=depth + 1)
+            for key, item in items
+        }
+        if len(value) > max_items:
+            result["__truncated_keys__"] = len(value) - max_items
+        return result
+    if isinstance(value, (list, tuple)):
+        result = [
+            _trace_safe_payload(item, max_string_chars=max_string_chars, max_items=max_items, depth=depth + 1)
+            for item in list(value)[:max_items]
+        ]
+        if len(value) > max_items:
+            result.append(f"...<truncated {len(value) - max_items} items>")
+        return result
+    try:
+        return _trace_safe_payload(json.loads(json.dumps(value, default=str)), max_string_chars=max_string_chars, max_items=max_items, depth=depth + 1)
+    except Exception:
+        rendered = str(value)
+        return rendered if len(rendered) <= max_string_chars else f"{rendered[:max_string_chars]}...<truncated>"
+
+
+def _trace_state_metadata(state: WorkflowGraphState) -> dict[str, Any]:
+    return {
+        "run_id": state.get("run_id"),
+        "workflow_id": state.get("workflow_id"),
+        "agent_id": state.get("agent_id"),
+        "agent_role": state.get("agent_role"),
+        "current_step": state.get("current_step"),
+        "status": state.get("status"),
+    }
+
+
 def _build_guardrail_request_metadata(step: WorkflowStep, state: WorkflowGraphState) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     if step.step_type == "tool":
@@ -200,9 +242,27 @@ def _default_executors(services: PlatformServiceBundle) -> dict[str, Executor]:
         _: dict[str, Any],
     ) -> StepExecutionResult:
         prompt_text = render_template(step.prompt, state)
-        response = services.cognitive.execute_prompt(
-            PromptExecutionRequest(prompt=prompt_text, step=step, state=state)
-        )
+        with services.observability.trace_span(
+            f"prompt:{step.step_id}",
+            run_type="llm",
+            inputs={
+                "prompt": _trace_safe_payload(prompt_text),
+                "step_id": step.step_id,
+                "step_type": step.step_type,
+            },
+            tags=["agentic_harness", "prompt", step.step_id],
+            metadata=_trace_state_metadata(state),
+        ) as prompt_span:
+            response = services.cognitive.execute_prompt(
+                PromptExecutionRequest(prompt=prompt_text, step=step, state=state)
+            )
+            if hasattr(prompt_span, "end"):
+                prompt_span.end(
+                    outputs={
+                        "output": _trace_safe_payload(response.output),
+                        "metadata": _trace_safe_payload(response.metadata),
+                    }
+                )
         return StepExecutionResult(output=response.output, metadata=response.metadata)
 
     def tool_executor(
@@ -229,17 +289,36 @@ def _default_executors(services: PlatformServiceBundle) -> dict[str, Executor]:
         if "query_template" in step.metadata and "query" not in arguments:
             arguments["query"] = render_template(str(step.metadata["query_template"]), state)
 
-        response = services.tools.execute(
-            ToolExecutionRequest(
-                tool_id=tool_id,
-                arguments=arguments,
-                metadata={
-                    "step_id": step.step_id,
-                    "workflow_id": state.get("workflow_id"),
-                    "run_id": state.get("run_id"),
-                },
+        with services.observability.trace_span(
+            f"tool:{tool_id}",
+            run_type="tool",
+            inputs={
+                "tool_id": tool_id,
+                "arguments": _trace_safe_payload(arguments),
+                "step_id": step.step_id,
+            },
+            tags=["agentic_harness", "tool", tool_id, step.step_id],
+            metadata=_trace_state_metadata(state),
+        ) as tool_span:
+            response = services.tools.execute(
+                ToolExecutionRequest(
+                    tool_id=tool_id,
+                    arguments=arguments,
+                    metadata={
+                        "step_id": step.step_id,
+                        "workflow_id": state.get("workflow_id"),
+                        "run_id": state.get("run_id"),
+                    },
+                )
             )
-        )
+            if hasattr(tool_span, "end"):
+                tool_span.end(
+                    outputs={
+                        "status": response.status,
+                        "output": _trace_safe_payload(response.output),
+                        "metadata": _trace_safe_payload(response.metadata),
+                    }
+                )
         if response.status != "succeeded":
             reason = response.metadata.get("reason", f"tool '{tool_id}' returned {response.status}")
             raise RuntimeError(str(reason))
@@ -330,9 +409,35 @@ def compile_workflow(
         namespace = step.memory.namespace or definition.memory_namespace
         query_template = step.metadata.get("memory_query")
         query_text = render_template(query_template, state) if query_template else render_template(step.prompt, state)
-        results = services.memory.recall(
-            MemoryQuery(namespace=namespace, text=query_text, max_results=5)
-        )
+        with services.observability.trace_span(
+            f"memory_retrieval:{step.step_id}",
+            run_type="retriever",
+            inputs={
+                "namespace": namespace,
+                "query_text": _trace_safe_payload(query_text),
+            },
+            tags=["agentic_harness", "memory", "retrieve", step.step_id],
+            metadata=_trace_state_metadata(state),
+        ) as memory_span:
+            results = services.memory.recall(
+                MemoryQuery(namespace=namespace, text=query_text, max_results=5)
+            )
+            if hasattr(memory_span, "end"):
+                memory_span.end(
+                    outputs={
+                        "match_count": len(results),
+                        "matches": _trace_safe_payload(
+                            [
+                                {
+                                    "memory_type": item.record.memory_type,
+                                    "content": item.record.content,
+                                    "score": item.score,
+                                }
+                                for item in results
+                            ]
+                        ),
+                    }
+                )
         events = list(state.get("events", []))
         events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
             event_type="memory_retrieved",
@@ -351,13 +456,32 @@ def compile_workflow(
         if state.get("status") != "running" or not state.get("current_step"):
             return {}
         step = definition.steps[state["current_step"]]
-        snapshot = services.context.assemble_context(
-            ContextServiceRequest(
-                workflow_definition=definition,
-                step=step,
-                state=state,
+        with services.observability.trace_span(
+            f"context_preparation:{step.step_id}",
+            run_type="chain",
+            inputs={
+                "memory_hit_count": len(state.get("memory_hits", [])),
+                "history_count": len(state.get("step_history", [])),
+            },
+            tags=["agentic_harness", "context", step.step_id],
+            metadata=_trace_state_metadata(state),
+        ) as context_span:
+            snapshot = services.context.assemble_context(
+                ContextServiceRequest(
+                    workflow_definition=definition,
+                    step=step,
+                    state=state,
+                )
             )
-        )
+            if hasattr(context_span, "end"):
+                context_span.end(
+                    outputs={
+                        "context_brief": _trace_safe_payload(snapshot.context_brief),
+                        "compaction_decision": _trace_safe_payload(snapshot.compaction_decision),
+                        "recent_history_count": len(snapshot.recent_history),
+                        "memory_hit_count": len(snapshot.raw_memory_hits),
+                    }
+                )
         events = list(state.get("events", []))
         events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
             event_type="context_prepared",
@@ -465,14 +589,30 @@ def compile_workflow(
             return _failure_state(PermissionError(authz.reason), retryable=False)
 
         if result is None:
-            pre_guardrail = services.guardrails.evaluate(
-                GuardrailRequest(
-                    phase="pre_step",
-                    step=step,
-                    state=state,
-                    metadata=_build_guardrail_request_metadata(step, state),
+            pre_guardrail_metadata = _build_guardrail_request_metadata(step, state)
+            with services.observability.trace_span(
+                f"guardrail_pre:{step.step_id}",
+                run_type="chain",
+                inputs=_trace_safe_payload(pre_guardrail_metadata),
+                tags=["agentic_harness", "guardrail", "pre", step.step_id],
+                metadata=_trace_state_metadata(state),
+            ) as pre_guardrail_span:
+                pre_guardrail = services.guardrails.evaluate(
+                    GuardrailRequest(
+                        phase="pre_step",
+                        step=step,
+                        state=state,
+                        metadata=pre_guardrail_metadata,
+                    )
                 )
-            )
+                if hasattr(pre_guardrail_span, "end"):
+                    pre_guardrail_span.end(
+                        outputs={
+                            "allowed": pre_guardrail.allowed,
+                            "action": pre_guardrail.action,
+                            "reasons": _trace_safe_payload(pre_guardrail.reasons),
+                        }
+                    )
             if not pre_guardrail.allowed:
                 return _failure_state(
                     PermissionError("; ".join(pre_guardrail.reasons) or "pre-step guardrail blocked execution"),
@@ -485,7 +625,28 @@ def compile_workflow(
                     raise ValueError(
                         f"No executor registered for step type '{step.step_type}'."
                     )
-                result = executor(step, state, {})
+                with services.observability.trace_span(
+                    f"step_executor:{step.step_id}",
+                    run_type="chain",
+                    inputs={
+                        "step_type": step.step_type,
+                        "step_id": step.step_id,
+                        "active_context": _trace_safe_payload(state.get("active_context", {})),
+                    },
+                    tags=["agentic_harness", "step", step.step_type, step.step_id],
+                    metadata=_trace_state_metadata(state),
+                ) as executor_span:
+                    result = executor(step, state, {})
+                    if hasattr(executor_span, "end"):
+                        executor_span.end(
+                            outputs={
+                                "status": result.status,
+                                "output": _trace_safe_payload(result.output),
+                                "awaiting_review": result.awaiting_review,
+                                "next_step": result.next_step,
+                                "metadata": _trace_safe_payload(result.metadata),
+                            }
+                        )
             except Exception as exc:
                 return _failure_state(exc, retryable=True)
 
@@ -495,19 +656,33 @@ def compile_workflow(
             step_outputs[step_id] = result.output
             if step.output_key:
                 named_outputs[step.output_key] = result.output
-        post_guardrail = (
-            services.guardrails.evaluate(
-                GuardrailRequest(
-                    phase="post_step",
-                    step=step,
-                    state={**state, "step_outputs": step_outputs, "named_outputs": named_outputs},
-                    candidate_output=result.output,
-                    metadata={"output_text": _stringify_guardrail_value(result.output)},
+        post_guardrail = None
+        if not skip_post_guardrail:
+            post_guardrail_metadata = {"output_text": _stringify_guardrail_value(result.output)}
+            with services.observability.trace_span(
+                f"guardrail_post:{step.step_id}",
+                run_type="chain",
+                inputs=_trace_safe_payload(post_guardrail_metadata),
+                tags=["agentic_harness", "guardrail", "post", step.step_id],
+                metadata=_trace_state_metadata(state),
+            ) as post_guardrail_span:
+                post_guardrail = services.guardrails.evaluate(
+                    GuardrailRequest(
+                        phase="post_step",
+                        step=step,
+                        state={**state, "step_outputs": step_outputs, "named_outputs": named_outputs},
+                        candidate_output=result.output,
+                        metadata=post_guardrail_metadata,
+                    )
                 )
-            )
-            if not skip_post_guardrail
-            else None
-        )
+                if hasattr(post_guardrail_span, "end"):
+                    post_guardrail_span.end(
+                        outputs={
+                            "allowed": post_guardrail.allowed,
+                            "action": post_guardrail.action,
+                            "reasons": _trace_safe_payload(post_guardrail.reasons),
+                        }
+                    )
         if post_guardrail is not None and not post_guardrail.allowed:
             if post_guardrail.action == "escalate":
                 history = list(state.get("step_history", []))
@@ -556,30 +731,45 @@ def compile_workflow(
                 PermissionError("; ".join(post_guardrail.reasons) or "post-step guardrail blocked output"),
                 retryable=False,
             )
-        evaluation = (
-            services.evaluation.evaluate(
-                EvaluationRequest(
-                    phase="step",
-                    payload={
-                        "step_id": step_id,
-                        "status": result.status,
-                        "output": result.output,
-                        "output_text": _stringify_guardrail_value(result.output),
-                        "attempt": attempt,
-                        "max_retries": step.max_retries,
-                        "workflow_metadata": dict(definition.metadata),
-                        "step_metadata": dict(step.metadata),
-                        "agent_metadata": dict(state.get("agent_metadata", {})),
-                        "workflow_id": definition.workflow_id,
-                        "step_history": list(state.get("step_history", [])),
-                        "named_outputs": dict(named_outputs),
-                        "active_context": dict(state.get("active_context", {})),
-                    },
+        evaluation = None
+        if not skip_evaluation:
+            evaluation_payload = {
+                "step_id": step_id,
+                "status": result.status,
+                "output": result.output,
+                "output_text": _stringify_guardrail_value(result.output),
+                "attempt": attempt,
+                "max_retries": step.max_retries,
+                "workflow_metadata": dict(definition.metadata),
+                "step_metadata": dict(step.metadata),
+                "agent_metadata": dict(state.get("agent_metadata", {})),
+                "workflow_id": definition.workflow_id,
+                "step_history": list(state.get("step_history", [])),
+                "named_outputs": dict(named_outputs),
+                "active_context": dict(state.get("active_context", {})),
+            }
+            with services.observability.trace_span(
+                f"evaluation:{step.step_id}",
+                run_type="chain",
+                inputs=_trace_safe_payload(evaluation_payload),
+                tags=["agentic_harness", "evaluation", step.step_id],
+                metadata=_trace_state_metadata(state),
+            ) as evaluation_span:
+                evaluation = services.evaluation.evaluate(
+                    EvaluationRequest(
+                        phase="step",
+                        payload=evaluation_payload,
+                    )
                 )
-            )
-            if not skip_evaluation
-            else None
-        )
+                if hasattr(evaluation_span, "end"):
+                    evaluation_span.end(
+                        outputs={
+                            "status": evaluation.status,
+                            "action": evaluation.action,
+                            "findings": _trace_safe_payload(evaluation.findings),
+                            "score": evaluation.score,
+                        }
+                    )
         if evaluation is not None and evaluation.action == "retry":
             reason = "; ".join(evaluation.findings) or "evaluation requested retry"
             return _failure_state(PermissionError(reason), retryable=True)
@@ -743,17 +933,36 @@ def compile_workflow(
         if not content:
             content = json.dumps(outcome.get("output"), sort_keys=True)
 
-        record = services.memory.remember(
-            MemoryRecord.create(
-                namespace=step.memory.namespace or definition.memory_namespace,
-                memory_type=step.memory.memory_type,
-                content=str(content),
-                source_run_id=state["run_id"],
-                source_step_id=step_id,
-                ttl_days=step.memory.ttl_days,
-                metadata=step.memory.metadata,
+        with services.observability.trace_span(
+            f"memory_write:{step_id}",
+            run_type="tool",
+            inputs={
+                "namespace": step.memory.namespace or definition.memory_namespace,
+                "memory_type": step.memory.memory_type,
+                "content": _trace_safe_payload(str(content)),
+            },
+            tags=["agentic_harness", "memory", "write", step_id],
+            metadata=_trace_state_metadata(state),
+        ) as memory_write_span:
+            record = services.memory.remember(
+                MemoryRecord.create(
+                    namespace=step.memory.namespace or definition.memory_namespace,
+                    memory_type=step.memory.memory_type,
+                    content=str(content),
+                    source_run_id=state["run_id"],
+                    source_step_id=step_id,
+                    ttl_days=step.memory.ttl_days,
+                    metadata=step.memory.metadata,
+                )
             )
-        )
+            if hasattr(memory_write_span, "end"):
+                memory_write_span.end(
+                    outputs={
+                        "record_id": record.record_id,
+                        "namespace": record.namespace,
+                        "memory_type": record.memory_type,
+                    }
+                )
         history = list(state.get("step_history", []))
         if history:
             history[-1]["memory_record_ids"] = list(history[-1].get("memory_record_ids", []))
@@ -777,6 +986,25 @@ def compile_workflow(
 
     def checkpoint_run(state: WorkflowGraphState) -> WorkflowGraphState:
         next_index = int(state.get("checkpoint_index", 0)) + 1
+        with services.observability.trace_span(
+            f"checkpoint:{next_index}",
+            run_type="chain",
+            inputs={
+                "checkpoint_index": next_index,
+                "status": state.get("status"),
+                "current_step": state.get("current_step"),
+            },
+            tags=["agentic_harness", "checkpoint"],
+            metadata=_trace_state_metadata(state),
+        ) as checkpoint_span:
+            if hasattr(checkpoint_span, "end"):
+                checkpoint_span.end(
+                    outputs={
+                        "checkpoint_index": next_index,
+                        "status": state.get("status"),
+                        "current_step": state.get("current_step"),
+                    }
+                )
         events = list(state.get("events", []))
         events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
             event_type="checkpoint",
@@ -956,13 +1184,39 @@ class WorkflowRunner:
                 "agent_role": latest_state.get("agent_role"),
             },
         ):
-            for latest_state in self.graph.stream(
-                state,
-                config=self._config(latest_state["run_id"]),
-                stream_mode="values",
-            ):
+            with self.services.observability.trace_span(
+                f"workflow_run:{self.definition.workflow_id}",
+                run_type="chain",
+                inputs={
+                    "input_payload": _trace_safe_payload(input_payload),
+                    "workflow_id": self.definition.workflow_id,
+                    "workflow_title": self.definition.title,
+                },
+                tags=["agentic_harness", "workflow", self.definition.workflow_id],
+                metadata={
+                    "run_id": latest_state["run_id"],
+                    "workflow_id": self.definition.workflow_id,
+                    "agent_id": latest_state.get("agent_id"),
+                    "agent_role": latest_state.get("agent_role"),
+                },
+            ) as workflow_span:
+                for latest_state in self.graph.stream(
+                    state,
+                    config=self._config(latest_state["run_id"]),
+                    stream_mode="values",
+                ):
+                    self._persist(latest_state)
                 self._persist(latest_state)
-            self._persist(latest_state)
+                if hasattr(workflow_span, "end"):
+                    workflow_span.end(
+                        outputs={
+                            "status": latest_state.get("status"),
+                            "current_step": latest_state.get("current_step"),
+                            "pending_review": _trace_safe_payload(latest_state.get("pending_review")),
+                            "last_error": latest_state.get("last_error"),
+                            "named_outputs": _trace_safe_payload(latest_state.get("named_outputs", {})),
+                        }
+                    )
         self.services.observability.flush()
         return latest_state
 
@@ -1000,13 +1254,37 @@ class WorkflowRunner:
                 "decision": decision,
             },
         ):
-            for latest_state in self.graph.stream(
-                state,
-                config=self._config(run_id),
-                stream_mode="values",
-            ):
+            with self.services.observability.trace_span(
+                f"workflow_resume:{self.definition.workflow_id}",
+                run_type="chain",
+                inputs={
+                    "decision": decision,
+                    "notes": _trace_safe_payload(notes),
+                    "workflow_id": self.definition.workflow_id,
+                },
+                tags=["agentic_harness", "workflow_resume", self.definition.workflow_id],
+                metadata={
+                    "run_id": run_id,
+                    "workflow_id": self.definition.workflow_id,
+                },
+            ) as workflow_resume_span:
+                for latest_state in self.graph.stream(
+                    state,
+                    config=self._config(run_id),
+                    stream_mode="values",
+                ):
+                    self._persist(latest_state)
                 self._persist(latest_state)
-            self._persist(latest_state)
+                if hasattr(workflow_resume_span, "end"):
+                    workflow_resume_span.end(
+                        outputs={
+                            "status": latest_state.get("status"),
+                            "current_step": latest_state.get("current_step"),
+                            "pending_review": _trace_safe_payload(latest_state.get("pending_review")),
+                            "last_error": latest_state.get("last_error"),
+                            "named_outputs": _trace_safe_payload(latest_state.get("named_outputs", {})),
+                        }
+                    )
         self.services.observability.flush()
         return latest_state
 

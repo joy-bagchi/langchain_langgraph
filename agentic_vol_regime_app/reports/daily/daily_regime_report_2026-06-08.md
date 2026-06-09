@@ -1,12 +1,12 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-08T04:54:55.322964+00:00
+Date: 2026-06-08T13:35:30.981055+00:00
 
 ## Summary
 
-Current regime belief favors: `Vol Expansion Transition`
+Current regime belief favors: `Stable Low-Vol Trend`
 
-Transition risk: `WARNING`
+Transition risk: `WATCH`
 
 Recommended posture: `MEDIUM_OVERWRITE`
 
@@ -14,29 +14,29 @@ Recommended posture: `MEDIUM_OVERWRITE`
 
 | Regime | Probability |
 |---|---:|
-| Stable Low-Vol Trend | 0.14 |
-| Mid-Vol Chop | 0.19 |
-| Vol Expansion Transition | 0.52 |
-| High-Vol Risk-Off | 0.07 |
-| Panic Convexity Stress | 0.03 |
-| Post-Panic Compression | 0.04 |
+| Stable Low-Vol Trend | 0.54 |
+| Mid-Vol Chop | 0.13 |
+| Vol Expansion Transition | 0.24 |
+| High-Vol Risk-Off | 0.04 |
+| Panic Convexity Stress | 0.02 |
+| Post-Panic Compression | 0.03 |
 
 ## Key Signals
 
 | Signal | Value | Interpretation |
 |---|---:|---|
-| VIX | 21.51 | Current implied-vol level |
-| VVIX | 99.56 | Vol-of-vol state |
-| VVIX/VIX | 4.63 | Convexity stress ratio |
-| VVIX/VIX z-score | -3.43 | Relative convexity stress |
-| VIX term structure (VIX3M) | flat | Front/back of curve |
-| Realized vol trend | 0.072 | Short-vs-medium realized vol |
+| VIX | 19.00 | Current implied-vol level |
+| VVIX | 97.41 | Vol-of-vol state |
+| VVIX/VIX | 5.13 | Convexity stress ratio |
+| VVIX/VIX z-score | -1.17 | Relative convexity stress |
+| VIX term structure (VIX3M) | contango | Front/back of curve |
+| Realized vol trend | 0.092 | Short-vs-medium realized vol |
 
 ## Predictive Alerts
 
-Severity: `WARNING`
+Severity: `WATCH`
 
-Headline: Volatility expansion risk is rising with confirming signals
+Headline: Transition probability has risen but confirmation remains limited
 
 Drivers:
 - realized volatility acceleration
@@ -54,15 +54,15 @@ Risk notes:
 - None
 
 Overwrite implementation:
-- Suggested call overwrite strike: `745.00`
+- Suggested call overwrite strike: `749.00`
 - Suggested DTE: `1`
 - Notes: Medium overwrite moves the call further out to balance premium and upside room.
 
 ## Model Confidence
 
-Confidence: 0.81
+Confidence: 0.86
 
-Uncertainty / entropy: 0.77
+Uncertainty / entropy: 0.70
 
 ## Critic Review
 
