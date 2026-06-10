@@ -12,6 +12,7 @@ dependencies = ["PyYAML>=6.0", "agentic-harness"]
 [project.optional-dependencies]
 ibkr = ["ib-insync>=0.9.86"]
 ui = ["streamlit>=1.45.0"]
+hmm = ["hmmlearn>=0.3.2", "scikit-learn>=1.5.0", "numpy>=1.26.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from agentic_harness.agentic_os.tool_service import ToolExecutionRequest
-from agentic_harness.contracts import MemoryRecord, StepExecutionResult, WorkflowGraphState, WorkflowStep
+from agentic_harness.contracts import MemoryQuery, MemoryRecord, StepExecutionResult, WorkflowGraphState, WorkflowStep
 
 from agentic_vol_regime_app.alerts.predictive_alerts import build_alert_record
 from agentic_vol_regime_app.config import AppPaths, load_yaml
@@ -16,6 +17,10 @@ from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
 from agentic_vol_regime_app.data.quality import validate_observation
 from agentic_vol_regime_app.features.build_features import compute_feature_record
 from agentic_vol_regime_app.pomdp.belief_update import update_belief_state
+from agentic_vol_regime_app.pomdp.hmm_belief import (
+    compute_hmm_belief_record,
+    hmm_to_belief_record,
+)
 from agentic_vol_regime_app.pomdp.ml_belief import update_belief_state_with_linear_regression
 from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
 from agentic_vol_regime_app.pomdp.transition_model import estimate_transition_probabilities
@@ -46,6 +51,10 @@ def _belief_engine(state: WorkflowGraphState) -> str:
     return str(metadata.get("belief_engine", "heuristic")).strip().lower()
 
 
+def _uses_hmm_history_cache(state: WorkflowGraphState) -> bool:
+    return _belief_engine(state) == "hmm_gaussian"
+
+
 def _memory_namespace(state: WorkflowGraphState) -> str:
     configured = state.get("memory_namespace")
     if configured:
@@ -66,6 +75,146 @@ def _load_reference_observation(
     if reference_path:
         return load_market_snapshot({"snapshot_path": reference_path}, app_root=app_paths.root)
     return None
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _load_regime_history_cache(*, state: WorkflowGraphState, services) -> dict[str, Any] | None:
+    namespace = _memory_namespace(state)
+    matches = services.memory.recall(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=1,
+            memory_types=["regime_history_cache"],
+            structured_filters={"source_kind": "ibkr_regime_history_cache"},
+        )
+    )
+    if not matches:
+        return None
+    payload = dict(matches[0].record.structured_payload)
+    payload["record_id"] = matches[0].record.record_id
+    payload["created_at"] = matches[0].record.created_at
+    return payload
+
+
+def _history_refresh_mode(
+    *,
+    cached_payload: dict[str, Any] | None,
+    history_days: int,
+    now: datetime,
+) -> tuple[str, int]:
+    if history_days <= 0:
+        return ("disabled", 0)
+    if not cached_payload:
+        return ("full_fetch", history_days)
+
+    cached_history = dict(cached_payload.get("history", {}))
+    cached_window = int(cached_payload.get("history_days", 0) or 0)
+    refreshed_at = _parse_timestamp(cached_payload.get("last_history_refresh_at"))
+    if cached_window < history_days:
+        return ("full_fetch", history_days)
+    if refreshed_at is None:
+        return ("full_fetch", history_days)
+    if now - refreshed_at >= timedelta(hours=24):
+        return ("incremental_refresh", 1)
+    if not cached_history:
+        return ("full_fetch", history_days)
+    return ("cache_reuse", 0)
+
+
+def _merge_history_window(
+    *,
+    cached_history: dict[str, list[float]] | None,
+    live_history: dict[str, list[float]],
+    history_days: int,
+    cache_last_as_of: str | None,
+    current_as_of: str | None,
+) -> dict[str, list[float]]:
+    merged: dict[str, list[float]] = {
+        key: [float(item) for item in values]
+        for key, values in dict(cached_history or {}).items()
+        if values
+    }
+    if history_days <= 0:
+        return merged
+
+    same_observation_day = False
+    cached_day = _parse_timestamp(cache_last_as_of)
+    current_day = _parse_timestamp(current_as_of)
+    if cached_day and current_day:
+        same_observation_day = cached_day.date() == current_day.date()
+
+    for key, live_values in dict(live_history).items():
+        normalized_live = [float(item) for item in live_values if item is not None]
+        if not normalized_live:
+            continue
+        cached_values = list(merged.get(key, []))
+        if not cached_values:
+            merged[key] = normalized_live[-history_days:]
+            continue
+        if same_observation_day:
+            merged[key] = cached_values[-history_days:]
+            continue
+        new_value = normalized_live[-1]
+        merged[key] = (cached_values + [new_value])[-history_days:]
+
+    for key, values in list(merged.items()):
+        merged[key] = values[-history_days:]
+    return merged
+
+
+def _remember_regime_history_cache(
+    *,
+    state: WorkflowGraphState,
+    step: WorkflowStep,
+    services,
+    observation: ObservationRecord,
+    history_days: int,
+    refresh_mode: str,
+) -> None:
+    if not observation.history or history_days <= 0:
+        return
+    namespace = _memory_namespace(state)
+    services.memory.remember(
+        MemoryRecord.create(
+            namespace=namespace,
+            memory_type="regime_history_cache",
+            content="latest IBKR regime history cache",
+            source_run_id=str(state["run_id"]),
+            source_step_id=step.step_id,
+            metadata={
+                "workflow_id": state.get("workflow_id"),
+                "agent_id": state.get("agent_id"),
+                "source_kind": "ibkr_regime_history_cache",
+                "observation_as_of": observation.as_of,
+            },
+            structured_payload={
+                "source_kind": "ibkr_regime_history_cache",
+                "observation_as_of": observation.as_of,
+                "last_history_refresh_at": observation.as_of,
+                "history_days": history_days,
+                "history_refresh_mode": refresh_mode,
+                "history": {key: list(values) for key, values in observation.history.items()},
+                "provider_metadata": dict(observation.provider_metadata),
+            },
+        )
+    )
 
 
 def _merge_observations(
@@ -151,6 +300,60 @@ def _maybe_remember_live_observation(
     )
 
 
+def _maybe_remember_hmm_state(
+    *,
+    state: WorkflowGraphState,
+    step: WorkflowStep,
+    services,
+    hmm_record: dict[str, Any],
+) -> None:
+    if not bool(hmm_record.get("is_trained", False)):
+        return
+    namespace = _memory_namespace(state)
+    top_state = str(hmm_record.get("top_state", "UNKNOWN"))
+    as_of = str(hmm_record.get("as_of", ""))
+    transition_probabilities = dict(hmm_record.get("transition_probabilities", {}))
+    state_probabilities = dict(hmm_record.get("state_probabilities", {}))
+    services.memory.remember(
+        MemoryRecord.create(
+            namespace=namespace,
+            memory_type="hmm_state_snapshot",
+            content=(
+                f"HMM state snapshot {as_of} top_state={top_state} "
+                f"posterior={float(state_probabilities.get(top_state, 0.0)):.2f} "
+                f"expansion_or_stress_5d={float(transition_probabilities.get('to_vol_expansion_or_high_vol_5d', 0.0)):.2f}"
+            ),
+            source_run_id=str(state["run_id"]),
+            source_step_id=step.step_id,
+            metadata={
+                "workflow_id": state.get("workflow_id"),
+                "agent_id": state.get("agent_id"),
+                "source_kind": "hmm_gaussian",
+                "observation_as_of": as_of,
+                "top_state": top_state,
+            },
+            structured_payload={
+                "source_kind": "hmm_gaussian",
+                "observation_as_of": as_of,
+                "top_state": top_state,
+                "is_trained": bool(hmm_record.get("is_trained", False)),
+                "training_status": hmm_record.get("training_status"),
+                "model_version": hmm_record.get("model_version"),
+                "state_probabilities": state_probabilities,
+                "emission_top_state": hmm_record.get("emission_top_state"),
+                "emission_state_probabilities": dict(hmm_record.get("emission_state_probabilities", {})),
+                "persistence_lift": dict(hmm_record.get("persistence_lift", {})),
+                "transition_probabilities": transition_probabilities,
+                "current_state_expected_duration_days": hmm_record.get("current_state_expected_duration_days"),
+                "warnings": list(hmm_record.get("warnings", [])),
+                "interpretation_notes": list(hmm_record.get("interpretation_notes", [])),
+                "state_feature_summaries": dict(hmm_record.get("state_feature_summaries", {})),
+                "training_row_count": hmm_record.get("training_row_count", 0),
+            },
+        )
+    )
+
+
 def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
     """Create the app-specific executor registry."""
     threshold_config = load_yaml(app_paths.thresholds_dir / "alert_thresholds.yaml")
@@ -170,6 +373,17 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                     "Daily regime orchestrator is not allowed to use the 'ibkr_data_pipeline' tool."
                 )
             ibkr_payload = dict(input_payload.get("ibkr", {}))
+            requested_history_days = max(int(ibkr_payload.get("history_days", 252)), 0)
+            cached_history_payload = None
+            refresh_mode = "disabled_for_engine"
+            tool_history_days = requested_history_days
+            if _uses_hmm_history_cache(state):
+                cached_history_payload = _load_regime_history_cache(state=state, services=services)
+                refresh_mode, tool_history_days = _history_refresh_mode(
+                    cached_payload=cached_history_payload,
+                    history_days=requested_history_days,
+                    now=datetime.now(timezone.utc),
+                )
             tool_response = services.tools.execute(
                 ToolExecutionRequest(
                     tool_id=tool_id,
@@ -177,6 +391,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                         "operation": "fetch_vol_regime_snapshot",
                         "symbol": input_payload.get("symbol", ibkr_payload.get("symbol", "SPY")),
                         **ibkr_payload,
+                        "history_days": tool_history_days,
                     },
                     metadata={
                         "run_id": str(state.get("run_id", "")),
@@ -198,10 +413,60 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 {"market_snapshot": tool_response.output},
                 app_root=app_paths.root,
             )
+            if cached_history_payload:
+                merged_history = _merge_history_window(
+                    cached_history=dict(cached_history_payload.get("history", {})),
+                    live_history=live_observation.history,
+                    history_days=requested_history_days,
+                    cache_last_as_of=str(cached_history_payload.get("observation_as_of", "")),
+                    current_as_of=live_observation.as_of,
+                )
+                live_observation = ObservationRecord(
+                    schema_version=live_observation.schema_version,
+                    as_of=live_observation.as_of,
+                    source=live_observation.source,
+                    symbols=dict(live_observation.symbols),
+                    history=merged_history,
+                    quality=dict(live_observation.quality),
+                    option_chain=dict(live_observation.option_chain),
+                    provider_metadata={
+                        **dict(live_observation.provider_metadata),
+                        "history_cache_mode": refresh_mode,
+                        "history_cache_hit": True,
+                        "history_requested_from_ibkr": tool_history_days,
+                        "history_window_days": requested_history_days,
+                    },
+                )
+            else:
+                live_observation = ObservationRecord(
+                    schema_version=live_observation.schema_version,
+                    as_of=live_observation.as_of,
+                    source=live_observation.source,
+                    symbols=dict(live_observation.symbols),
+                    history={key: list(values) for key, values in live_observation.history.items()},
+                    quality=dict(live_observation.quality),
+                    option_chain=dict(live_observation.option_chain),
+                    provider_metadata={
+                        **dict(live_observation.provider_metadata),
+                        "history_cache_mode": refresh_mode,
+                        "history_cache_hit": False,
+                        "history_requested_from_ibkr": tool_history_days,
+                        "history_window_days": requested_history_days,
+                    },
+                )
             observation = _merge_observations(
                 primary=live_observation,
                 fallback=_load_reference_observation(input_payload, app_paths=app_paths),
             )
+            if _uses_hmm_history_cache(state) and refresh_mode in {"full_fetch", "incremental_refresh"}:
+                _remember_regime_history_cache(
+                    state=state,
+                    step=step,
+                    services=services,
+                    observation=observation,
+                    history_days=requested_history_days,
+                    refresh_mode=refresh_mode,
+                )
             _maybe_remember_live_observation(
                 state=state,
                 step=step,
@@ -251,18 +516,68 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             observation,
             feature_config=feature_config,
         ).__class__(**state["named_outputs"]["feature_record"])
-        if _belief_engine(state) == "ml_linear_regression":
+        engine = _belief_engine(state)
+        if engine == "ml_linear_regression":
             belief_record = update_belief_state_with_linear_regression(
                 feature_record,
                 observation,
                 previous_belief=_load_previous_belief(state),
             )
+        elif engine == "hmm_gaussian":
+            hmm_record = compute_hmm_belief_record(
+                observation,
+                feature_record,
+                app_paths=app_paths,
+            )
+            if hmm_record.is_trained:
+                belief_record = hmm_to_belief_record(
+                    hmm_record,
+                    previous_belief=_load_previous_belief(state),
+                )
+            else:
+                belief_record = update_belief_state(
+                    feature_record,
+                    previous_belief=_load_previous_belief(state),
+                )
+                belief_record.model_version = "heuristic_fallback_hmm_untrained_v1"
+                belief_record.confidence = 0.0
+                belief_record.drivers = [
+                    "HMM was not trained enough for this run.",
+                    *list(hmm_record.interpretation_notes[:2]),
+                    "Summary and posture are using heuristic fallback until the HMM has sufficient aligned history.",
+                ][:5]
         else:
             belief_record = update_belief_state(
                 feature_record,
                 previous_belief=_load_previous_belief(state),
             )
         return StepExecutionResult(output=belief_record.to_dict())
+
+    def compute_hmm_belief_executor(
+        step: WorkflowStep,
+        state: WorkflowGraphState,
+        _: dict[str, Any],
+    ) -> StepExecutionResult:
+        observation = load_market_snapshot(
+            {"market_snapshot": state["named_outputs"]["observation"]},
+            app_root=app_paths.root,
+        )
+        feature_record = compute_feature_record(
+            observation,
+            feature_config=feature_config,
+        ).__class__(**state["named_outputs"]["feature_record"])
+        hmm_record = compute_hmm_belief_record(
+            observation,
+            feature_record,
+            app_paths=app_paths,
+        )
+        _maybe_remember_hmm_state(
+            state=state,
+            step=step,
+            services=services,
+            hmm_record=hmm_record.to_dict(),
+        )
+        return StepExecutionResult(output=hmm_record.to_dict())
 
     def estimate_transition_probabilities_executor(
         step: WorkflowStep,
@@ -310,7 +625,14 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         belief_record = BeliefRecord(**dict(state["named_outputs"]["belief_state"]))
         transition_record = TransitionProbabilityRecord(**dict(state["named_outputs"]["transition_probabilities"]))
         alert_record = AlertRecord(**dict(state["named_outputs"]["alert_record"]))
-        recommendation = recommend_policy_action(feature_record, belief_record, transition_record, alert_record)
+        hmm_record = dict(state["named_outputs"].get("hmm_belief", {}))
+        recommendation = recommend_policy_action(
+            feature_record,
+            belief_record,
+            transition_record,
+            alert_record,
+            hmm_record=hmm_record or None,
+        )
         return StepExecutionResult(output=recommendation.to_dict())
 
     def critic_review(
@@ -374,6 +696,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             "feature_record": state["named_outputs"]["feature_record"],
             "belief_state": state["named_outputs"]["belief_state"],
             "transition_probabilities": state["named_outputs"]["transition_probabilities"],
+            "hmm_belief": state["named_outputs"].get("hmm_belief"),
             "alert_record": state["named_outputs"]["alert_record"],
             "policy_recommendation": state["named_outputs"]["policy_recommendation"],
             "critic_review": state["named_outputs"]["critic_review"],
@@ -451,6 +774,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             BeliefRecord,
             CriticReviewRecord,
             FeatureRecord,
+            HMMBeliefRecord,
             PolicyRecommendationRecord,
             TransitionProbabilityRecord,
         )
@@ -458,19 +782,88 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         feature_record = FeatureRecord(**dict(state["named_outputs"]["feature_record"]))
         belief_record = BeliefRecord(**dict(state["named_outputs"]["belief_state"]))
         transition_record = TransitionProbabilityRecord(**dict(state["named_outputs"]["transition_probabilities"]))
+        hmm_record_payload = dict(state["named_outputs"].get("hmm_belief", {}))
+        hmm_record = HMMBeliefRecord(**hmm_record_payload) if hmm_record_payload else None
         alert_record = AlertRecord(**dict(state["named_outputs"]["alert_record"]))
         policy_record = PolicyRecommendationRecord(**dict(state["named_outputs"]["policy_recommendation"]))
         critic_record = CriticReviewRecord(**dict(state["named_outputs"]["critic_review"]))
         review_decision = state["named_outputs"].get("review_decision")
 
+        observation = load_market_snapshot(
+            {"market_snapshot": state["named_outputs"]["observation"]},
+            app_root=app_paths.root,
+        )
+        heuristic_belief = update_belief_state(
+            feature_record,
+            previous_belief=_load_previous_belief(state),
+        )
+        ml_belief = update_belief_state_with_linear_regression(
+            feature_record,
+            observation,
+            previous_belief=_load_previous_belief(state),
+        )
+        hmm_comparison_belief = hmm_to_belief_record(hmm_record, previous_belief=_load_previous_belief(state)) if hmm_record else None
+        comparison_panel = [
+            {
+                "engine": "Heuristic",
+                "top_regime": max(heuristic_belief.beliefs, key=heuristic_belief.beliefs.get),
+                "confidence": heuristic_belief.confidence,
+                "recommended_posture": recommend_policy_action(
+                    feature_record,
+                    heuristic_belief,
+                    transition_record,
+                    alert_record,
+                    hmm_record=hmm_record.to_dict() if hmm_record else None,
+                ).recommended_action,
+            },
+            {
+                "engine": "Linear ML",
+                "top_regime": max(ml_belief.beliefs, key=ml_belief.beliefs.get),
+                "confidence": ml_belief.confidence,
+                "recommended_posture": recommend_policy_action(
+                    feature_record,
+                    ml_belief,
+                    transition_record,
+                    alert_record,
+                    hmm_record=hmm_record.to_dict() if hmm_record else None,
+                ).recommended_action,
+            },
+            {
+                "engine": "HMM",
+                "top_regime": (
+                    hmm_record.top_state
+                    if (hmm_record and hmm_record.is_trained)
+                    else "Not trained enough"
+                    if hmm_record
+                    else "Unavailable"
+                ),
+                "confidence": (hmm_record.confidence if hmm_record else 0.0),
+                "recommended_posture": recommend_policy_action(
+                    feature_record,
+                    hmm_comparison_belief or heuristic_belief,
+                    transition_record,
+                    alert_record,
+                    hmm_record=hmm_record.to_dict() if hmm_record else None,
+                ).recommended_action if (hmm_record and hmm_record.is_trained) else "Fallback to heuristic" if hmm_record else "Unavailable",
+            },
+            {
+                "engine": "Ensemble (disabled)",
+                "top_regime": "Disabled",
+                "confidence": 0.0,
+                "recommended_posture": "Disabled",
+            },
+        ]
+
         markdown = render_daily_markdown(
             feature_record=feature_record,
             belief_record=belief_record,
             transition_record=transition_record,
+            hmm_record=hmm_record,
             alert_record=alert_record,
             policy_record=policy_record,
             critic_record=critic_record,
             review_decision=review_decision,
+            comparison_panel=comparison_panel,
         )
         report_path = write_daily_report(
             markdown,
@@ -484,6 +877,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 "top_regime": max(belief_record.beliefs, key=belief_record.beliefs.get),
                 "alert_severity": alert_record.severity,
                 "recommended_action": policy_record.recommended_action,
+                "comparison_panel": comparison_panel,
             }
         )
 
@@ -491,6 +885,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         "ingest_market_data": ingest_market_data,
         "validate_data_quality": validate_data_quality,
         "compute_features": compute_features,
+        "compute_hmm_belief": compute_hmm_belief_executor,
         "update_belief_state": update_belief_state_executor,
         "estimate_transition_probabilities": estimate_transition_probabilities_executor,
         "generate_alerts": generate_alerts,

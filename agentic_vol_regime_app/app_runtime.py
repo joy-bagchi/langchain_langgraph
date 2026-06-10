@@ -65,6 +65,10 @@ def default_ml_agent_path() -> Path:
     return AppPaths.default().agents_dir / "daily_regime_ml_orchestrator.yaml"
 
 
+def default_hmm_agent_path() -> Path:
+    return AppPaths.default().agents_dir / "daily_regime_hmm_orchestrator.yaml"
+
+
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
 
@@ -230,6 +234,36 @@ def load_latest_live_daily_observation(
     if isinstance(observation, dict):
         return observation
     return None
+
+
+def load_recent_hmm_state_history(
+    *,
+    agent_path: str | Path | None = None,
+    storage_root: str | Path | None = None,
+    database_url: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Return recent HMM state snapshots persisted through harness memory."""
+    namespace = _resolve_memory_namespace(agent_path)
+    store_root = Path(storage_root or Path.cwd() / ".workflow_memory")
+    memory_store = FilesystemMemoryStore(store_root, database_url=database_url)
+    matches = memory_store.recall(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=max(1, int(limit)),
+            memory_types=["hmm_state_snapshot"],
+            structured_filters={"source_kind": "hmm_gaussian", "is_trained": True},
+        )
+    )
+    history: list[dict[str, Any]] = []
+    for match in matches:
+        payload = dict(match.record.structured_payload)
+        payload["record_id"] = match.record.record_id
+        payload["created_at"] = match.record.created_at
+        payload["memory_type"] = match.record.memory_type
+        history.append(payload)
+    return history
 
 
 def resume_daily_regime_run(

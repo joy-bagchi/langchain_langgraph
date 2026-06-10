@@ -31,6 +31,7 @@ def _overwrite_contract(
     *,
     action: str,
     spot: float | None,
+    hmm_record: dict[str, object] | None = None,
 ) -> tuple[float | None, int | None, str | None]:
     if spot is None or spot <= 0:
         return (None, None, None)
@@ -48,6 +49,26 @@ def _overwrite_contract(
         action,
         (0.006, 1, "Overwrite strike selected from the current spot and regime posture."),
     )
+    if hmm_record and float(hmm_record.get("current_state_expected_duration_days", 0.0) or 0.0) > 0.0:
+        expected_duration = float(hmm_record.get("current_state_expected_duration_days", 0.0) or 0.0)
+        transition_probabilities = dict(hmm_record.get("transition_probabilities", {}) or {})
+        elevated_transition_risk = max(
+            float(transition_probabilities.get("to_high_vol_stress_5d", 0.0) or 0.0),
+            float(transition_probabilities.get("to_vol_expansion_or_high_vol_5d", 0.0) or 0.0),
+        )
+        if expected_duration <= 3.0:
+            dte = 1
+        elif expected_duration <= 7.0:
+            dte = 5
+        elif expected_duration <= 14.0:
+            dte = 10
+        else:
+            dte = 17
+        if elevated_transition_risk >= 0.35:
+            dte = min(dte, 3)
+            note = "HMM transition risk is elevated, so the overwrite duration was shortened."
+        else:
+            note = f"HMM expected regime duration suggests approximately {dte} DTE."
     strike = _round_up_to_increment(spot * (1.0 + pct_otm), increment)
     return (float(strike), int(dte), note)
 
@@ -57,6 +78,8 @@ def recommend_policy_action(
     belief_record: BeliefRecord,
     transition_record: TransitionProbabilityRecord,
     alert_record: AlertRecord,
+    *,
+    hmm_record: dict[str, object] | None = None,
 ) -> PolicyRecommendationRecord:
     """Map the current belief state to a recommended overwrite posture."""
     beliefs = dict(belief_record.beliefs)
@@ -105,6 +128,7 @@ def recommend_policy_action(
     overwrite_call_strike, overwrite_dte, overwrite_rationale = _overwrite_contract(
         action=recommended_action,
         spot=float(spot) if spot is not None else None,
+        hmm_record=hmm_record,
     )
     return PolicyRecommendationRecord(
         schema_version="policy_recommendation.v1",

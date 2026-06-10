@@ -38,6 +38,10 @@ class AppPaths:
     def reports_dir(self) -> Path:
         return self.root / "reports"
 
+    @property
+    def models_dir(self) -> Path:
+        return self.root / "models"
+
     @classmethod
     def default(cls) -> "AppPaths":
         return cls(root=Path(__file__).resolve().parent)

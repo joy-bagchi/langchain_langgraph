@@ -19,9 +19,33 @@ Milestone 1 is implemented:
 - artifact persistence
 - candidate memory writes
 - markdown daily regime report generation
+- optional HMM-backed regime advisory and HMM primary agent path
 
 This slice is decision support only. It does not place trades, train ML models,
 or promote memory into trusted priors automatically.
+
+## HMM Agent
+
+The app now includes a third daily agent path backed by a Gaussian HMM-style
+belief engine:
+
+- `configs/agents/daily_regime_hmm_orchestrator.yaml`
+
+The HMM engine is advisory-first:
+
+- it infers hidden four-state volatility regimes
+- estimates state persistence and expected duration
+- computes 5d / 10d / 21d transition probabilities
+- feeds optional duration guidance into overwrite DTE selection
+
+The HMM dependency is optional. Install it when you want the trained HMM path:
+
+```bash
+pip install hmmlearn scikit-learn numpy
+```
+
+Without `hmmlearn`, the HMM section still renders but will warn that the model
+is unavailable.
 
 ## IBKR Data Pipe
 
@@ -93,6 +117,7 @@ streamlit run agentic_vol_regime_app/streamlit_app.py
 The frontend currently supports:
 
 - running the deterministic daily belief workflow
+- selecting Heuristic, ML, or HMM daily regime agents
 - fetching a live IBKR snapshot through the `ibkr_market_data_agent`
 - resuming a review-gated daily run
 

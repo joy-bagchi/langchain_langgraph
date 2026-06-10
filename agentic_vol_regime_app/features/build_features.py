@@ -72,6 +72,12 @@ def _trend_persistence(closes: list[float], lookback: int) -> float | None:
     return positive_steps / total_steps
 
 
+def _simple_return(previous: float, current: float) -> float | None:
+    if previous <= 0:
+        return None
+    return (current / previous) - 1.0
+
+
 def compute_feature_record(
     observation: ObservationRecord,
     *,
@@ -134,6 +140,10 @@ def compute_feature_record(
 
     features = {
         "spy_last": track("spy_last", spy_last),
+        "spy_return_1d": track(
+            "spy_return_1d",
+            _simple_return(spy_closes[-2], spy_closes[-1]) if len(spy_closes) >= 2 else None,
+        ),
         "vix": track("vix", vix),
         "vvix": track("vvix", vvix),
         "vix9d": track("vix9d", vix9d),
@@ -142,15 +152,20 @@ def compute_feature_record(
         "vvix_vix_ratio": track("vvix_vix_ratio", vvix_vix_ratio),
         "vvix_vix_z_22d": track("vvix_vix_z_22d", _zscore(vvix_vix_ratio, ratio_history[-zscore_short:])),
         "vix_21d_z": track("vix_21d_z", _zscore(vix, vix_history[-zscore_short:])),
+        "vix_z_22d": track("vix_z_22d", _zscore(vix, vix_history[-zscore_short:])),
         "vix9d_vix_ratio": track("vix9d_vix_ratio", vix9d / vix if vix else None),
         "rv_5d": track("rv_5d", rv_5d),
         "rv_21d": track("rv_21d", rv_21d),
+        "realized_vol_5d": track("realized_vol_5d", rv_5d * 100.0 if rv_5d is not None else None),
+        "realized_vol_21d": track("realized_vol_21d", rv_21d * 100.0 if rv_21d is not None else None),
         "realized_vol_acceleration": track(
             "realized_vol_acceleration",
             rv_5d - rv_21d if rv_5d is not None and rv_21d is not None else None,
         ),
         "vix_rv_spread": track("vix_rv_spread", (vix / 100.0) - rv_21d if rv_21d is not None else None),
         "vix3m_minus_vix": track("vix3m_minus_vix", term_structure_level - vix),
+        "vix_vix3m_ratio": track("vix_vix3m_ratio", vix / term_structure_level if term_structure_level else None),
+        "term_structure_slope": track("term_structure_slope", term_structure_level - vix),
         "term_structure_flattening": track(
             "term_structure_flattening",
             (term_spread_history[-1] - _safe_mean(term_spread_history[:-1])) if len(term_spread_history) >= 2 else None,

@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import numpy as np
 
 from agentic_harness.agentic_os.platform import build_platform_services
+from agentic_harness.contracts import MemoryQuery, MemoryRecord
+from agentic_harness.stores import FilesystemMemoryStore
 from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, FeatureRecord, TransitionProbabilityRecord
 from agentic_vol_regime_app.app_runtime import (
     default_ml_agent_path,
+    default_hmm_agent_path,
     load_latest_live_daily_observation,
+    load_recent_hmm_state_history,
     resume_daily_regime_run,
     run_daily_regime_agent,
 )
 import agentic_vol_regime_app.app_runtime as app_runtime
+import agentic_vol_regime_app.pomdp.hmm_belief as hmm_belief
 from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
 
 
@@ -134,9 +141,118 @@ class FakeDailyIBKRSentinelPipe:
         return Snapshot()
 
 
+class RecordingDailyIBKRPipe:
+    def __init__(self, as_of_sequence: list[str] | None = None) -> None:
+        self.requests: list[int] = []
+        self.as_of_sequence = list(as_of_sequence or [])
+        self.call_count = 0
+
+    def fetch_vol_regime_snapshot(self, request) -> object:
+        current_index = self.call_count
+        self.call_count += 1
+        self.requests.append(int(request.history_days))
+        if self.as_of_sequence:
+            as_of = self.as_of_sequence[min(current_index, len(self.as_of_sequence) - 1)]
+        else:
+            as_of = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        history_days = max(int(request.history_days), 0)
+        history = {}
+        if history_days > 0:
+            history = {
+                "SPY_close": [576.0 + (index * 0.9) for index in range(history_days)],
+                "VIX": [16.1 + (index * 0.05) for index in range(history_days)],
+                "VVIX": [91.0 + (index * 0.18) for index in range(history_days)],
+                "VIX9D": [15.7 + (index * 0.04) for index in range(history_days)],
+                "VIX3M": [19.7 + (index * 0.01) for index in range(history_days)],
+            }
+
+        class Snapshot:
+            def to_dict(self_inner) -> dict:
+                return {
+                    "schema_version": "observation.v1",
+                    "as_of": as_of,
+                    "source": "IBKR",
+                    "symbols": {
+                        request.option_chain.symbol: {
+                            "last": 602.25 + current_index,
+                            "close": 601.84 + current_index,
+                            "bid": 602.2 + current_index,
+                            "ask": 602.3 + current_index,
+                            "volume": 80421000,
+                        },
+                        "VIX": {"last": 17.4 + (current_index * 0.2)},
+                        "VVIX": {"last": 96.1 + (current_index * 0.5)},
+                        "VIX9D": {"last": 16.9 + (current_index * 0.1)},
+                        "VIX3M": {"last": 19.6 + (current_index * 0.1)},
+                    },
+                    "history": history,
+                    "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
+                    "option_chain": {
+                        "underlying_symbol": request.option_chain.symbol,
+                        "underlying_price": 602.25 + current_index,
+                        "fetched_at": as_of,
+                        "exchange": request.option_chain.option_exchange,
+                        "currency": request.option_chain.currency,
+                        "expirations": ["20260620"],
+                        "strikes": [600.0],
+                        "rights": ["C", "P"],
+                        "option_quotes": [],
+                    },
+                    "provider_metadata": {"port": 4001, "history_days": request.history_days},
+                }
+
+        return Snapshot()
+
+
+class FakeGaussianHMM:
+    def __init__(self, *, n_components: int, covariance_type: str, n_iter: int, random_state: int) -> None:
+        self.means_ = None
+        self.transmat_ = np.asarray(
+            [
+                [0.86, 0.09, 0.03, 0.02],
+                [0.10, 0.72, 0.13, 0.05],
+                [0.04, 0.18, 0.62, 0.16],
+                [0.02, 0.09, 0.19, 0.70],
+            ],
+            dtype=float,
+        )
+
+    def fit(self, values: np.ndarray) -> "FakeGaussianHMM":
+        self.means_ = np.repeat(np.linspace(-1.0, 1.0, 4).reshape(-1, 1), values.shape[1], axis=1)
+        return self
+
+    def predict_proba(self, values: np.ndarray) -> np.ndarray:
+        return np.asarray([[0.58, 0.22, 0.14, 0.06] for _ in range(values.shape[0])], dtype=float)
+
+
 def _load_sample_input(name: str) -> dict:
     root = Path(__file__).resolve().parents[1]
     return json.loads((root / "configs" / "sample_inputs" / name).read_text(encoding="utf-8"))
+
+
+def _run_and_complete_daily_agent(
+    *,
+    input_payload: dict,
+    storage_root: Path,
+    ibkr_data_pipe=None,
+    agent_path: Path | None = None,
+) -> dict:
+    result = run_daily_regime_agent(
+        input_payload=input_payload,
+        storage_root=storage_root,
+        ibkr_data_pipe=ibkr_data_pipe,
+        agent_path=agent_path,
+    )
+    if result["status"] == "awaiting_review":
+        result = resume_daily_regime_run(
+            run_id=result["run_id"],
+            decision="approved",
+            notes="test approval",
+            storage_root=storage_root,
+            agent_path=agent_path,
+        )
+    return result
 
 
 def test_daily_regime_workflow_completes_and_writes_report(tmp_path: Path) -> None:
@@ -170,6 +286,49 @@ def test_daily_regime_ml_agent_completes_with_linear_model(tmp_path: Path) -> No
     assert result["named_outputs"]["belief_state"]["model_version"] == "linear_regression_regime_v1"
     assert result["agent"]["agent_id"] == "daily_regime_ml_orchestrator"
     assert result["named_outputs"]["daily_report"]["recommended_action"]
+
+
+def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Path) -> None:
+    input_payload = _load_sample_input("daily_snapshot_watch.json")
+    input_payload["report_root"] = str(tmp_path / "reports")
+
+    original = hmm_belief.GaussianHMM
+    hmm_belief.GaussianHMM = FakeGaussianHMM
+    try:
+        result = run_daily_regime_agent(
+            input_payload=input_payload,
+            agent_path=default_hmm_agent_path(),
+            storage_root=tmp_path / ".workflow_memory",
+        )
+        initial_result = result
+
+        if result["status"] == "awaiting_review":
+            result = resume_daily_regime_run(
+                run_id=result["run_id"],
+                decision="approved",
+                notes="reviewed",
+                agent_path=default_hmm_agent_path(),
+                storage_root=tmp_path / ".workflow_memory",
+            )
+    finally:
+        hmm_belief.GaussianHMM = original
+
+    assert result["status"] == "completed"
+    assert initial_result["agent"]["agent_id"] == "daily_regime_hmm_orchestrator"
+    assert "hmm_belief" in result["named_outputs"]
+    assert "HMM Regime Persistence" in result["named_outputs"]["daily_report"]["markdown"]
+    assert "Emission vs Persistence" in result["named_outputs"]["daily_report"]["markdown"]
+    assert result["named_outputs"]["hmm_belief"]["interpretation_notes"]
+    assert result["named_outputs"]["daily_report"]["comparison_panel"][2]["engine"] == "HMM"
+    hmm_history = load_recent_hmm_state_history(
+        agent_path=default_hmm_agent_path(),
+        storage_root=tmp_path / ".workflow_memory",
+    )
+    if result["named_outputs"]["hmm_belief"]["is_trained"]:
+        assert hmm_history
+        assert hmm_history[0]["top_state"] == result["named_outputs"]["hmm_belief"]["top_state"]
+    else:
+        assert hmm_history == []
 
 
 def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> None:
@@ -319,6 +478,172 @@ def test_daily_regime_workflow_backfills_missing_live_vol_quotes(tmp_path: Path)
     assert observation["symbols"]["VVIX"]["last"] == 101.0
     assert observation["history"]["VIX"][-1] == 18.4
     assert observation["quality"]["reference_backfill_applied"] is True
+
+
+def test_daily_regime_workflow_reuses_cached_ibkr_history_within_24_hours(tmp_path: Path) -> None:
+    pipe = RecordingDailyIBKRPipe()
+    input_payload = {
+        "data_provider": "ibkr",
+        "symbol": "SPY",
+        "ibkr": {
+            "host": "127.0.0.1",
+            "port": 4001,
+            "client_id": 73,
+            "market_data_type": 1,
+            "exchange": "SMART",
+            "option_exchange": "SMART",
+            "currency": "USD",
+            "index_exchange": "CBOE",
+            "expiry_count": 1,
+            "strike_count": 1,
+            "history_days": 30,
+        },
+        "report_root": str(tmp_path / "reports"),
+    }
+
+    storage_root = tmp_path / ".workflow_memory"
+    first = _run_and_complete_daily_agent(
+        input_payload=input_payload,
+        storage_root=storage_root,
+        ibkr_data_pipe=pipe,
+        agent_path=default_hmm_agent_path(),
+    )
+    second = _run_and_complete_daily_agent(
+        input_payload=input_payload,
+        storage_root=storage_root,
+        ibkr_data_pipe=pipe,
+        agent_path=default_hmm_agent_path(),
+    )
+
+    assert first["status"] == "completed"
+    assert second["status"] == "completed"
+    assert pipe.requests == [30, 0]
+    assert len(second["named_outputs"]["observation"]["history"]["SPY_close"]) == 30
+    assert second["named_outputs"]["observation"]["provider_metadata"]["history_cache_mode"] == "cache_reuse"
+    assert second["named_outputs"]["observation"]["provider_metadata"]["history_requested_from_ibkr"] == 0
+
+
+def test_daily_regime_workflow_refreshes_cached_ibkr_history_after_24_hours(tmp_path: Path) -> None:
+    storage_root = tmp_path / ".workflow_memory"
+    namespace = "daily_regime_memory"
+    current_as_of = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    pipe = RecordingDailyIBKRPipe(as_of_sequence=[current_as_of])
+    memory_store = FilesystemMemoryStore(storage_root)
+    services = build_platform_services(
+        storage_root=storage_root,
+        memory_service_type="semantic",
+    )
+    old_as_of = (datetime.now(timezone.utc) - timedelta(days=2)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    services.memory.remember(
+        MemoryRecord.create(
+            namespace=namespace,
+            memory_type="regime_history_cache",
+            content="latest IBKR regime history cache",
+            source_run_id="seed-run",
+            source_step_id="seed-step",
+            metadata={
+                "source_kind": "ibkr_regime_history_cache",
+                "observation_as_of": old_as_of,
+            },
+            structured_payload={
+                "source_kind": "ibkr_regime_history_cache",
+                "observation_as_of": old_as_of,
+                "last_history_refresh_at": old_as_of,
+                "history_days": 30,
+                "history_refresh_mode": "full_fetch",
+                "history": {
+                    "SPY_close": [576.0 + (index * 0.9) for index in range(30)],
+                    "VIX": [16.1 + (index * 0.05) for index in range(30)],
+                    "VVIX": [91.0 + (index * 0.18) for index in range(30)],
+                    "VIX9D": [15.7 + (index * 0.04) for index in range(30)],
+                    "VIX3M": [19.7 + (index * 0.01) for index in range(30)],
+                },
+            },
+        )
+    )
+
+    result = _run_and_complete_daily_agent(
+        input_payload={
+            "data_provider": "ibkr",
+            "symbol": "SPY",
+            "ibkr": {
+                "host": "127.0.0.1",
+                "port": 4001,
+                "client_id": 73,
+                "market_data_type": 1,
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "index_exchange": "CBOE",
+                "expiry_count": 1,
+                "strike_count": 1,
+                "history_days": 30,
+            },
+            "report_root": str(tmp_path / "reports"),
+        },
+        storage_root=storage_root,
+        ibkr_data_pipe=pipe,
+        agent_path=default_hmm_agent_path(),
+    )
+
+    cache_matches = memory_store.recall(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=1,
+            memory_types=["regime_history_cache"],
+            structured_filters={"source_kind": "ibkr_regime_history_cache"},
+        )
+    )
+
+    assert result["status"] == "completed"
+    assert pipe.requests == [1]
+    assert len(result["named_outputs"]["observation"]["history"]["SPY_close"]) == 30
+    assert result["named_outputs"]["observation"]["provider_metadata"]["history_cache_mode"] == "incremental_refresh"
+    assert result["named_outputs"]["observation"]["provider_metadata"]["history_requested_from_ibkr"] == 1
+    assert cache_matches
+    assert cache_matches[0].record.structured_payload["last_history_refresh_at"] == current_as_of
+    assert len(cache_matches[0].record.structured_payload["history"]["SPY_close"]) == 30
+
+
+def test_daily_regime_heuristic_agent_bypasses_hmm_history_cache(tmp_path: Path) -> None:
+    pipe = RecordingDailyIBKRPipe()
+    input_payload = {
+        "data_provider": "ibkr",
+        "symbol": "SPY",
+        "ibkr": {
+            "host": "127.0.0.1",
+            "port": 4001,
+            "client_id": 73,
+            "market_data_type": 1,
+            "exchange": "SMART",
+            "option_exchange": "SMART",
+            "currency": "USD",
+            "index_exchange": "CBOE",
+            "expiry_count": 1,
+            "strike_count": 1,
+            "history_days": 30,
+        },
+        "report_root": str(tmp_path / "reports"),
+    }
+    storage_root = tmp_path / ".workflow_memory"
+
+    first = _run_and_complete_daily_agent(
+        input_payload=input_payload,
+        storage_root=storage_root,
+        ibkr_data_pipe=pipe,
+    )
+    second = _run_and_complete_daily_agent(
+        input_payload=input_payload,
+        storage_root=storage_root,
+        ibkr_data_pipe=pipe,
+    )
+
+    assert first["status"] == "completed"
+    assert second["status"] == "completed"
+    assert pipe.requests == [30, 30]
+    assert second["named_outputs"]["observation"]["provider_metadata"]["history_cache_mode"] == "disabled_for_engine"
 
 
 def test_policy_recommendation_emits_overwrite_strike_and_dte() -> None:

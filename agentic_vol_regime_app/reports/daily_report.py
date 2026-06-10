@@ -10,6 +10,7 @@ from agentic_vol_regime_app.contracts import (
     BeliefRecord,
     CriticReviewRecord,
     FeatureRecord,
+    HMMBeliefRecord,
     PolicyRecommendationRecord,
     TransitionProbabilityRecord,
 )
@@ -30,10 +31,12 @@ def render_daily_markdown(
     feature_record: FeatureRecord,
     belief_record: BeliefRecord,
     transition_record: TransitionProbabilityRecord,
+    hmm_record: HMMBeliefRecord | None,
     alert_record: AlertRecord,
     policy_record: PolicyRecommendationRecord,
     critic_record: CriticReviewRecord,
     review_decision: dict[str, Any] | None = None,
+    comparison_panel: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render the user-facing daily markdown report."""
     alert_label = alert_record.severity
@@ -52,6 +55,12 @@ def render_daily_markdown(
     risk_notes = "\n".join(f"- {item}" for item in policy_record.risk_notes) or "- None"
     drivers = "\n".join(f"- {item}" for item in alert_record.drivers) or "- None"
     critic_findings = "\n".join(f"- {item}" for item in critic_record.findings) or "- None"
+    comparison_rows = ""
+    if comparison_panel:
+        comparison_rows = "\n".join(
+            f"| {row['engine']} | {row['top_regime']} | {float(row['confidence']):.2f} | {row['recommended_posture']} |"
+            for row in comparison_panel
+        )
     overwrite_plan = "- None"
     if policy_record.overwrite_call_strike is not None and policy_record.overwrite_dte is not None:
         overwrite_plan = (
@@ -59,6 +68,100 @@ def render_daily_markdown(
             f"- Suggested DTE: `{policy_record.overwrite_dte}`\n"
             f"- Notes: {policy_record.overwrite_rationale or 'Derived from current SPY spot and regime posture.'}"
         )
+
+    hmm_section = "HMM advisory is unavailable for this run."
+    if hmm_record is not None:
+        hmm_prob_rows = "\n".join(
+            f"| {state} | {_format_probability(probability)} |"
+            for state, probability in hmm_record.state_probabilities.items()
+        )
+        emission_rows = "\n".join(
+            f"| {state} | {_format_probability(probability)} | {_format_probability(hmm_record.persistence_lift.get(state, 0.0))} |"
+            for state, probability in hmm_record.emission_state_probabilities.items()
+        )
+        state_summary_rows = "\n".join(
+            (
+                f"| {state} | "
+                f"{float(summary.get('vix', 0.0)):.2f} | "
+                f"{float(summary.get('realized_vol_21d', 0.0)):.2f} | "
+                f"{float(summary.get('drawdown_21d', 0.0)):.2f} | "
+                f"{float(summary.get('term_structure_slope', 0.0)):.2f} | "
+                f"{float(summary.get('trend_persistence_21d', 0.0)):.2f} | "
+                f"{float(summary.get('vvix_vix_ratio', 0.0)):.2f} |"
+            )
+            for state, summary in hmm_record.state_feature_summaries.items()
+        )
+        interpretation_lines = "\n".join(f"- {item}" for item in hmm_record.interpretation_notes) or "- None"
+        hmm_transition_rows = "\n".join(
+            "| " + " | ".join(f"{value:.2f}" for value in row) + " |"
+            for row in hmm_record.transition_matrix
+        ) or "| 0.00 | 0.00 | 0.00 | 0.00 |"
+        hmm_warning_lines = "\n".join(f"- {item}" for item in hmm_record.warnings) or "- None"
+        training_status_line = (
+            "Trained and active."
+            if hmm_record.is_trained
+            else "Not trained enough for this run. HMM-specific regime inference is unavailable."
+        )
+        hmm_section = f"""## HMM Regime Persistence
+
+Training status: `{hmm_record.training_status}`
+
+{training_status_line}
+
+Top HMM state: `{hmm_record.top_state}`
+
+Current-state expected duration: `{hmm_record.current_state_expected_duration_days:.2f}` days
+
+### HMM State Probabilities
+
+| State | Probability |
+|---|---:|
+{hmm_prob_rows}
+
+### Emission vs Persistence
+
+Emission-only top state: `{hmm_record.emission_top_state}`
+
+| State | Emission-Only Probability | Persistence Lift |
+|---|---:|---:|
+{emission_rows}
+
+### State Summaries
+
+| State | Avg VIX | Avg RV21 | Avg Drawdown | Term Slope | Trend Persistence | VVIX/VIX |
+|---|---:|---:|---:|---:|---:|---:|
+{state_summary_rows}
+
+### Interpretation Notes
+
+{interpretation_lines}
+
+### HMM Persistence
+
+- Current state persists 5d: `{hmm_record.persistence_probabilities.get("current_state_5d", 0.0):.2f}`
+- Current state persists 10d: `{hmm_record.persistence_probabilities.get("current_state_10d", 0.0):.2f}`
+- Current state persists 21d: `{hmm_record.persistence_probabilities.get("current_state_21d", 0.0):.2f}`
+- VOL_EXPANSION or HIGH_VOL within 5d: `{hmm_record.transition_probabilities.get("to_vol_expansion_or_high_vol_5d", 0.0):.2f}`
+- VOL_EXPANSION or HIGH_VOL within 10d: `{hmm_record.transition_probabilities.get("to_vol_expansion_or_high_vol_10d", 0.0):.2f}`
+- VOL_EXPANSION or HIGH_VOL within 21d: `{hmm_record.transition_probabilities.get("to_vol_expansion_or_high_vol_21d", 0.0):.2f}`
+
+### HMM Transition Matrix
+
+{hmm_transition_rows}
+
+Warnings:
+{hmm_warning_lines}
+"""
+
+    comparison_section = ""
+    if comparison_rows:
+        comparison_section = f"""
+## Belief Reconciliation
+
+| Engine | Top Regime | Confidence | Recommended Posture |
+|---|---|---:|---|
+{comparison_rows}
+"""
 
     return f"""# Daily Volatility Regime Report
 
@@ -110,6 +213,10 @@ Risk notes:
 
 Overwrite implementation:
 {overwrite_plan}
+
+{comparison_section}
+
+{hmm_section}
 
 ## Model Confidence
 

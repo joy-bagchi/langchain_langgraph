@@ -129,6 +129,37 @@ class TransitionProbabilityRecord:
 
 
 @dataclass(slots=True)
+class HMMBeliefRecord:
+    schema_version: str
+    model_name: str
+    model_version: str
+    as_of: str
+    is_trained: bool
+    training_status: str
+    state_probabilities: dict[str, float]
+    top_state: str
+    transition_matrix: list[list[float]]
+    expected_duration_days: dict[str, float]
+    current_state_expected_duration_days: float
+    persistence_probabilities: dict[str, float]
+    transition_probabilities: dict[str, float]
+    confidence: float
+    warnings: list[str]
+    drivers: list[str]
+    interpretation_notes: list[str] = field(default_factory=list)
+    state_label_mapping: dict[str, str] = field(default_factory=dict)
+    emission_state_probabilities: dict[str, float] = field(default_factory=dict)
+    emission_top_state: str = ""
+    persistence_lift: dict[str, float] = field(default_factory=dict)
+    state_feature_summaries: dict[str, dict[str, float]] = field(default_factory=dict)
+    training_row_count: int = 0
+    inference_feature_vector: dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _asdict(self)
+
+
+@dataclass(slots=True)
 class AlertRecord:
     schema_version: str
     alert_id: str

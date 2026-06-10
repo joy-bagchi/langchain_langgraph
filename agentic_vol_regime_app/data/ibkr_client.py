@@ -127,7 +127,7 @@ class IBKROptionChainRequest:
 @dataclass(frozen=True, slots=True)
 class IBKRVolRegimeSnapshotRequest:
     option_chain: IBKROptionChainRequest = field(default_factory=IBKROptionChainRequest)
-    history_days: int = 30
+    history_days: int = 252
     regime_symbols: tuple[str, ...] = DEFAULT_VOL_REGIME_SYMBOLS
     index_exchange: str = "CBOE"
     currency: str = "USD"
@@ -143,7 +143,7 @@ class IBKRVolRegimeSnapshotRequest:
             normalized_symbols = (option_chain.symbol.upper(), *normalized_symbols)
         return cls(
             option_chain=option_chain,
-            history_days=max(int(payload.get("history_days", 30)), 5),
+            history_days=max(int(payload.get("history_days", 252)), 0),
             regime_symbols=normalized_symbols or DEFAULT_VOL_REGIME_SYMBOLS,
             index_exchange=str(payload.get("index_exchange", "CBOE")),
             currency=str(payload.get("currency", option_chain.currency or "USD")),
@@ -264,15 +264,16 @@ class IBKRLiveClient:
                     if normalized_symbol == option_request.symbol.upper()
                     else normalized_symbol
                 )
-                history_values = self._request_daily_history(
-                    ib,
-                    contract,
-                    history_days=request.history_days,
-                )
-                if history_values:
-                    history_payload[history_key] = history_values
-                else:
-                    warnings.append(f"unable to load daily history for {history_key}")
+                if request.history_days > 0:
+                    history_values = self._request_daily_history(
+                        ib,
+                        contract,
+                        history_days=request.history_days,
+                    )
+                    if history_values:
+                        history_payload[history_key] = history_values
+                    else:
+                        warnings.append(f"unable to load daily history for {history_key}")
 
             missing_symbols = [
                 symbol for symbol in request.regime_symbols if symbol.upper() not in symbols_payload
@@ -281,9 +282,12 @@ class IBKRLiveClient:
                 ("SPY_close" if symbol.upper() == option_request.symbol.upper() else symbol.upper())
                 for symbol in request.regime_symbols
             ]
-            missing_history = [
-                key for key in required_history if len(history_payload.get(key, [])) < min(request.history_days, 22)
-            ]
+            missing_history: list[str] = []
+            if request.history_days > 0:
+                minimum_history = min(request.history_days, 22)
+                missing_history = [
+                    key for key in required_history if len(history_payload.get(key, [])) < minimum_history
+                ]
             quality = {
                 "is_complete": not missing_symbols and not missing_history and not stale_fields,
                 "warnings": warnings,
@@ -306,6 +310,7 @@ class IBKRLiveClient:
                     "client_id": self.connection.client_id,
                     "market_data_type": self.connection.market_data_type,
                     "history_days": request.history_days,
+                    "history_fetch_mode": "skipped" if request.history_days <= 0 else "full_or_incremental",
                     "regime_symbols": list(request.regime_symbols),
                     "index_exchange": request.index_exchange,
                     "qualified_option_contract_count": len(option_chain.get("option_quotes", [])),

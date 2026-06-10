@@ -20,9 +20,11 @@ _ensure_streamlit_imports()
 
 from agentic_vol_regime_app import (  # noqa: E402
     default_agent_path,
+    default_hmm_agent_path,
     default_ibkr_agent_path,
     default_ml_agent_path,
     load_latest_live_daily_observation,
+    load_recent_hmm_state_history,
     resume_daily_regime_run,
     run_daily_regime_agent,
     run_ibkr_market_data_agent,
@@ -193,6 +195,100 @@ def _render_overwrite_plan(st, *, policy: dict[str, Any]) -> None:
         st.caption(rationale)
 
 
+def _render_hmm_explainability(st, *, hmm_belief: dict[str, Any]) -> None:
+    if not hmm_belief:
+        return
+
+    is_trained = bool(hmm_belief.get("is_trained", False))
+    training_status = str(hmm_belief.get("training_status", "unknown"))
+    state_probabilities = dict(hmm_belief.get("state_probabilities", {}))
+    emission_state_probabilities = dict(hmm_belief.get("emission_state_probabilities", {}))
+    persistence_lift = dict(hmm_belief.get("persistence_lift", {}))
+    state_feature_summaries = dict(hmm_belief.get("state_feature_summaries", {}))
+    interpretation_notes = list(hmm_belief.get("interpretation_notes", []))
+    transition_probabilities = dict(hmm_belief.get("transition_probabilities", {}))
+
+    st.subheader("HMM Diagnostics")
+    if not is_trained:
+        st.warning(
+            "HMM is not trained enough for this run. The app is showing the HMM warning state, not a learned regime posterior."
+        )
+    hmm_col1, hmm_col2, hmm_col3, hmm_col4, hmm_col5 = st.columns(5)
+    _render_summary_card(hmm_col1, label="Training Status", value=training_status)
+    _render_summary_card(hmm_col2, label="Top HMM State", value=str(hmm_belief.get("top_state", "n/a")))
+    _render_summary_card(hmm_col3, label="Emission-Only State", value=str(hmm_belief.get("emission_top_state", "n/a")))
+    _render_summary_card(
+        hmm_col4,
+        label="Expected Duration",
+        value=f"{float(hmm_belief.get('current_state_expected_duration_days', 0.0)):.1f} days",
+    )
+    _render_summary_card(
+        hmm_col5,
+        label="5d Expansion/Stress",
+        value=f"{float(transition_probabilities.get('to_vol_expansion_or_high_vol_5d', 0.0)):.2f}",
+    )
+
+    if interpretation_notes:
+        st.caption("\n\n".join(str(item) for item in interpretation_notes))
+
+    if state_probabilities:
+        st.markdown("**Posterior vs Emission Fit**")
+        rows = []
+        ordered_states = list(state_probabilities.keys()) or list(emission_state_probabilities.keys())
+        for state in ordered_states:
+            rows.append(
+                {
+                    "state": state,
+                    "posterior": float(state_probabilities.get(state, 0.0)),
+                    "emission_only": float(emission_state_probabilities.get(state, 0.0)),
+                    "persistence_lift": float(persistence_lift.get(state, 0.0)),
+                }
+            )
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    if state_feature_summaries:
+        st.markdown("**State Summary Map**")
+        summary_rows = []
+        for state, summary in state_feature_summaries.items():
+            summary_rows.append(
+                {
+                    "state": state,
+                    "avg_vix": float(summary.get("vix", 0.0)),
+                    "avg_rv21": float(summary.get("realized_vol_21d", 0.0)),
+                    "avg_drawdown": float(summary.get("drawdown_21d", 0.0)),
+                    "term_slope": float(summary.get("term_structure_slope", 0.0)),
+                    "trend_persistence": float(summary.get("trend_persistence_21d", 0.0)),
+                    "vvix_vix": float(summary.get("vvix_vix_ratio", 0.0)),
+                }
+            )
+        st.dataframe(summary_rows, use_container_width=True, hide_index=True)
+
+
+def _render_hmm_history(st, *, hmm_history: list[dict[str, Any]]) -> None:
+    if not hmm_history:
+        return
+    st.subheader("HMM State History")
+    rows = []
+    for item in hmm_history:
+        top_state = str(item.get("top_state", "n/a"))
+        state_probabilities = dict(item.get("state_probabilities", {}))
+        transition_probabilities = dict(item.get("transition_probabilities", {}))
+        rows.append(
+            {
+                "as_of": item.get("observation_as_of"),
+                "top_state": top_state,
+                "posterior": float(state_probabilities.get(top_state, 0.0)),
+                "emission_top_state": item.get("emission_top_state"),
+                "expected_duration_days": float(item.get("current_state_expected_duration_days", 0.0) or 0.0),
+                "to_expansion_or_stress_5d": float(
+                    transition_probabilities.get("to_vol_expansion_or_high_vol_5d", 0.0)
+                ),
+                "warnings": " | ".join(str(value) for value in item.get("warnings", [])),
+            }
+        )
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def _extract_governance_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in list(result.get("step_history", [])):
@@ -298,13 +394,14 @@ def _strip_report_heading_and_summary(markdown: str) -> str:
     return "\n".join(output).strip()
 
 
-def _render_daily_result(st, result: dict[str, Any]) -> None:
+def _render_daily_result(st, result: dict[str, Any], *, hmm_history: list[dict[str, Any]] | None = None) -> None:
     outputs = dict(result.get("named_outputs", {}))
     daily_report = dict(outputs.get("daily_report", {}))
     belief_state = dict(outputs.get("belief_state", {}))
     alert_record = dict(outputs.get("alert_record", {}))
     policy = dict(outputs.get("policy_recommendation", {}))
     critic_review = dict(outputs.get("critic_review", {}))
+    hmm_belief = dict(outputs.get("hmm_belief", {}))
     agent_name = str(dict(result.get("agent", {})).get("name", "")).strip()
 
     _render_runtime_diagnostics(st, result)
@@ -323,6 +420,8 @@ def _render_daily_result(st, result: dict[str, Any]) -> None:
         action=str(policy.get("recommended_action", "n/a")),
     )
     _render_overwrite_plan(st, policy=policy)
+    _render_hmm_explainability(st, hmm_belief=hmm_belief)
+    _render_hmm_history(st, hmm_history=hmm_history or [])
     _render_governance_panel(st, result=result, critic_review=critic_review, policy=policy)
 
     if daily_report.get("markdown"):
@@ -340,6 +439,56 @@ def _render_daily_result(st, result: dict[str, Any]) -> None:
 
     with st.expander("Internal Run State"):
         st.code(_pretty_json(result), language="json")
+
+
+def _render_inline_review_actions(
+    st,
+    *,
+    result: dict[str, Any],
+    agent_path: Path,
+    storage_root: str,
+    database_url: str,
+    langsmith_tracing: bool,
+    langsmith_project: str,
+) -> dict[str, Any] | None:
+    if str(result.get("status", "")) != "awaiting_review":
+        return None
+    run_id = str(result.get("run_id", "")).strip()
+    if not run_id:
+        return None
+
+    st.subheader("Pending Review Action")
+    st.caption("This run is paused at a human review gate. You can resolve it directly here.")
+    decision_col1, decision_col2 = st.columns(2)
+    review_notes = st.text_area(
+        "Review Notes",
+        height=100,
+        key=f"inline_review_notes_{run_id}",
+    )
+    approve = decision_col1.button("Approve Review", type="primary", key=f"approve_review_{run_id}")
+    reject = decision_col2.button("Reject Review", key=f"reject_review_{run_id}")
+
+    if not approve and not reject:
+        return None
+
+    decision = "approved" if approve else "rejected"
+    try:
+        resumed = resume_daily_regime_run(
+            run_id=run_id,
+            decision=decision,
+            notes=review_notes.strip() or None,
+            agent_path=agent_path,
+            storage_root=storage_root,
+            database_url=database_url or None,
+            langsmith_tracing=langsmith_tracing,
+            langsmith_project=langsmith_project or None,
+        )
+    except Exception as exc:
+        st.error(str(exc))
+        return None
+
+    st.success(f"Review was {decision}.")
+    return resumed
 
 
 def _render_ibkr_result(st, result: dict[str, Any]) -> None:
@@ -473,6 +622,7 @@ def main() -> None:
     daily_tab, ibkr_tab, resume_tab = st.tabs(
         ["Daily Belief Report", "IBKR Snapshot Agent", "Resume Daily Review"]
     )
+    state_daily_result_key = "vol_regime_last_daily_result"
 
     with daily_tab:
         st.subheader("Daily Volatility Regime Workflow")
@@ -480,12 +630,16 @@ def main() -> None:
         default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
         agent_choice = st.radio(
             "Regime Engine",
-            options=["Heuristic Agent", "ML Agent"],
+            options=["Heuristic Agent", "ML Agent", "HMM Agent"],
             horizontal=True,
             help="Both agents use the same workflow and report surface. The ML agent swaps only the belief-state engine.",
         )
         selected_daily_agent_path = (
-            default_agent_path() if agent_choice == "Heuristic Agent" else default_ml_agent_path()
+            default_agent_path()
+            if agent_choice == "Heuristic Agent"
+            else default_ml_agent_path()
+            if agent_choice == "ML Agent"
+            else default_hmm_agent_path()
         )
         mode = st.radio(
             "Mode",
@@ -529,7 +683,7 @@ def main() -> None:
                 )
                 live_history_days = live_cfg2.number_input(
                     "History Days",
-                    value=int(ibkr_defaults.get("history_days", 30)),
+                    value=int(ibkr_defaults.get("history_days", 252)),
                     step=1,
                     key="daily_live_history_days",
                 )
@@ -686,7 +840,29 @@ def main() -> None:
             except Exception as exc:
                 st.error(str(exc))
             else:
-                _render_daily_result(st, result)
+                st.session_state[state_daily_result_key] = result
+
+        current_daily_result = st.session_state.get(state_daily_result_key)
+        if isinstance(current_daily_result, dict):
+            resumed_result = _render_inline_review_actions(
+                st,
+                result=current_daily_result,
+                agent_path=Path(selected_daily_agent_path),
+                storage_root=storage_root,
+                database_url=database_url,
+                langsmith_tracing=langsmith_tracing,
+                langsmith_project=langsmith_project,
+            )
+            if isinstance(resumed_result, dict):
+                st.session_state[state_daily_result_key] = resumed_result
+                current_daily_result = resumed_result
+            hmm_history = load_recent_hmm_state_history(
+                agent_path=selected_daily_agent_path,
+                storage_root=storage_root,
+                database_url=database_url or None,
+                limit=12,
+            )
+            _render_daily_result(st, current_daily_result, hmm_history=hmm_history)
 
     with ibkr_tab:
         st.subheader("Live IBKR Market Data Agent")
@@ -761,7 +937,7 @@ def main() -> None:
             except Exception as exc:
                 st.error(str(exc))
             else:
-                _render_daily_result(st, result)
+                _render_daily_result(st, result, hmm_history=[])
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from typing import Callable, Protocol
 
 from agentic_harness.contracts import MemoryQuery, MemoryRecord, MemorySearchResult
 from agentic_harness.shared.services import ServiceDescriptor
-from agentic_harness.stores import FilesystemMemoryStore, RuntimeLedger
+from agentic_harness.stores import FilesystemMemoryStore, RuntimeLedger, _dict_matches_filters
 
 
 @dataclass(slots=True)
@@ -261,6 +261,7 @@ class SemanticMemoryService:
                 mr.created_at,
                 mr.expires_at,
                 mr.metadata_json,
+                mr.structured_payload_json,
                 1 - (me.embedding <=> %s::vector) AS score
             FROM memory_records mr
             JOIN memory_embeddings me ON me.record_id = mr.record_id
@@ -284,8 +285,13 @@ class SemanticMemoryService:
                 created_at=row[6],
                 expires_at=row[7],
                 metadata=json.loads(row[8] or "{}"),
+                structured_payload=json.loads(row[9] or "{}"),
             )
-            score = float(row[9] or 0.0)
+            if not _dict_matches_filters(record.metadata, query.metadata_filters):
+                continue
+            if not _dict_matches_filters(record.structured_payload, query.structured_filters):
+                continue
+            score = float(row[10] or 0.0)
             if score > 0:
                 results.append(MemorySearchResult(record=record, score=score))
         return results
@@ -308,6 +314,7 @@ class SemanticMemoryService:
                 mr.created_at,
                 mr.expires_at,
                 mr.metadata_json,
+                mr.structured_payload_json,
                 me.embedding_json
             FROM memory_records mr
             JOIN memory_embeddings me ON me.record_id = mr.record_id
@@ -332,8 +339,9 @@ class SemanticMemoryService:
                 created_at=row[6],
                 expires_at=row[7],
                 metadata=json.loads(row[8] or "{}"),
+                structured_payload=json.loads(row[9] or "{}"),
             )
-            embedding = json.loads(row[9] or "[]")
+            embedding = json.loads(row[10] or "[]")
             score = _cosine_similarity(query_embedding, embedding)
             if query.text and score <= 0:
                 continue

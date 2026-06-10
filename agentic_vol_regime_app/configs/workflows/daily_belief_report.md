@@ -41,6 +41,17 @@ type: compute_features
 id: compute_features
 title: Compute Features
 output_key: feature_record
+next: compute_hmm_belief
+memory:
+  enabled: false
+```
+
+## Step: compute_hmm_belief
+```yaml
+type: compute_hmm_belief
+id: compute_hmm_belief
+title: Compute HMM Belief
+output_key: hmm_belief
 next: update_belief_state
 memory:
   enabled: false

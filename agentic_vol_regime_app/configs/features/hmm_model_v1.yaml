@@ -1,0 +1,21 @@
+n_components: 4
+covariance_type: diag
+n_iter: 500
+random_state: 17
+train_window: 252
+retrain_cadence: 5
+min_retrain_interval_hours: 24
+feature_list:
+  - spy_return_1d
+  - realized_vol_5d
+  - realized_vol_21d
+  - vix
+  - vix_z_22d
+  - vvix
+  - vvix_vix_ratio
+  - vvix_vix_z_22d
+  - vix9d_vix_ratio
+  - vix_vix3m_ratio
+  - term_structure_slope
+  - drawdown_21d
+  - trend_persistence_21d
