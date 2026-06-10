@@ -265,15 +265,16 @@ class IBKRLiveClient:
                     else normalized_symbol
                 )
                 if request.history_days > 0:
-                    history_values = self._request_daily_history(
+                    history_values, history_warnings = self._request_daily_history(
                         ib,
                         contract,
                         history_days=request.history_days,
+                        history_label=history_key,
                     )
                     if history_values:
                         history_payload[history_key] = history_values
                     else:
-                        warnings.append(f"unable to load daily history for {history_key}")
+                        warnings.extend(history_warnings or [f"unable to load daily history for {history_key}"])
 
             missing_symbols = [
                 symbol for symbol in request.regime_symbols if symbol.upper() not in symbols_payload
@@ -456,7 +457,13 @@ class IBKRLiveClient:
         ).to_dict()
 
     @staticmethod
-    def _request_daily_history(ib: Any, contract: Any, *, history_days: int) -> list[float]:
+    def _request_daily_history(
+        ib: Any,
+        contract: Any,
+        *,
+        history_days: int,
+        history_label: str,
+    ) -> tuple[list[float], list[str]]:
         duration_days = max(history_days + 5, history_days)
         sec_type = str(getattr(contract, "secType", "")).upper()
         what_to_show_candidates = (
@@ -464,6 +471,7 @@ class IBKRLiveClient:
             if sec_type == "STK"
             else ("TRADES", "MIDPOINT")
         )
+        diagnostics: list[str] = []
         for what_to_show in what_to_show_candidates:
             try:
                 bars = ib.reqHistoricalData(
@@ -475,7 +483,10 @@ class IBKRLiveClient:
                     useRTH=False,
                     formatDate=1,
                 )
-            except Exception:
+            except Exception as exc:
+                diagnostics.append(
+                    f"{history_label} history request failed for {what_to_show}: {exc}"
+                )
                 continue
             closes = [
                 number
@@ -483,8 +494,11 @@ class IBKRLiveClient:
                 if number is not None
             ]
             if closes:
-                return closes[-history_days:]
-        return []
+                return closes[-history_days:], []
+            diagnostics.append(
+                f"{history_label} history request returned no usable bars for {what_to_show}."
+            )
+        return [], diagnostics
 
     @staticmethod
     def _request_intraday_last(ib: Any, contract: Any) -> float | None:

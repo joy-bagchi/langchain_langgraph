@@ -6,10 +6,13 @@ from pathlib import Path
 from agentic_vol_regime_app.data.ibkr_client import (
     IBKRConnectionConfig,
     IBKRDataPipe,
+    IBKRLiveClient,
     IBKROptionChainRequest,
     IBKRVolRegimeSnapshotRequest,
     _ensure_thread_event_loop,
 )
+from agentic_vol_regime_app.contracts import ObservationRecord
+from agentic_vol_regime_app.data.quality import validate_observation
 from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
 
 
@@ -202,3 +205,50 @@ def test_ensure_thread_event_loop_creates_one_when_missing(monkeypatch) -> None:
         monkeypatch.setattr(policy, "get_event_loop", original_get_event_loop)
 
     assert isinstance(loop, asyncio.AbstractEventLoop)
+
+
+def test_request_daily_history_surfaces_symbol_level_errors() -> None:
+    class FakeIB:
+        def reqHistoricalData(self, contract, **kwargs):
+            raise RuntimeError(f"historical data denied for {kwargs['whatToShow']}")
+
+    class FakeContract:
+        secType = "IND"
+
+    values, warnings = IBKRLiveClient._request_daily_history(
+        FakeIB(),
+        FakeContract(),
+        history_days=30,
+        history_label="VIX",
+    )
+
+    assert values == []
+    assert warnings
+    assert any("VIX history request failed for TRADES" in warning for warning in warnings)
+    assert any("historical data denied" in warning for warning in warnings)
+
+
+def test_validate_observation_preserves_provider_warnings() -> None:
+    observation = ObservationRecord(
+        schema_version="observation.v1",
+        as_of="2026-06-10T20:00:00Z",
+        source="IBKR",
+        symbols={
+            "SPY": {"last": 730.0},
+            "VIX": {"last": None},
+            "VVIX": {"last": None},
+            "VIX9D": {"last": None},
+            "VIX3M": {"last": None},
+        },
+        history={},
+        quality={
+            "warnings": ["VIX history request failed for TRADES: permission denied"],
+            "stale_fields": ["VIX.last"],
+        },
+        option_chain={},
+        provider_metadata={},
+    )
+
+    quality = validate_observation(observation)
+
+    assert "VIX history request failed for TRADES: permission denied" in quality["warnings"]

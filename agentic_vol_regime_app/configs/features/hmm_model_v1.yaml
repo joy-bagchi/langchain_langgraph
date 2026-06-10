@@ -1,8 +1,8 @@
-n_components: 4
+n_components: 3
 covariance_type: diag
 n_iter: 500
 random_state: 17
-train_window: 252
+train_window: 756
 retrain_cadence: 5
 min_retrain_interval_hours: 24
 feature_list:

@@ -266,6 +266,62 @@ def load_recent_hmm_state_history(
     return history
 
 
+def reset_hmm_persisted_state(
+    *,
+    agent_path: str | Path | None = None,
+    storage_root: str | Path | None = None,
+    database_url: str | None = None,
+    app_paths: AppPaths | None = None,
+) -> dict[str, Any]:
+    """Delete persisted HMM memory/cache records and the saved HMM model artifact."""
+    namespace = _resolve_memory_namespace(agent_path or default_hmm_agent_path())
+    store_root = Path(storage_root or Path.cwd() / ".workflow_memory")
+    memory_store = FilesystemMemoryStore(store_root, database_url=database_url)
+
+    deleted_counts: dict[str, int] = {}
+    deleted_counts["hmm_state_snapshot"] = memory_store.delete(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=10_000,
+            memory_types=["hmm_state_snapshot"],
+            structured_filters={"source_kind": "hmm_gaussian"},
+        )
+    )
+    deleted_counts["regime_history_cache"] = memory_store.delete(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=10_000,
+            memory_types=["regime_history_cache"],
+            structured_filters={"source_kind": "ibkr_regime_history_cache"},
+        )
+    )
+    deleted_counts["live_observation_snapshot"] = memory_store.delete(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=10_000,
+            memory_types=["live_observation_snapshot"],
+            structured_filters={"source_kind": "live_ibkr"},
+        )
+    )
+
+    resolved_paths = app_paths or AppPaths.default()
+    model_path = resolved_paths.models_dir / "hmm" / "daily_regime_hmm_model.pkl"
+    artifact_deleted = False
+    if model_path.exists():
+        model_path.unlink()
+        artifact_deleted = True
+
+    return {
+        "namespace": namespace,
+        "deleted_memory_records": deleted_counts,
+        "deleted_model_artifact": artifact_deleted,
+        "model_artifact_path": str(model_path),
+    }
+
+
 def resume_daily_regime_run(
     *,
     run_id: str,

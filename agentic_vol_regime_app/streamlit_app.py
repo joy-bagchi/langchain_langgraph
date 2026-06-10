@@ -25,6 +25,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     default_ml_agent_path,
     load_latest_live_daily_observation,
     load_recent_hmm_state_history,
+    reset_hmm_persisted_state,
     resume_daily_regime_run,
     run_daily_regime_agent,
     run_ibkr_market_data_agent,
@@ -207,13 +208,15 @@ def _render_hmm_explainability(st, *, hmm_belief: dict[str, Any]) -> None:
     state_feature_summaries = dict(hmm_belief.get("state_feature_summaries", {}))
     interpretation_notes = list(hmm_belief.get("interpretation_notes", []))
     transition_probabilities = dict(hmm_belief.get("transition_probabilities", {}))
+    training_row_count = int(hmm_belief.get("training_row_count", 0) or 0)
+    configured_train_window = int(hmm_belief.get("configured_train_window", 0) or 0)
 
     st.subheader("HMM Diagnostics")
     if not is_trained:
         st.warning(
             "HMM is not trained enough for this run. The app is showing the HMM warning state, not a learned regime posterior."
         )
-    hmm_col1, hmm_col2, hmm_col3, hmm_col4, hmm_col5 = st.columns(5)
+    hmm_col1, hmm_col2, hmm_col3, hmm_col4, hmm_col5, hmm_col6 = st.columns(6)
     _render_summary_card(hmm_col1, label="Training Status", value=training_status)
     _render_summary_card(hmm_col2, label="Top HMM State", value=str(hmm_belief.get("top_state", "n/a")))
     _render_summary_card(hmm_col3, label="Emission-Only State", value=str(hmm_belief.get("emission_top_state", "n/a")))
@@ -226,6 +229,15 @@ def _render_hmm_explainability(st, *, hmm_belief: dict[str, Any]) -> None:
         hmm_col5,
         label="5d Expansion/Stress",
         value=f"{float(transition_probabilities.get('to_vol_expansion_or_high_vol_5d', 0.0)):.2f}",
+    )
+    _render_summary_card(
+        hmm_col6,
+        label="Usable Training Rows",
+        value=(
+            f"{training_row_count} / {configured_train_window}"
+            if configured_train_window > 0
+            else str(training_row_count)
+        ),
     )
 
     if interpretation_notes:
@@ -654,6 +666,7 @@ def main() -> None:
         effective_daily_payload: dict[str, Any]
         if mode == "Live IBKR":
             ibkr_defaults = dict(default_live_payload.get("ibkr", {}))
+            default_history_days = 756 if agent_choice == "HMM Agent" else int(ibkr_defaults.get("history_days", 252))
             with st.expander("Advanced IBKR Settings", expanded=False):
                 live_col1, live_col2, live_col3 = st.columns(3)
                 live_host = live_col1.text_input(
@@ -683,7 +696,7 @@ def main() -> None:
                 )
                 live_history_days = live_cfg2.number_input(
                     "History Days",
-                    value=int(ibkr_defaults.get("history_days", 252)),
+                    value=int(default_history_days),
                     step=1,
                     key="daily_live_history_days",
                 )
@@ -743,6 +756,8 @@ def main() -> None:
                 "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
             }
             st.caption("Using default symbol set: SPY, VIX, VVIX, VIX9D, and VIX3M.")
+            if agent_choice == "HMM Agent":
+                st.caption("HMM live runs default to a 756-day history window. Increase this to 1260 if you want a deeper regime-training window.")
         elif mode == "Scenario":
             latest_live_observation = load_latest_live_daily_observation(
                 agent_path=selected_daily_agent_path,
@@ -825,6 +840,25 @@ def main() -> None:
                 key="daily_json",
             )
             effective_daily_payload = _parse_json_text(daily_json, fallback=default_daily_payload)
+
+        if agent_choice == "HMM Agent":
+            with st.expander("HMM Reset", expanded=False):
+                st.caption(
+                    "Clear the HMM agent's cached history, saved HMM state history, latest live observation snapshot, and the persisted HMM model artifact."
+                )
+                if st.button("Reset HMM Persisted State", key="reset_hmm_persisted_state", type="secondary"):
+                    reset_result = reset_hmm_persisted_state(
+                        agent_path=selected_daily_agent_path,
+                        storage_root=storage_root,
+                        database_url=database_url or None,
+                    )
+                    st.session_state.pop(state_daily_result_key, None)
+                    st.success(
+                        "Cleared HMM persisted state: "
+                        f"{reset_result['deleted_memory_records']} | "
+                        f"model_deleted={reset_result['deleted_model_artifact']}"
+                    )
+                    st.rerun()
 
         if st.button("Run Daily Workflow", type="primary"):
             try:

@@ -20,6 +20,7 @@ from agentic_vol_regime_app.pomdp.belief_update import update_belief_state
 from agentic_vol_regime_app.pomdp.hmm_belief import (
     compute_hmm_belief_record,
     hmm_to_belief_record,
+    load_hmm_config,
 )
 from agentic_vol_regime_app.pomdp.ml_belief import update_belief_state_with_linear_regression
 from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
@@ -266,6 +267,57 @@ def _merge_observations(
     )
 
 
+def _format_quality_issues(quality: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    missing_symbols = [str(item) for item in quality.get("missing_symbols", []) if item]
+    if missing_symbols:
+        issues.append(f"missing symbols: {', '.join(missing_symbols)}")
+    missing_history = [str(item) for item in quality.get("missing_history", []) if item]
+    if missing_history:
+        issues.append(f"missing history: {', '.join(missing_history)}")
+    stale_fields = [str(item) for item in quality.get("stale_fields", []) if item]
+    if stale_fields:
+        issues.append(f"stale fields: {', '.join(stale_fields)}")
+    warnings = [str(item) for item in quality.get("warnings", []) if item]
+    if warnings:
+        issues.append(f"warnings: {' | '.join(warnings)}")
+    return issues
+
+
+def _assert_hmm_observation_complete(
+    *,
+    observation: ObservationRecord,
+    requested_history_days: int,
+) -> None:
+    min_history_points = max(22, min(int(requested_history_days or 0), 252))
+    quality = validate_observation(observation, min_history_points=min_history_points)
+    if bool(quality.get("is_complete", False)):
+        return
+    details = _format_quality_issues(quality)
+    message = (
+        "HMM agent requires complete IBKR regime inputs and will not continue with incomplete data."
+    )
+    if details:
+        message = f"{message} " + "; ".join(details)
+    raise RuntimeError(message)
+
+
+def _raise_for_untrained_hmm(*, hmm_record) -> None:
+    if hmm_record.is_trained:
+        return
+    problems: list[str] = [f"training_status={hmm_record.training_status}"]
+    warnings = [str(item) for item in hmm_record.warnings if item]
+    if warnings:
+        problems.append("warnings=" + " | ".join(warnings))
+    drivers = [str(item) for item in hmm_record.drivers if item]
+    if drivers:
+        problems.append("drivers=" + " | ".join(drivers))
+    raise RuntimeError(
+        "HMM agent failfast: advisory model is not in a usable trained state. "
+        + "; ".join(problems)
+    )
+
+
 def _maybe_remember_live_observation(
     *,
     state: WorkflowGraphState,
@@ -378,6 +430,8 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             refresh_mode = "disabled_for_engine"
             tool_history_days = requested_history_days
             if _uses_hmm_history_cache(state):
+                hmm_config = load_hmm_config(app_paths=app_paths)
+                requested_history_days = max(requested_history_days, int(hmm_config.train_window))
                 cached_history_payload = _load_regime_history_cache(state=state, services=services)
                 refresh_mode, tool_history_days = _history_refresh_mode(
                     cached_payload=cached_history_payload,
@@ -454,10 +508,17 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                         "history_window_days": requested_history_days,
                     },
                 )
-            observation = _merge_observations(
-                primary=live_observation,
-                fallback=_load_reference_observation(input_payload, app_paths=app_paths),
-            )
+            if _uses_hmm_history_cache(state):
+                observation = live_observation
+                _assert_hmm_observation_complete(
+                    observation=observation,
+                    requested_history_days=requested_history_days,
+                )
+            else:
+                observation = _merge_observations(
+                    primary=live_observation,
+                    fallback=_load_reference_observation(input_payload, app_paths=app_paths),
+                )
             if _uses_hmm_history_cache(state) and refresh_mode in {"full_fetch", "incremental_refresh"}:
                 _remember_regime_history_cache(
                     state=state,
@@ -529,23 +590,11 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 feature_record,
                 app_paths=app_paths,
             )
-            if hmm_record.is_trained:
-                belief_record = hmm_to_belief_record(
-                    hmm_record,
-                    previous_belief=_load_previous_belief(state),
-                )
-            else:
-                belief_record = update_belief_state(
-                    feature_record,
-                    previous_belief=_load_previous_belief(state),
-                )
-                belief_record.model_version = "heuristic_fallback_hmm_untrained_v1"
-                belief_record.confidence = 0.0
-                belief_record.drivers = [
-                    "HMM was not trained enough for this run.",
-                    *list(hmm_record.interpretation_notes[:2]),
-                    "Summary and posture are using heuristic fallback until the HMM has sufficient aligned history.",
-                ][:5]
+            _raise_for_untrained_hmm(hmm_record=hmm_record)
+            belief_record = hmm_to_belief_record(
+                hmm_record,
+                previous_belief=_load_previous_belief(state),
+            )
         else:
             belief_record = update_belief_state(
                 feature_record,
@@ -571,6 +620,8 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             feature_record,
             app_paths=app_paths,
         )
+        if _belief_engine(state) == "hmm_gaussian":
+            _raise_for_untrained_hmm(hmm_record=hmm_record)
         _maybe_remember_hmm_state(
             state=state,
             step=step,

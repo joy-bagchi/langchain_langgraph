@@ -725,6 +725,27 @@ class RuntimeLedger:
         )
         return results[: query.max_results]
 
+    def delete_memory_records(self, record_ids: list[str]) -> int:
+        normalized = [str(record_id) for record_id in record_ids if str(record_id).strip()]
+        if not normalized:
+            return 0
+        with self._connect() as connection:
+            cursor = connection.cursor()
+            if self.scheme == "sqlite":
+                placeholders = ", ".join("?" for _ in normalized)
+                cursor.execute(
+                    f"DELETE FROM memory_records WHERE record_id IN ({placeholders})",
+                    tuple(normalized),
+                )
+            else:
+                placeholders = ", ".join("%s" for _ in normalized)
+                cursor.execute(
+                    f"DELETE FROM memory_records WHERE record_id IN ({placeholders})",
+                    tuple(normalized),
+                )
+            deleted = int(cursor.rowcount or 0)
+        return deleted
+
     def _memory_row_to_record(self, row: Any) -> MemoryRecord:
         def _value(key: str, index: int) -> Any:
             if isinstance(row, sqlite3.Row):
@@ -790,6 +811,27 @@ class FilesystemMemoryStore:
 
     def recall(self, query: MemoryQuery) -> list[MemorySearchResult]:
         return self.ledger.recall_memory(query)
+
+    def delete(self, query: MemoryQuery) -> int:
+        matches = self.recall(query)
+        record_ids = [match.record.record_id for match in matches]
+        if not record_ids:
+            return 0
+        deleted = self.ledger.delete_memory_records(record_ids)
+        if deleted <= 0:
+            return 0
+        deleted_set = set(record_ids)
+        survivors = [record for record in self._load_records() if record.record_id not in deleted_set]
+        self._save_records(survivors)
+        self._append_event(
+            {
+                "event": "memory_deleted",
+                "record_ids": record_ids,
+                "namespace": query.namespace,
+                "timestamp": utc_now(),
+            }
+        )
+        return deleted
 
 
 class WorkflowRunStore:

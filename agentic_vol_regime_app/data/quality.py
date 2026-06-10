@@ -16,8 +16,8 @@ def validate_observation(
     *,
     min_history_points: int = 22,
 ) -> dict[str, Any]:
-    stale_fields: list[str] = []
-    warnings: list[str] = []
+    stale_fields: list[str] = [str(item) for item in dict(observation.quality).get("stale_fields", []) if item]
+    warnings: list[str] = [str(item) for item in dict(observation.quality).get("warnings", []) if item]
     missing_symbols = [symbol for symbol in REQUIRED_SYMBOLS if symbol not in observation.symbols]
     missing_history = [
         key
@@ -26,15 +26,22 @@ def validate_observation(
     ]
 
     for symbol, payload in observation.symbols.items():
-        if payload.get("last") in {None, ""}:
+        field_name = f"{symbol}.last"
+        if payload.get("last") in {None, ""} and field_name not in stale_fields:
             stale_fields.append(f"{symbol}.last")
 
     if missing_symbols:
-        warnings.append(f"missing required symbols: {', '.join(missing_symbols)}")
+        message = f"missing required symbols: {', '.join(missing_symbols)}"
+        if message not in warnings:
+            warnings.append(message)
     if missing_history:
-        warnings.append(f"insufficient history for: {', '.join(missing_history)}")
+        message = f"insufficient history for: {', '.join(missing_history)}"
+        if message not in warnings:
+            warnings.append(message)
     if stale_fields:
-        warnings.append(f"stale fields detected: {', '.join(stale_fields)}")
+        message = f"stale fields detected: {', '.join(stale_fields)}"
+        if message not in warnings:
+            warnings.append(message)
 
     is_complete = not missing_symbols and not missing_history and not stale_fields
     return {

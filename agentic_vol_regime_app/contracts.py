@@ -153,6 +153,7 @@ class HMMBeliefRecord:
     persistence_lift: dict[str, float] = field(default_factory=dict)
     state_feature_summaries: dict[str, dict[str, float]] = field(default_factory=dict)
     training_row_count: int = 0
+    configured_train_window: int = 0
     inference_feature_vector: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

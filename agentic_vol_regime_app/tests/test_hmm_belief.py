@@ -39,15 +39,25 @@ class FakeGaussianHMM:
         self.n_iter = n_iter
         self.random_state = random_state
         self.means_ = None
-        self.transmat_ = np.asarray(
-            [
-                [0.82, 0.12, 0.04, 0.02],
-                [0.10, 0.70, 0.15, 0.05],
-                [0.04, 0.18, 0.60, 0.18],
-                [0.02, 0.08, 0.20, 0.70],
-            ],
-            dtype=float,
-        )
+        if self.n_components == 3:
+            self.transmat_ = np.asarray(
+                [
+                    [0.84, 0.12, 0.04],
+                    [0.10, 0.72, 0.18],
+                    [0.04, 0.16, 0.80],
+                ],
+                dtype=float,
+            )
+        else:
+            self.transmat_ = np.asarray(
+                [
+                    [0.82, 0.12, 0.04, 0.02],
+                    [0.10, 0.70, 0.15, 0.05],
+                    [0.04, 0.18, 0.60, 0.18],
+                    [0.02, 0.08, 0.20, 0.70],
+                ],
+                dtype=float,
+            )
 
     def fit(self, values: np.ndarray) -> "FakeGaussianHMM":
         FakeGaussianHMM.fit_calls += 1
@@ -59,7 +69,10 @@ class FakeGaussianHMM:
     def predict_proba(self, values: np.ndarray) -> np.ndarray:
         rows = []
         for _ in range(values.shape[0]):
-            rows.append([0.18, 0.24, 0.33, 0.25])
+            if self.n_components == 3:
+                rows.append([0.26, 0.44, 0.30])
+            else:
+                rows.append([0.18, 0.24, 0.33, 0.25])
         return np.asarray(rows, dtype=float)
 
 
@@ -71,15 +84,25 @@ class DegenerateGaussianHMM(FakeGaussianHMM):
             n_iter=n_iter,
             random_state=random_state,
         )
-        self.transmat_ = np.asarray(
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            dtype=float,
-        )
+        if self.n_components == 3:
+            self.transmat_ = np.asarray(
+                [
+                    [1.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                dtype=float,
+            )
+        else:
+            self.transmat_ = np.asarray(
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                dtype=float,
+            )
 
 
 def _observation(days: int = 80, *, as_of: str = "2026-06-09T20:00:00Z") -> ObservationRecord:
@@ -317,14 +340,13 @@ def test_hmm_report_renders_section() -> None:
         is_trained=True,
         training_status="trained",
         state_probabilities={
-            "LOW_VOL_TREND": 0.4,
-            "MID_VOL_CHOP": 0.2,
-            "VOL_EXPANSION": 0.25,
-            "HIGH_VOL_STRESS": 0.15,
+            "STABLE": 0.4,
+            "EXPANDING_VOL": 0.35,
+            "HIGH_VOL": 0.25,
         },
-        top_state="LOW_VOL_TREND",
-        transition_matrix=[[0.8, 0.1, 0.07, 0.03], [0.1, 0.7, 0.15, 0.05], [0.05, 0.15, 0.6, 0.2], [0.02, 0.08, 0.2, 0.7]],
-        expected_duration_days={"LOW_VOL_TREND": 5.0, "MID_VOL_CHOP": 3.3, "VOL_EXPANSION": 2.5, "HIGH_VOL_STRESS": 3.3},
+        top_state="STABLE",
+        transition_matrix=[[0.8, 0.15, 0.05], [0.1, 0.7, 0.2], [0.03, 0.17, 0.8]],
+        expected_duration_days={"STABLE": 5.0, "EXPANDING_VOL": 3.3, "HIGH_VOL": 5.0},
         current_state_expected_duration_days=5.0,
         persistence_probabilities={"current_state_5d": 0.33, "current_state_10d": 0.18, "current_state_21d": 0.07},
         transition_probabilities={
@@ -338,22 +360,20 @@ def test_hmm_report_renders_section() -> None:
         confidence=0.68,
         warnings=[],
         drivers=[],
-        interpretation_notes=["Current features themselves fit LOW_VOL_TREND best."],
+        interpretation_notes=["Current features themselves fit STABLE best."],
         emission_state_probabilities={
-            "LOW_VOL_TREND": 0.41,
-            "MID_VOL_CHOP": 0.21,
-            "VOL_EXPANSION": 0.23,
-            "HIGH_VOL_STRESS": 0.15,
+            "STABLE": 0.43,
+            "EXPANDING_VOL": 0.31,
+            "HIGH_VOL": 0.26,
         },
-        emission_top_state="LOW_VOL_TREND",
+        emission_top_state="STABLE",
         persistence_lift={
-            "LOW_VOL_TREND": -0.01,
-            "MID_VOL_CHOP": -0.01,
-            "VOL_EXPANSION": 0.02,
-            "HIGH_VOL_STRESS": 0.0,
+            "STABLE": -0.03,
+            "EXPANDING_VOL": 0.04,
+            "HIGH_VOL": -0.01,
         },
         state_feature_summaries={
-            "LOW_VOL_TREND": {
+            "STABLE": {
                 "vix": 14.3,
                 "realized_vol_21d": 11.8,
                 "drawdown_21d": 0.01,
@@ -404,7 +424,7 @@ def test_hmm_report_renders_section() -> None:
         comparison_panel=[
             {"engine": "Heuristic", "top_regime": "Stable Low-Vol Trend", "confidence": 0.72, "recommended_posture": "NO_OVERWRITE"},
             {"engine": "Linear ML", "top_regime": "Stable Low-Vol Trend", "confidence": 0.66, "recommended_posture": "LIGHT_OVERWRITE"},
-            {"engine": "HMM", "top_regime": "LOW_VOL_TREND", "confidence": 0.68, "recommended_posture": "NO_OVERWRITE"},
+            {"engine": "HMM", "top_regime": "STABLE", "confidence": 0.68, "recommended_posture": "NO_OVERWRITE"},
             {"engine": "Ensemble (disabled)", "top_regime": "Disabled", "confidence": 0.0, "recommended_posture": "Disabled"},
         ],
     )
@@ -425,8 +445,8 @@ def test_hmm_to_belief_record_maps_four_states_into_global_beliefs() -> None:
         as_of="2026-06-09T20:00:00Z",
         is_trained=True,
         training_status="trained",
-        state_probabilities={"LOW_VOL_TREND": 0.4, "MID_VOL_CHOP": 0.2, "VOL_EXPANSION": 0.3, "HIGH_VOL_STRESS": 0.1},
-        top_state="VOL_EXPANSION",
+        state_probabilities={"STABLE": 0.4, "EXPANDING_VOL": 0.35, "HIGH_VOL": 0.25},
+        top_state="EXPANDING_VOL",
         transition_matrix=[],
         expected_duration_days={},
         current_state_expected_duration_days=0.0,
@@ -436,13 +456,13 @@ def test_hmm_to_belief_record_maps_four_states_into_global_beliefs() -> None:
         warnings=[],
         drivers=[],
         interpretation_notes=[],
-        emission_state_probabilities={"LOW_VOL_TREND": 0.35, "MID_VOL_CHOP": 0.2, "VOL_EXPANSION": 0.35, "HIGH_VOL_STRESS": 0.1},
-        emission_top_state="VOL_EXPANSION",
-        persistence_lift={"LOW_VOL_TREND": 0.05, "MID_VOL_CHOP": 0.0, "VOL_EXPANSION": -0.05, "HIGH_VOL_STRESS": 0.0},
+        emission_state_probabilities={"STABLE": 0.35, "EXPANDING_VOL": 0.4, "HIGH_VOL": 0.25},
+        emission_top_state="EXPANDING_VOL",
+        persistence_lift={"STABLE": 0.05, "EXPANDING_VOL": -0.05, "HIGH_VOL": 0.0},
         state_feature_summaries={},
     )
 
     belief = hmm_to_belief_record(hmm_record)
 
     assert abs(sum(belief.beliefs.values()) - 1.0) < 1e-6
-    assert belief.beliefs["VOL_EXPANSION_TRANSITION"] == 0.3
+    assert belief.beliefs["VOL_EXPANSION_TRANSITION"] == 0.35

@@ -10,11 +10,13 @@ from agentic_harness.agentic_os.platform import build_platform_services
 from agentic_harness.contracts import MemoryQuery, MemoryRecord
 from agentic_harness.stores import FilesystemMemoryStore
 from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, FeatureRecord, TransitionProbabilityRecord
+from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.app_runtime import (
     default_ml_agent_path,
     default_hmm_agent_path,
     load_latest_live_daily_observation,
     load_recent_hmm_state_history,
+    reset_hmm_persisted_state,
     resume_daily_regime_run,
     run_daily_regime_agent,
 )
@@ -208,22 +210,22 @@ class RecordingDailyIBKRPipe:
 class FakeGaussianHMM:
     def __init__(self, *, n_components: int, covariance_type: str, n_iter: int, random_state: int) -> None:
         self.means_ = None
+        self.n_components = n_components
         self.transmat_ = np.asarray(
             [
-                [0.86, 0.09, 0.03, 0.02],
-                [0.10, 0.72, 0.13, 0.05],
-                [0.04, 0.18, 0.62, 0.16],
-                [0.02, 0.09, 0.19, 0.70],
+                [0.86, 0.10, 0.04],
+                [0.08, 0.72, 0.20],
+                [0.03, 0.17, 0.80],
             ],
             dtype=float,
         )
 
     def fit(self, values: np.ndarray) -> "FakeGaussianHMM":
-        self.means_ = np.repeat(np.linspace(-1.0, 1.0, 4).reshape(-1, 1), values.shape[1], axis=1)
+        self.means_ = np.repeat(np.linspace(-1.0, 1.0, self.n_components).reshape(-1, 1), values.shape[1], axis=1)
         return self
 
     def predict_proba(self, values: np.ndarray) -> np.ndarray:
-        return np.asarray([[0.58, 0.22, 0.14, 0.06] for _ in range(values.shape[0])], dtype=float)
+        return np.asarray([[0.52, 0.31, 0.17] for _ in range(values.shape[0])], dtype=float)
 
 
 def _load_sample_input(name: str) -> dict:
@@ -291,6 +293,13 @@ def test_daily_regime_ml_agent_completes_with_linear_model(tmp_path: Path) -> No
 def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Path) -> None:
     input_payload = _load_sample_input("daily_snapshot_watch.json")
     input_payload["report_root"] = str(tmp_path / "reports")
+    input_payload["market_snapshot"]["history"] = {
+        "SPY_close": [560.0 + (index * 0.35) for index in range(900)],
+        "VIX": [14.5 + (index * 0.01) for index in range(900)],
+        "VVIX": [92.0 + (index * 0.03) for index in range(900)],
+        "VIX9D": [14.0 + (index * 0.009) for index in range(900)],
+        "VIX3M": [17.8 + (index * 0.008) for index in range(900)],
+    }
 
     original = hmm_belief.GaussianHMM
     hmm_belief.GaussianHMM = FakeGaussianHMM
@@ -480,6 +489,125 @@ def test_daily_regime_workflow_backfills_missing_live_vol_quotes(tmp_path: Path)
     assert observation["quality"]["reference_backfill_applied"] is True
 
 
+def test_daily_regime_hmm_agent_fails_fast_on_incomplete_live_ibkr_data(tmp_path: Path) -> None:
+    sample_input = _load_sample_input("daily_snapshot_watch.json")
+    storage_root = tmp_path / ".workflow_memory"
+    result = run_daily_regime_agent(
+        input_payload={
+            "data_provider": "ibkr",
+            "symbol": "SPY",
+            "ibkr": {
+                "host": "127.0.0.1",
+                "port": 4001,
+                "client_id": 73,
+                "market_data_type": 1,
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "index_exchange": "CBOE",
+                "expiry_count": 1,
+                "strike_count": 1,
+                "history_days": 30,
+            },
+            "reference_market_snapshot": dict(sample_input["market_snapshot"]),
+            "report_root": str(tmp_path / "reports"),
+        },
+        agent_path=default_hmm_agent_path(),
+        storage_root=storage_root,
+        ibkr_data_pipe=FakeDailyIBKRSentinelPipe(),
+    )
+
+    namespace = app_runtime._resolve_memory_namespace(default_hmm_agent_path())
+    memory_store = FilesystemMemoryStore(storage_root)
+    cache_matches = memory_store.recall(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=5,
+            memory_types=["regime_history_cache"],
+            structured_filters={"source_kind": "ibkr_regime_history_cache"},
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert "HMM agent requires complete IBKR regime inputs" in str(result["last_error"])
+    assert "missing history:" in str(result["last_error"])
+    assert "SPY_close" in str(result["last_error"])
+    assert "VIX" in str(result["last_error"])
+    assert "VVIX" in str(result["last_error"])
+    assert load_latest_live_daily_observation(
+        agent_path=default_hmm_agent_path(),
+        storage_root=storage_root,
+    ) is None
+    assert load_recent_hmm_state_history(
+        agent_path=default_hmm_agent_path(),
+        storage_root=storage_root,
+    ) == []
+    assert cache_matches == []
+
+
+def test_daily_regime_hmm_agent_fails_fast_when_hmm_is_unavailable(tmp_path: Path) -> None:
+    input_payload = _load_sample_input("daily_snapshot_watch.json")
+    input_payload["report_root"] = str(tmp_path / "reports")
+
+    original = hmm_belief.GaussianHMM
+    hmm_belief.GaussianHMM = None
+    try:
+        result = run_daily_regime_agent(
+            input_payload=input_payload,
+            agent_path=default_hmm_agent_path(),
+            storage_root=tmp_path / ".workflow_memory",
+        )
+    finally:
+        hmm_belief.GaussianHMM = original
+
+    assert result["status"] == "failed"
+    assert "HMM agent failfast" in str(result["last_error"])
+    assert "hmmlearn is not installed" in str(result["last_error"])
+
+
+def test_reset_hmm_persisted_state_clears_memory_and_model_artifact(tmp_path: Path) -> None:
+    storage_root = tmp_path / ".workflow_memory"
+    memory_store = FilesystemMemoryStore(storage_root)
+    namespace = app_runtime._resolve_memory_namespace(default_hmm_agent_path())
+    for memory_type, source_kind in (
+        ("hmm_state_snapshot", "hmm_gaussian"),
+        ("regime_history_cache", "ibkr_regime_history_cache"),
+        ("live_observation_snapshot", "live_ibkr"),
+    ):
+        memory_store.remember(
+            MemoryRecord.create(
+                namespace=namespace,
+                memory_type=memory_type,
+                content=f"test {memory_type}",
+                source_run_id="run",
+                source_step_id="step",
+                metadata={"source_kind": source_kind},
+                structured_payload={"source_kind": source_kind},
+            )
+        )
+
+    app_root = tmp_path / "app_root"
+    model_path = app_root / "models" / "hmm" / "daily_regime_hmm_model.pkl"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"fake-model")
+
+    result = reset_hmm_persisted_state(
+        agent_path=default_hmm_agent_path(),
+        storage_root=storage_root,
+        app_paths=AppPaths(root=app_root),
+    )
+
+    assert result["deleted_memory_records"]["hmm_state_snapshot"] == 1
+    assert result["deleted_memory_records"]["regime_history_cache"] == 1
+    assert result["deleted_memory_records"]["live_observation_snapshot"] == 1
+    assert result["deleted_model_artifact"] is True
+    assert model_path.exists() is False
+    assert memory_store.recall(
+        MemoryQuery(namespace=namespace, text="", max_results=10_000)
+    ) == []
+
+
 def test_daily_regime_workflow_reuses_cached_ibkr_history_within_24_hours(tmp_path: Path) -> None:
     pipe = RecordingDailyIBKRPipe()
     input_payload = {
@@ -496,29 +624,34 @@ def test_daily_regime_workflow_reuses_cached_ibkr_history_within_24_hours(tmp_pa
             "index_exchange": "CBOE",
             "expiry_count": 1,
             "strike_count": 1,
-            "history_days": 30,
+            "history_days": 756,
         },
         "report_root": str(tmp_path / "reports"),
     }
 
     storage_root = tmp_path / ".workflow_memory"
-    first = _run_and_complete_daily_agent(
-        input_payload=input_payload,
-        storage_root=storage_root,
-        ibkr_data_pipe=pipe,
-        agent_path=default_hmm_agent_path(),
-    )
-    second = _run_and_complete_daily_agent(
-        input_payload=input_payload,
-        storage_root=storage_root,
-        ibkr_data_pipe=pipe,
-        agent_path=default_hmm_agent_path(),
-    )
+    original = hmm_belief.GaussianHMM
+    hmm_belief.GaussianHMM = FakeGaussianHMM
+    try:
+        first = _run_and_complete_daily_agent(
+            input_payload=input_payload,
+            storage_root=storage_root,
+            ibkr_data_pipe=pipe,
+            agent_path=default_hmm_agent_path(),
+        )
+        second = _run_and_complete_daily_agent(
+            input_payload=input_payload,
+            storage_root=storage_root,
+            ibkr_data_pipe=pipe,
+            agent_path=default_hmm_agent_path(),
+        )
+    finally:
+        hmm_belief.GaussianHMM = original
 
     assert first["status"] == "completed"
     assert second["status"] == "completed"
-    assert pipe.requests == [30, 0]
-    assert len(second["named_outputs"]["observation"]["history"]["SPY_close"]) == 30
+    assert pipe.requests == [756, 0]
+    assert len(second["named_outputs"]["observation"]["history"]["SPY_close"]) == 756
     assert second["named_outputs"]["observation"]["provider_metadata"]["history_cache_mode"] == "cache_reuse"
     assert second["named_outputs"]["observation"]["provider_metadata"]["history_requested_from_ibkr"] == 0
 
@@ -550,42 +683,47 @@ def test_daily_regime_workflow_refreshes_cached_ibkr_history_after_24_hours(tmp_
                 "source_kind": "ibkr_regime_history_cache",
                 "observation_as_of": old_as_of,
                 "last_history_refresh_at": old_as_of,
-                "history_days": 30,
+                "history_days": 756,
                 "history_refresh_mode": "full_fetch",
                 "history": {
-                    "SPY_close": [576.0 + (index * 0.9) for index in range(30)],
-                    "VIX": [16.1 + (index * 0.05) for index in range(30)],
-                    "VVIX": [91.0 + (index * 0.18) for index in range(30)],
-                    "VIX9D": [15.7 + (index * 0.04) for index in range(30)],
-                    "VIX3M": [19.7 + (index * 0.01) for index in range(30)],
+                    "SPY_close": [576.0 + (index * 0.9) for index in range(756)],
+                    "VIX": [16.1 + (index * 0.05) for index in range(756)],
+                    "VVIX": [91.0 + (index * 0.18) for index in range(756)],
+                    "VIX9D": [15.7 + (index * 0.04) for index in range(756)],
+                    "VIX3M": [19.7 + (index * 0.01) for index in range(756)],
                 },
             },
         )
     )
 
-    result = _run_and_complete_daily_agent(
-        input_payload={
-            "data_provider": "ibkr",
-            "symbol": "SPY",
-            "ibkr": {
-                "host": "127.0.0.1",
-                "port": 4001,
-                "client_id": 73,
-                "market_data_type": 1,
-                "exchange": "SMART",
-                "option_exchange": "SMART",
-                "currency": "USD",
-                "index_exchange": "CBOE",
-                "expiry_count": 1,
-                "strike_count": 1,
-                "history_days": 30,
+    original = hmm_belief.GaussianHMM
+    hmm_belief.GaussianHMM = FakeGaussianHMM
+    try:
+        result = _run_and_complete_daily_agent(
+            input_payload={
+                "data_provider": "ibkr",
+                "symbol": "SPY",
+                "ibkr": {
+                    "host": "127.0.0.1",
+                    "port": 4001,
+                    "client_id": 73,
+                    "market_data_type": 1,
+                    "exchange": "SMART",
+                    "option_exchange": "SMART",
+                    "currency": "USD",
+                    "index_exchange": "CBOE",
+                    "expiry_count": 1,
+                    "strike_count": 1,
+                    "history_days": 756,
+                },
+                "report_root": str(tmp_path / "reports"),
             },
-            "report_root": str(tmp_path / "reports"),
-        },
-        storage_root=storage_root,
-        ibkr_data_pipe=pipe,
-        agent_path=default_hmm_agent_path(),
-    )
+            storage_root=storage_root,
+            ibkr_data_pipe=pipe,
+            agent_path=default_hmm_agent_path(),
+        )
+    finally:
+        hmm_belief.GaussianHMM = original
 
     cache_matches = memory_store.recall(
         MemoryQuery(
@@ -599,12 +737,12 @@ def test_daily_regime_workflow_refreshes_cached_ibkr_history_after_24_hours(tmp_
 
     assert result["status"] == "completed"
     assert pipe.requests == [1]
-    assert len(result["named_outputs"]["observation"]["history"]["SPY_close"]) == 30
+    assert len(result["named_outputs"]["observation"]["history"]["SPY_close"]) == 756
     assert result["named_outputs"]["observation"]["provider_metadata"]["history_cache_mode"] == "incremental_refresh"
     assert result["named_outputs"]["observation"]["provider_metadata"]["history_requested_from_ibkr"] == 1
     assert cache_matches
     assert cache_matches[0].record.structured_payload["last_history_refresh_at"] == current_as_of
-    assert len(cache_matches[0].record.structured_payload["history"]["SPY_close"]) == 30
+    assert len(cache_matches[0].record.structured_payload["history"]["SPY_close"]) == 756
 
 
 def test_daily_regime_heuristic_agent_bypasses_hmm_history_cache(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-10T03:49:06.031426+00:00
+Date: 2026-06-10T05:09:17.389454+00:00
 
 ## Summary
 
@@ -14,12 +14,12 @@ Recommended posture: `MEDIUM_OVERWRITE`
 
 | Regime | Probability |
 |---|---:|
-| Stable Low-Vol Trend | 0.00 |
-| Mid-Vol Chop | 0.00 |
-| Vol Expansion Transition | 0.98 |
-| High-Vol Risk-Off | 0.02 |
-| Panic Convexity Stress | 0.00 |
-| Post-Panic Compression | 0.00 |
+| Stable Low-Vol Trend | 0.27 |
+| Mid-Vol Chop | 0.16 |
+| Vol Expansion Transition | 0.44 |
+| High-Vol Risk-Off | 0.06 |
+| Panic Convexity Stress | 0.03 |
+| Post-Panic Compression | 0.04 |
 
 ## Key Signals
 
@@ -65,7 +65,7 @@ Overwrite implementation:
 |---|---|---:|---|
 | Heuristic | VOL_EXPANSION_TRANSITION | 0.77 | MEDIUM_OVERWRITE |
 | Linear ML | MID_VOL_CHOP | 0.43 | MEDIUM_OVERWRITE |
-| HMM | VOL_EXPANSION | 0.89 | MEDIUM_OVERWRITE |
+| HMM | HIGH_VOL | 0.90 | AGGRESSIVE_OVERWRITE |
 | Ensemble (disabled) | Disabled | 0.00 | Disabled |
 
 
@@ -75,61 +75,57 @@ Training status: `trained`
 
 Trained and active.
 
-Top HMM state: `VOL_EXPANSION`
+Top HMM state: `HIGH_VOL`
 
-Current-state expected duration: `4.12` days
+Current-state expected duration: `4.49` days
 
 ### HMM State Probabilities
 
 | State | Probability |
 |---|---:|
-| LOW_VOL_TREND | 0.00 |
-| MID_VOL_CHOP | 0.00 |
-| VOL_EXPANSION | 0.98 |
-| HIGH_VOL_STRESS | 0.02 |
+| STABLE | 0.00 |
+| EXPANDING_VOL | 0.00 |
+| HIGH_VOL | 1.00 |
 
 ### Emission vs Persistence
 
-Emission-only top state: `VOL_EXPANSION`
+Emission-only top state: `HIGH_VOL`
 
 | State | Emission-Only Probability | Persistence Lift |
 |---|---:|---:|
-| LOW_VOL_TREND | 0.00 | 0.00 |
-| MID_VOL_CHOP | 0.00 | 0.00 |
-| VOL_EXPANSION | 0.86 | 0.12 |
-| HIGH_VOL_STRESS | 0.14 | -0.12 |
+| STABLE | 0.00 | 0.00 |
+| EXPANDING_VOL | 0.00 | 0.00 |
+| HIGH_VOL | 1.00 | -0.00 |
 
 ### State Summaries
 
 | State | Avg VIX | Avg RV21 | Avg Drawdown | Term Slope | Trend Persistence | VVIX/VIX |
 |---|---:|---:|---:|---:|---:|---:|
-| VOL_EXPANSION | 18.99 | 14.93 | 0.01 | 2.03 | 0.55 | 5.47 |
-| HIGH_VOL_STRESS | 24.91 | 14.27 | 0.04 | 0.26 | 0.50 | 4.87 |
-| LOW_VOL_TREND | 16.40 | 8.85 | 0.00 | 2.74 | 0.57 | 6.05 |
-| MID_VOL_CHOP | 16.00 | 11.27 | 0.00 | 3.26 | 0.64 | 5.87 |
+| HIGH_VOL | 23.96 | 14.28 | 0.03 | 0.47 | 0.50 | 5.00 |
+| STABLE | 15.97 | 10.19 | 0.00 | 3.16 | 0.62 | 5.96 |
+| EXPANDING_VOL | 18.37 | 14.89 | 0.01 | 2.31 | 0.58 | 5.50 |
 
 ### Interpretation Notes
 
-- Current features themselves fit `VOL_EXPANSION` best; emission-only and path-aware posteriors agree.
-- `VOL_EXPANSION` posterior is 0.98 vs emission-only 0.86; persistence lift is +0.12.
-- Mapped state summary: VIX 18.99, RV21 14.93, drawdown 0.01, slope 2.03.
-- Forward transition risk is elevated: 5d expansion/high-vol probability 0.55, high-vol stress probability 0.18.
+- Current features themselves fit `HIGH_VOL` best; emission-only and path-aware posteriors agree.
+- `HIGH_VOL` posterior is 1.00 vs emission-only 1.00; persistence lift is -0.00.
+- Mapped state summary: VIX 23.96, RV21 14.28, drawdown 0.03, slope 0.47.
+- Forward transition risk is elevated: 5d expansion/high-vol probability 0.82, high-vol stress probability 0.42.
 
 ### HMM Persistence
 
-- Current state persists 5d: `0.37`
-- Current state persists 10d: `0.28`
-- Current state persists 21d: `0.26`
-- VOL_EXPANSION or HIGH_VOL within 5d: `0.55`
-- VOL_EXPANSION or HIGH_VOL within 10d: `0.46`
-- VOL_EXPANSION or HIGH_VOL within 21d: `0.42`
+- Current state persists 5d: `0.43`
+- Current state persists 10d: `0.30`
+- Current state persists 21d: `0.22`
+- VOL_EXPANSION or HIGH_VOL within 5d: `0.82`
+- VOL_EXPANSION or HIGH_VOL within 10d: `0.64`
+- VOL_EXPANSION or HIGH_VOL within 21d: `0.51`
 
 ### HMM Transition Matrix
 
-| 0.76 | 0.07 | 0.05 | 0.11 |
-| 0.18 | 0.82 | 0.00 | 0.00 |
-| 0.10 | 0.03 | 0.79 | 0.08 |
-| 0.04 | 0.01 | 0.05 | 0.89 |
+| 0.78 | 0.00 | 0.22 |
+| 0.02 | 0.92 | 0.06 |
+| 0.14 | 0.15 | 0.71 |
 
 Warnings:
 - None
@@ -137,9 +133,9 @@ Warnings:
 
 ## Model Confidence
 
-Confidence: 0.89
+Confidence: 0.77
 
-Uncertainty / entropy: 0.05
+Uncertainty / entropy: 0.78
 
 ## Critic Review
 

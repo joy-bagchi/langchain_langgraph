@@ -22,17 +22,15 @@ from agentic_vol_regime_app.contracts import BeliefRecord, FeatureRecord, HMMBel
 
 
 HMM_STATE_ORDER = (
-    "LOW_VOL_TREND",
-    "MID_VOL_CHOP",
-    "VOL_EXPANSION",
-    "HIGH_VOL_STRESS",
+    "STABLE",
+    "EXPANDING_VOL",
+    "HIGH_VOL",
 )
 
 HMM_TO_GLOBAL_REGIME = {
-    "LOW_VOL_TREND": "STABLE_LOW_VOL_TREND",
-    "MID_VOL_CHOP": "MID_VOL_CHOP",
-    "VOL_EXPANSION": "VOL_EXPANSION_TRANSITION",
-    "HIGH_VOL_STRESS": "HIGH_VOL_RISK_OFF",
+    "STABLE": "STABLE_LOW_VOL_TREND",
+    "EXPANDING_VOL": "VOL_EXPANSION_TRANSITION",
+    "HIGH_VOL": "HIGH_VOL_RISK_OFF",
 }
 
 DEFAULT_FEATURES = [
@@ -54,12 +52,12 @@ DEFAULT_FEATURES = [
 
 @dataclass(slots=True)
 class HMMConfig:
-    n_components: int = 4
+    n_components: int = 3
     covariance_type: str = "diag"
     n_iter: int = 500
     random_state: int = 17
     feature_list: list[str] = None  # type: ignore[assignment]
-    train_window: int = 252
+    train_window: int = 756
     retrain_cadence: int = 5
     min_retrain_interval_hours: int = 24
 
@@ -76,12 +74,12 @@ def load_hmm_config(*, app_paths: AppPaths) -> HMMConfig:
 
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     return HMMConfig(
-        n_components=int(payload.get("n_components", 4)),
+        n_components=int(payload.get("n_components", 3)),
         covariance_type=str(payload.get("covariance_type", "diag")),
         n_iter=int(payload.get("n_iter", 500)),
         random_state=int(payload.get("random_state", 17)),
         feature_list=list(payload.get("feature_list", list(DEFAULT_FEATURES))),
-        train_window=int(payload.get("train_window", 252)),
+        train_window=int(payload.get("train_window", 756)),
         retrain_cadence=int(payload.get("retrain_cadence", 5)),
         min_retrain_interval_hours=int(payload.get("min_retrain_interval_hours", 24)),
     )
@@ -276,6 +274,12 @@ def _should_retrain(
         return True
     previous_rows = int(artifact.get("training_row_count", 0))
     if previous_rows <= 0:
+        return True
+    if int(artifact.get("n_components", 0) or 0) != int(config.n_components):
+        return True
+    if list(artifact.get("feature_list", [])) != list(config.feature_list):
+        return True
+    if str(artifact.get("covariance_type", "")) != str(config.covariance_type):
         return True
     current_ts = _parse_timestamp(as_of)
     last_trained_ts = _parse_timestamp(str(artifact.get("last_trained_at", "")))
@@ -509,6 +513,7 @@ def _warning_record(
         persistence_lift={label: 0.0 for label in HMM_STATE_ORDER},
         state_feature_summaries={},
         training_row_count=0,
+        configured_train_window=0,
         inference_feature_vector={},
     )
 
@@ -584,6 +589,8 @@ def compute_hmm_belief_record(
             "state_mapping": state_mapping,
             "training_row_count": len(training_rows),
             "feature_list": list(config.feature_list),
+            "n_components": config.n_components,
+            "covariance_type": config.covariance_type,
             "model_version": "hmm_gaussian_v1",
             "repair_warnings": list(repair_warnings),
             "last_trained_at": feature_record.as_of,
@@ -641,8 +648,8 @@ def compute_hmm_belief_record(
 
     persistence_probabilities: dict[str, float] = {}
     transition_probabilities: dict[str, float] = {}
-    high_vol_index = label_to_index.get("HIGH_VOL_STRESS", current_raw_index)
-    expansion_index = label_to_index.get("VOL_EXPANSION", current_raw_index)
+    high_vol_index = label_to_index.get("HIGH_VOL", current_raw_index)
+    expansion_index = label_to_index.get("EXPANDING_VOL", current_raw_index)
     current_distribution = np.asarray([posterior], dtype=float)
     for horizon in (5, 10, 21):
         power = _matrix_power(transition_matrix, horizon)
@@ -695,6 +702,7 @@ def compute_hmm_belief_record(
         persistence_lift=persistence_lift,
         state_feature_summaries=state_feature_summaries,
         training_row_count=len(training_rows),
+        configured_train_window=int(config.train_window),
         inference_feature_vector={key: round(float(value), 6) for key, value in latest_row.items()},
     )
 
@@ -730,10 +738,10 @@ def hmm_to_belief_record(
             drivers=list(hmm_record.interpretation_notes[:3]),
         )
     beliefs = {
-        "STABLE_LOW_VOL_TREND": round(float(hmm_record.state_probabilities.get("LOW_VOL_TREND", 0.0)), 6),
-        "MID_VOL_CHOP": round(float(hmm_record.state_probabilities.get("MID_VOL_CHOP", 0.0)), 6),
-        "VOL_EXPANSION_TRANSITION": round(float(hmm_record.state_probabilities.get("VOL_EXPANSION", 0.0)), 6),
-        "HIGH_VOL_RISK_OFF": round(float(hmm_record.state_probabilities.get("HIGH_VOL_STRESS", 0.0)), 6),
+        "STABLE_LOW_VOL_TREND": round(float(hmm_record.state_probabilities.get("STABLE", 0.0)), 6),
+        "MID_VOL_CHOP": 0.0,
+        "VOL_EXPANSION_TRANSITION": round(float(hmm_record.state_probabilities.get("EXPANDING_VOL", 0.0)), 6),
+        "HIGH_VOL_RISK_OFF": round(float(hmm_record.state_probabilities.get("HIGH_VOL", 0.0)), 6),
         "PANIC_CONVEXITY_STRESS": 0.0,
         "POST_PANIC_COMPRESSION": 0.0,
     }
