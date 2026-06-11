@@ -43,6 +43,12 @@ from agentic_strategy_game_app.vc_pitch import (  # noqa: E402
     parse_vc_agent_response,
 )
 
+CARD_LABEL_COLOR = "#facc15"
+CARD_VALUE_COLOR = "#fef3c7"
+CARD_CAPTION_COLOR = "#fde68a"
+WIDGET_BORDER_COLOR = "#facc15"
+WIDGET_BORDER_FOCUS = "#fde68a"
+
 
 def _load_streamlit():
     try:
@@ -72,10 +78,10 @@ def _render_simulation_calendar_card(st, *, period_label: str, anchor_epoch: flo
             min-height: 5.75rem;
             text-align: right;
         ">
-            <div style="font-size:0.74rem; text-transform:uppercase; letter-spacing:0.05em; color:rgba(120,120,120,0.95);">Simulation Calendar</div>
-            <div style="font-size:1.15rem; font-weight:700; margin-top:0.35rem;">{current_date}</div>
-            <div style="font-size:0.92rem; margin-top:0.2rem; color:rgba(80,80,80,0.95);">{payload["quarter_label"]}</div>
-            <div style="font-size:0.76rem; margin-top:0.35rem; color:rgba(120,120,120,0.95);">1 day every 5 seconds until {payload["end_label"]}</div>
+            <div style="font-size:0.74rem; text-transform:uppercase; letter-spacing:0.05em; color:{CARD_LABEL_COLOR};">Simulation Calendar</div>
+            <div style="font-size:1.15rem; font-weight:700; margin-top:0.35rem; color:{CARD_VALUE_COLOR};">{current_date}</div>
+            <div style="font-size:0.92rem; margin-top:0.2rem; color:{CARD_VALUE_COLOR};">{payload["quarter_label"]}</div>
+            <div style="font-size:0.76rem; margin-top:0.35rem; color:{CARD_CAPTION_COLOR};">1 day every 5 seconds until {payload["end_label"]}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -84,7 +90,7 @@ def _render_simulation_calendar_card(st, *, period_label: str, anchor_epoch: flo
 
 def _render_summary_card(st, *, label: str, value: str, caption: str = "") -> None:
     caption_html = (
-        f'<div style="font-size:0.82rem; color:rgba(110,110,110,0.95); margin-top:0.45rem;">{caption}</div>'
+        f'<div style="font-size:0.82rem; color:{CARD_CAPTION_COLOR}; margin-top:0.45rem;">{caption}</div>'
         if caption
         else ""
     )
@@ -97,8 +103,8 @@ def _render_summary_card(st, *, label: str, value: str, caption: str = "") -> No
             min-height: 6rem;
             background: linear-gradient(180deg, rgba(250,250,250,0.03), rgba(250,250,250,0.01));
         ">
-            <div style="font-size:0.76rem; text-transform:uppercase; letter-spacing:0.05em; color:rgba(120,120,120,0.95); margin-bottom:0.35rem;">{label}</div>
-            <div style="font-size:1.05rem; font-weight:650; line-height:1.25;">{value}</div>
+            <div style="font-size:0.76rem; text-transform:uppercase; letter-spacing:0.05em; color:{CARD_LABEL_COLOR}; margin-bottom:0.35rem;">{label}</div>
+            <div style="font-size:1.05rem; font-weight:650; line-height:1.25; color:{CARD_VALUE_COLOR};">{value}</div>
             {caption_html}
         </div>
         """,
@@ -128,7 +134,7 @@ def _render_pressure_cards(st, summary: dict[str, float]) -> None:
                 min-height: 6rem;
                 background: rgba(255,255,255,0.02);
             ">
-                <div style="font-size:0.76rem; text-transform:uppercase; letter-spacing:0.05em; color:rgba(120,120,120,0.95); margin-bottom:0.45rem;">{label.replace('_', ' ')}</div>
+                <div style="font-size:0.76rem; text-transform:uppercase; letter-spacing:0.05em; color:{CARD_LABEL_COLOR}; margin-bottom:0.45rem;">{label.replace('_', ' ')}</div>
                 <div>
                     <span style="background:{bg}; color:{fg}; padding:0.28rem 0.58rem; border-radius:999px; font-weight:700;">{value:.3f}</span>
                 </div>
@@ -139,6 +145,47 @@ def _render_pressure_cards(st, summary: dict[str, float]) -> None:
     st.caption(
         "These are derived pressure indicators from the current market-force snapshot. "
         "They are not learned scores yet."
+    )
+
+
+def _inject_widget_theme(st) -> None:
+    st.markdown(
+        f"""
+        <style>
+        div[data-baseweb="select"] > div {{
+            border-color: {WIDGET_BORDER_COLOR} !important;
+        }}
+
+        div[data-baseweb="select"] > div:hover {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+        }}
+
+        div[data-baseweb="select"] > div:focus-within {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+            box-shadow: 0 0 0 1px {WIDGET_BORDER_FOCUS} !important;
+        }}
+
+        .stTextInput input,
+        .stTextArea textarea,
+        .stNumberInput input {{
+            border-color: {WIDGET_BORDER_COLOR} !important;
+        }}
+
+        .stTextInput input:hover,
+        .stTextArea textarea:hover,
+        .stNumberInput input:hover {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+        }}
+
+        .stTextInput input:focus,
+        .stTextArea textarea:focus,
+        .stNumberInput input:focus {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+            box-shadow: 0 0 0 1px {WIDGET_BORDER_FOCUS} !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -598,6 +645,7 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    _inject_widget_theme(st)
     title_col, calendar_col = st.columns([4.3, 1.7])
 
     scenario_name = "b2b_saas_ai_disruption"

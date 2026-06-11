@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-11T03:28:46.764473+00:00
+Date: 2026-06-11T12:14:34.021699+00:00
 
 ## Summary
 
@@ -25,11 +25,11 @@ Recommended posture: `MEDIUM_OVERWRITE`
 
 | Signal | Value | Interpretation |
 |---|---:|---|
-| VIX | 22.22 | Current implied-vol level |
+| VIX | 20.72 | Current implied-vol level |
 | VVIX | 107.85 | Vol-of-vol state |
-| VVIX/VIX | 4.85 | Convexity stress ratio |
-| VVIX/VIX z-score | -1.61 | Relative convexity stress |
-| VIX term structure (VIX3M) | flat | Front/back of curve |
+| VVIX/VIX | 5.21 | Convexity stress ratio |
+| VVIX/VIX z-score | -0.43 | Relative convexity stress |
+| VIX term structure (VIX3M) | contango | Front/back of curve |
 | Realized vol trend | 0.069 | Short-vs-medium realized vol |
 
 ## Predictive Alerts
@@ -55,7 +55,7 @@ Risk notes:
 - None
 
 Overwrite implementation:
-- Suggested call overwrite strike: `733.00`
+- Suggested call overwrite strike: `737.00`
 - Suggested DTE: `3`
 - Notes: HMM transition risk is elevated, so the overwrite duration was shortened.
 
@@ -64,8 +64,8 @@ Overwrite implementation:
 
 | Engine | Top Regime | Confidence | Recommended Posture |
 |---|---|---:|---|
-| Heuristic | VOL_EXPANSION_TRANSITION | 0.73 | MEDIUM_OVERWRITE |
-| Linear ML | VOL_EXPANSION_TRANSITION | 0.48 | MEDIUM_OVERWRITE |
+| Heuristic | VOL_EXPANSION_TRANSITION | 0.69 | MEDIUM_OVERWRITE |
+| Linear ML | VOL_EXPANSION_TRANSITION | 0.46 | MEDIUM_OVERWRITE |
 | HMM | EXPANDING_VOL | 0.86 | MEDIUM_OVERWRITE |
 | Ensemble (disabled) | Disabled | 0.00 | Disabled |
 

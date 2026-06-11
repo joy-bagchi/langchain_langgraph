@@ -49,6 +49,10 @@ APP_PATHS = AppPaths.default()
 DEFAULT_DAILY_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_watch.json"
 DEFAULT_DAILY_LIVE_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_ibkr_live.json"
 DEFAULT_IBKR_INPUT = APP_PATHS.sample_inputs_dir / "ibkr_spy_snapshot.json"
+CARD_LABEL_COLOR = "#facc15"
+CARD_VALUE_COLOR = "#fef3c7"
+WIDGET_BORDER_COLOR = "#facc15"
+WIDGET_BORDER_FOCUS = "#fde68a"
 
 
 def _pretty_json(payload: Any) -> str:
@@ -115,7 +119,7 @@ def _render_summary_card(st, *, label: str, value: str) -> None:
                 font-size: 0.78rem;
                 text-transform: uppercase;
                 letter-spacing: 0.04em;
-                color: rgba(120, 120, 120, 0.95);
+                color: {CARD_LABEL_COLOR};
                 margin-bottom: 0.45rem;
             ">{label}</div>
             <div style="
@@ -123,8 +127,50 @@ def _render_summary_card(st, *, label: str, value: str) -> None:
                 line-height: 1.25;
                 font-weight: 600;
                 word-break: break-word;
+                color: {CARD_VALUE_COLOR};
             ">{value}</div>
         </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _inject_widget_theme(st) -> None:
+    st.markdown(
+        f"""
+        <style>
+        div[data-baseweb="select"] > div {{
+            border-color: {WIDGET_BORDER_COLOR} !important;
+        }}
+
+        div[data-baseweb="select"] > div:hover {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+        }}
+
+        div[data-baseweb="select"] > div:focus-within {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+            box-shadow: 0 0 0 1px {WIDGET_BORDER_FOCUS} !important;
+        }}
+
+        .stTextInput input,
+        .stTextArea textarea,
+        .stNumberInput input {{
+            border-color: {WIDGET_BORDER_COLOR} !important;
+        }}
+
+        .stTextInput input:hover,
+        .stTextArea textarea:hover,
+        .stNumberInput input:hover {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+        }}
+
+        .stTextInput input:focus,
+        .stTextArea textarea:focus,
+        .stNumberInput input:focus {{
+            border-color: {WIDGET_BORDER_FOCUS} !important;
+            box-shadow: 0 0 0 1px {WIDGET_BORDER_FOCUS} !important;
+        }}
+        </style>
         """,
         unsafe_allow_html=True,
     )
@@ -166,15 +212,15 @@ def _render_color_summary_cards(st, *, regime: str, alert: str, action: str) -> 
         f"""
         <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem; margin-bottom: 1rem;">
             <div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.85rem; padding: 0.9rem 1rem; background: rgba(255,255,255,0.02); min-height: 6rem;">
-                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(120, 120, 120, 0.95); margin-bottom: 0.45rem;">Current Regime</div>
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: {CARD_LABEL_COLOR}; margin-bottom: 0.45rem;">Current Regime</div>
                 <div><span style="background:{regime_bg}; color:{regime_fg}; padding:0.28rem 0.58rem; border-radius:999px; font-weight:700;">{regime}</span></div>
             </div>
             <div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.85rem; padding: 0.9rem 1rem; background: rgba(255,255,255,0.02); min-height: 6rem;">
-                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(120, 120, 120, 0.95); margin-bottom: 0.45rem;">Transition Risk</div>
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: {CARD_LABEL_COLOR}; margin-bottom: 0.45rem;">Transition Risk</div>
                 <div><span style="background:{alert_bg}; color:{alert_fg}; padding:0.28rem 0.58rem; border-radius:999px; font-weight:700;">{alert}</span></div>
             </div>
             <div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.85rem; padding: 0.9rem 1rem; background: rgba(255,255,255,0.02); min-height: 6rem;">
-                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(120, 120, 120, 0.95); margin-bottom: 0.45rem;">Recommended Posture</div>
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: {CARD_LABEL_COLOR}; margin-bottom: 0.45rem;">Recommended Posture</div>
                 <div><span style="background:{action_bg}; color:{action_fg}; padding:0.28rem 0.58rem; border-radius:999px; font-weight:700;">{action}</span></div>
             </div>
         </div>
@@ -618,6 +664,7 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    _inject_widget_theme(st)
     st.title("Agentic Vol Regime App")
     st.caption("Decision-support frontend on top of agentic_harness.")
 
