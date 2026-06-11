@@ -1,5 +1,0 @@
-{"langsmith_project": "agentic-harness", "run_id": "13bbf24c-5a64-4986-9f00-2a1f861866d2", "timestamp": "2026-06-09T04:32:22.689221+00:00", "type": "run_started", "workflow_id": "vc_pitch_session"}
-{"langsmith_project": "agentic-harness", "match_count": 0, "step_id": "vc_review_pitch", "timestamp": "2026-06-09T04:32:22.759304+00:00", "type": "memory_retrieved"}
-{"compacted_history_present": false, "langsmith_project": "agentic-harness", "memory_hit_count": 0, "recent_history_count": 0, "step_id": "vc_review_pitch", "timestamp": "2026-06-09T04:32:22.823639+00:00", "type": "context_prepared"}
-{"attempt": 1, "cognitive_service": "default_cognitive_service", "langsmith_project": "agentic-harness", "memory_service": "database_memory_service", "next_step": null, "step_id": "vc_review_pitch", "timestamp": "2026-06-09T04:32:22.908448+00:00", "type": "step_executed"}
-{"checkpoint_index": 1, "current_step": null, "langsmith_project": "agentic-harness", "status": "completed", "timestamp": "2026-06-09T04:32:22.993583+00:00", "type": "checkpoint"}

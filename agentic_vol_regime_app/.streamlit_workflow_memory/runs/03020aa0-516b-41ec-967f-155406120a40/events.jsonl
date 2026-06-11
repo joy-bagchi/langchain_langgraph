@@ -1,5 +1,0 @@
-{"langsmith_project": "agentic_harness", "run_id": "03020aa0-516b-41ec-967f-155406120a40", "timestamp": "2026-06-09T03:05:32.363651+00:00", "type": "run_started", "workflow_id": "daily_vol_regime_report"}
-{"langsmith_project": "agentic_harness", "match_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-09T03:05:32.390781+00:00", "type": "memory_retrieved"}
-{"compacted_history_present": false, "langsmith_project": "agentic_harness", "memory_hit_count": 0, "recent_history_count": 0, "step_id": "ingest_market_data", "timestamp": "2026-06-09T03:05:32.416010+00:00", "type": "context_prepared"}
-{"attempt": 1, "error": "ibkr_data_pipeline failed: ", "langsmith_project": "agentic_harness", "step_id": "ingest_market_data", "timestamp": "2026-06-09T03:05:42.462284+00:00", "type": "step_error"}
-{"checkpoint_index": 1, "current_step": null, "langsmith_project": "agentic_harness", "status": "failed", "timestamp": "2026-06-09T03:05:42.519067+00:00", "type": "checkpoint"}

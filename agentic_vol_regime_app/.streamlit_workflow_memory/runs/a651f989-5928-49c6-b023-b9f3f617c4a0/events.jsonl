@@ -1,9 +1,0 @@
-{"run_id": "a651f989-5928-49c6-b023-b9f3f617c4a0", "timestamp": "2026-06-04T03:19:21.741660+00:00", "type": "run_started", "workflow_id": "ibkr_spy_snapshot"}
-{"match_count": 0, "step_id": "capture_symbol", "timestamp": "2026-06-04T03:19:21.796728+00:00", "type": "memory_retrieved"}
-{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 0, "step_id": "capture_symbol", "timestamp": "2026-06-04T03:19:21.855624+00:00", "type": "context_prepared"}
-{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "ephemeral_memory_service", "next_step": "fetch_ibkr_snapshot", "step_id": "capture_symbol", "timestamp": "2026-06-04T03:19:21.919141+00:00", "type": "step_executed"}
-{"checkpoint_index": 1, "current_step": "fetch_ibkr_snapshot", "status": "running", "timestamp": "2026-06-04T03:19:21.981007+00:00", "type": "checkpoint"}
-{"match_count": 0, "step_id": "fetch_ibkr_snapshot", "timestamp": "2026-06-04T03:19:22.045076+00:00", "type": "memory_retrieved"}
-{"compacted_history_present": false, "memory_hit_count": 0, "recent_history_count": 1, "step_id": "fetch_ibkr_snapshot", "timestamp": "2026-06-04T03:19:22.115964+00:00", "type": "context_prepared"}
-{"attempt": 1, "cognitive_service": "default_cognitive_service", "memory_service": "ephemeral_memory_service", "next_step": null, "step_id": "fetch_ibkr_snapshot", "timestamp": "2026-06-04T03:19:54.219950+00:00", "type": "step_executed"}
-{"checkpoint_index": 2, "current_step": null, "status": "completed", "timestamp": "2026-06-04T03:19:54.300430+00:00", "type": "checkpoint"}
