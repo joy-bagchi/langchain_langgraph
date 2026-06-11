@@ -26,6 +26,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     load_latest_live_daily_observation,
     load_recent_hmm_state_history,
     reset_hmm_persisted_state,
+    snapshot_hmm_baseline,
     resume_daily_regime_run,
     run_daily_regime_agent,
     run_ibkr_market_data_agent,
@@ -842,6 +843,26 @@ def main() -> None:
             effective_daily_payload = _parse_json_text(daily_json, fallback=default_daily_payload)
 
         if agent_choice == "HMM Agent":
+            with st.expander("HMM Snapshot", expanded=False):
+                st.caption(
+                    "Freeze the current trained HMM artifact and feature-set config before experimenting with new features."
+                )
+                snapshot_label = st.text_input(
+                    "Snapshot Label",
+                    value="pre_feature_experiments",
+                    key="hmm_snapshot_label",
+                )
+                if st.button("Create HMM Baseline Snapshot", key="create_hmm_baseline_snapshot", type="secondary"):
+                    try:
+                        snapshot_result = snapshot_hmm_baseline(snapshot_label=snapshot_label.strip() or None)
+                    except Exception as exc:
+                        st.error(str(exc))
+                    else:
+                        st.success(
+                            "Created HMM snapshot at "
+                            f"`{snapshot_result['snapshot_dir']}` "
+                            f"with {snapshot_result['feature_count']} features."
+                        )
             with st.expander("HMM Reset", expanded=False):
                 st.caption(
                     "Clear the HMM agent's cached history, saved HMM state history, latest live observation snapshot, and the persisted HMM model artifact."

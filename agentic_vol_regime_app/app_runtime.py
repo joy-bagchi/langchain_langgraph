@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import pickle
+import shutil
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from datetime import datetime, timezone
 
 from agentic_vol_regime_app._bootstrap import ensure_repo_imports
 
@@ -319,6 +322,68 @@ def reset_hmm_persisted_state(
         "deleted_memory_records": deleted_counts,
         "deleted_model_artifact": artifact_deleted,
         "model_artifact_path": str(model_path),
+    }
+
+
+def snapshot_hmm_baseline(
+    *,
+    snapshot_label: str | None = None,
+    app_paths: AppPaths | None = None,
+) -> dict[str, Any]:
+    """Copy the current HMM artifact and feature config into a versioned snapshot folder."""
+    resolved_paths = app_paths or AppPaths.default()
+    model_path = resolved_paths.models_dir / "hmm" / "daily_regime_hmm_model.pkl"
+    config_path = resolved_paths.features_dir / "hmm_model_v1.yaml"
+
+    if not model_path.exists():
+        raise FileNotFoundError(f"No trained HMM artifact exists yet at: {model_path}")
+    if not config_path.exists():
+        raise FileNotFoundError(f"No HMM feature config exists at: {config_path}")
+
+    with model_path.open("rb") as handle:
+        artifact = json.loads(json.dumps(pickle.load(handle), default=str))
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    normalized_label = "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in (snapshot_label or "baseline")
+    ).strip("_") or "baseline"
+
+    snapshot_dir = resolved_paths.models_dir / "hmm" / "snapshots" / f"{timestamp}_{normalized_label}"
+    snapshot_dir.mkdir(parents=True, exist_ok=False)
+
+    copied_model_path = snapshot_dir / "daily_regime_hmm_model.pkl"
+    copied_config_path = snapshot_dir / "hmm_model_v1.yaml"
+    manifest_path = snapshot_dir / "snapshot_manifest.json"
+
+    shutil.copy2(model_path, copied_model_path)
+    shutil.copy2(config_path, copied_config_path)
+
+    manifest = {
+        "snapshot_created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "snapshot_label": normalized_label,
+        "source_model_artifact_path": str(model_path),
+        "source_config_path": str(config_path),
+        "model_version": artifact.get("model_version"),
+        "trained_as_of": artifact.get("trained_as_of"),
+        "last_trained_at": artifact.get("last_trained_at"),
+        "training_row_count": artifact.get("training_row_count"),
+        "train_window": artifact.get("train_window"),
+        "n_components": artifact.get("n_components"),
+        "covariance_type": artifact.get("covariance_type"),
+        "feature_list": list(artifact.get("feature_list", [])),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    return {
+        "snapshot_dir": str(snapshot_dir),
+        "snapshot_label": normalized_label,
+        "model_artifact_path": str(copied_model_path),
+        "config_path": str(copied_config_path),
+        "manifest_path": str(manifest_path),
+        "feature_count": len(manifest["feature_list"]),
+        "training_row_count": manifest.get("training_row_count"),
+        "trained_as_of": manifest.get("trained_as_of"),
     }
 
 

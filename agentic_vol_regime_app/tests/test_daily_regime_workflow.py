@@ -17,6 +17,7 @@ from agentic_vol_regime_app.app_runtime import (
     load_latest_live_daily_observation,
     load_recent_hmm_state_history,
     reset_hmm_persisted_state,
+    snapshot_hmm_baseline,
     resume_daily_regime_run,
     run_daily_regime_agent,
 )
@@ -606,6 +607,56 @@ def test_reset_hmm_persisted_state_clears_memory_and_model_artifact(tmp_path: Pa
     assert memory_store.recall(
         MemoryQuery(namespace=namespace, text="", max_results=10_000)
     ) == []
+
+
+def test_snapshot_hmm_baseline_copies_artifact_and_config(tmp_path: Path) -> None:
+    app_root = tmp_path / "app"
+    (app_root / "configs" / "features").mkdir(parents=True, exist_ok=True)
+    (app_root / "models" / "hmm").mkdir(parents=True, exist_ok=True)
+    app_paths = AppPaths(root=app_root)
+
+    config_path = app_root / "configs" / "features" / "hmm_model_v1.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "n_components: 3",
+                "covariance_type: diag",
+                "feature_list:",
+                "  - vix",
+                "  - vvix_vix_ratio",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifact_path = app_root / "models" / "hmm" / "daily_regime_hmm_model.pkl"
+    import pickle
+
+    with artifact_path.open("wb") as handle:
+        pickle.dump(
+            {
+                "model_version": "hmm_gaussian_v1",
+                "trained_as_of": "2026-06-10T20:00:00Z",
+                "last_trained_at": "2026-06-10T20:00:00Z",
+                "training_row_count": 729,
+                "train_window": 756,
+                "n_components": 3,
+                "covariance_type": "diag",
+                "feature_list": ["vix", "vvix_vix_ratio"],
+            },
+            handle,
+        )
+
+    result = snapshot_hmm_baseline(snapshot_label="pre feature experiments", app_paths=app_paths)
+
+    snapshot_dir = Path(result["snapshot_dir"])
+    assert snapshot_dir.exists()
+    assert (snapshot_dir / "daily_regime_hmm_model.pkl").exists()
+    assert (snapshot_dir / "hmm_model_v1.yaml").exists()
+    manifest = json.loads((snapshot_dir / "snapshot_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["snapshot_label"] == "pre_feature_experiments"
+    assert manifest["training_row_count"] == 729
+    assert manifest["feature_list"] == ["vix", "vvix_vix_ratio"]
 
 
 def test_daily_regime_workflow_reuses_cached_ibkr_history_within_24_hours(tmp_path: Path) -> None:

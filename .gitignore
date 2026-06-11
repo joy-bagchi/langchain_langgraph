@@ -31,3 +31,6 @@ __pycache__/
 **/memory/memory_events.jsonl
 **/memory/memory_index.json
 **/runs/
+
+# Local HMM model artifacts
+agentic_vol_regime_app/models/hmm/
