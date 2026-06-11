@@ -9,6 +9,7 @@ from agentic_vol_regime_app.data.ibkr_client import (
     IBKRLiveClient,
     IBKROptionChainRequest,
     IBKRVolRegimeSnapshotRequest,
+    _historical_duration_str,
     _ensure_thread_event_loop,
 )
 from agentic_vol_regime_app.contracts import ObservationRecord
@@ -226,6 +227,13 @@ def test_request_daily_history_surfaces_symbol_level_errors() -> None:
     assert warnings
     assert any("VIX history request failed for TRADES" in warning for warning in warnings)
     assert any("historical data denied" in warning for warning in warnings)
+
+
+def test_historical_duration_str_uses_years_for_long_windows() -> None:
+    assert _historical_duration_str(30) == "35 D"
+    assert _historical_duration_str(365) == "370 D"
+    assert _historical_duration_str(756) == "3 Y"
+    assert _historical_duration_str(1512) == "6 Y"
 
 
 def test_validate_observation_preserves_provider_warnings() -> None:

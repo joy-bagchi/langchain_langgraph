@@ -82,6 +82,15 @@ def _ensure_thread_event_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
+def _historical_duration_str(history_days: int) -> str:
+    normalized_days = max(int(history_days), 0)
+    if normalized_days <= 365:
+        duration_days = max(normalized_days + 5, normalized_days)
+        return f"{duration_days} D"
+    duration_years = max(1, math.ceil(normalized_days / 252))
+    return f"{duration_years} Y"
+
+
 @dataclass(frozen=True, slots=True)
 class IBKRConnectionConfig:
     host: str = "127.0.0.1"
@@ -464,7 +473,7 @@ class IBKRLiveClient:
         history_days: int,
         history_label: str,
     ) -> tuple[list[float], list[str]]:
-        duration_days = max(history_days + 5, history_days)
+        duration_str = _historical_duration_str(history_days)
         sec_type = str(getattr(contract, "secType", "")).upper()
         what_to_show_candidates = (
             ("TRADES", "ADJUSTED_LAST")
@@ -477,7 +486,7 @@ class IBKRLiveClient:
                 bars = ib.reqHistoricalData(
                     contract,
                     endDateTime="",
-                    durationStr=f"{duration_days} D",
+                    durationStr=duration_str,
                     barSizeSetting="1 day",
                     whatToShow=what_to_show,
                     useRTH=False,
@@ -485,7 +494,7 @@ class IBKRLiveClient:
                 )
             except Exception as exc:
                 diagnostics.append(
-                    f"{history_label} history request failed for {what_to_show}: {exc}"
+                    f"{history_label} history request failed for {what_to_show} with duration {duration_str}: {exc}"
                 )
                 continue
             closes = [
@@ -496,7 +505,7 @@ class IBKRLiveClient:
             if closes:
                 return closes[-history_days:], []
             diagnostics.append(
-                f"{history_label} history request returned no usable bars for {what_to_show}."
+                f"{history_label} history request returned no usable bars for {what_to_show} with duration {duration_str}."
             )
         return [], diagnostics
 

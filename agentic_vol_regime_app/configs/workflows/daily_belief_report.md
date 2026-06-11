@@ -21,7 +21,7 @@ memory:
   enabled: false
 guardrails:
   post:
-    max_output_chars: 50000
+    max_output_chars: 250000
 ```
 
 ## Step: validate_data_quality
