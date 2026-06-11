@@ -641,10 +641,9 @@ def main() -> None:
         st.subheader("Daily Volatility Regime Workflow")
         default_daily_payload = load_json(DEFAULT_DAILY_INPUT)
         default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
-        agent_choice = st.radio(
+        agent_choice = st.selectbox(
             "Regime Engine",
             options=["Heuristic Agent", "ML Agent", "HMM Agent"],
-            horizontal=True,
             help="Both agents use the same workflow and report surface. The ML agent swaps only the belief-state engine.",
         )
         selected_daily_agent_path = (

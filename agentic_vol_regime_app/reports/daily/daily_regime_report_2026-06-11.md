@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-11T03:04:21.196450+00:00
+Date: 2026-06-11T03:28:46.764473+00:00
 
 ## Summary
 
@@ -55,7 +55,7 @@ Risk notes:
 - None
 
 Overwrite implementation:
-- Suggested call overwrite strike: `734.00`
+- Suggested call overwrite strike: `733.00`
 - Suggested DTE: `3`
 - Notes: HMM transition risk is elevated, so the overwrite duration was shortened.
 
