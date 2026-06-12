@@ -2,6 +2,9 @@
 
 Date: 2026-06-09T12:50:42.580337+00:00
 
+Report model: `HeuristicBeliefModel`
+Report model version: `belief_model_v1`
+
 ## Summary
 
 Current regime belief favors: `Stable Low-Vol Trend`

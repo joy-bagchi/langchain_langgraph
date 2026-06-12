@@ -17,6 +17,11 @@ from agentic_vol_regime_app.contracts import (
     TransitionProbabilityRecord,
 )
 import agentic_vol_regime_app.pomdp.hmm_belief as hmm_belief
+from agentic_vol_regime_app.features.sector_geometry import (
+    SECTOR_ETF_UNIVERSE,
+    build_sector_return_matrix,
+    compute_sector_geometry_metrics,
+)
 from agentic_vol_regime_app.pomdp.hmm_belief import (
     HMMConfig,
     _build_historical_feature_rows,
@@ -111,6 +116,10 @@ def _observation(days: int = 80, *, as_of: str = "2026-06-09T20:00:00Z") -> Obse
     vvix = [88.0 + (index * 0.18) + abs(math.cos(index / 6.0)) for index in range(days)]
     vix9d = [13.2 + (index * 0.07) + abs(math.sin(index / 7.0)) for index in range(days)]
     vix3m = [16.4 + (index * 0.05) + abs(math.cos(index / 8.0)) for index in range(days)]
+    sector_history = {
+        f"{symbol}_close": [80.0 + (idx * 0.15) + math.sin((idx / 6.0) + position) for idx in range(days)]
+        for position, symbol in enumerate(SECTOR_ETF_UNIVERSE)
+    }
     return ObservationRecord(
         schema_version="observation.v1",
         as_of=as_of,
@@ -128,6 +137,7 @@ def _observation(days: int = 80, *, as_of: str = "2026-06-09T20:00:00Z") -> Obse
             "VVIX": vvix,
             "VIX9D": vix9d,
             "VIX3M": vix3m,
+            **sector_history,
         },
         quality={"is_complete": True, "warnings": [], "stale_fields": []},
         provider_metadata={},
@@ -298,6 +308,48 @@ def test_hmm_does_not_retrain_within_24_hours(monkeypatch, tmp_path: Path) -> No
     assert FakeGaussianHMM.fit_calls == 1
 
 
+def test_sector_geometry_metrics_return_expected_ranges() -> None:
+    history = _observation(days=80).history
+    metrics, warnings = compute_sector_geometry_metrics(history, lookback_days=21)
+
+    assert warnings == []
+    assert -1.0 <= metrics["avg_pairwise_corr_21d"] <= 1.0
+    assert 0.0 <= metrics["first_eigenvalue_share_21d"] <= 1.0
+    assert metrics["effective_rank_21d"] >= 1.0
+
+
+def test_sector_return_matrix_warns_when_symbols_are_missing() -> None:
+    history = _observation(days=40).history
+    for symbol in SECTOR_ETF_UNIVERSE[:2]:
+        history.pop(f"{symbol}_close", None)
+
+    matrix, warnings = build_sector_return_matrix(history, lookback_days=21)
+
+    assert matrix is None
+    assert warnings
+    assert "Missing sector history" in warnings[0]
+
+
+def test_hmm_v2_uses_sector_correlation_features(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hmm_belief, "GaussianHMM", FakeGaussianHMM)
+    observation = _observation(days=120)
+    feature_record = _feature_record(observation)
+    config = hmm_belief.load_hmm_config(app_paths=AppPaths(root=tmp_path), variant_id="v2")
+    record = compute_hmm_belief_record(
+        observation,
+        feature_record,
+        app_paths=AppPaths(root=tmp_path),
+        config=config,
+        variant_id="v2",
+    )
+
+    assert record.variant_id == "v2"
+    assert record.variant_label == "HMM v2 Core + Sector Corr"
+    assert "avg_pairwise_corr_21d" in record.inference_feature_vector
+    assert "first_eigenvalue_share_21d" in record.inference_feature_vector
+    assert "avg_pairwise_corr_21d" in record.sector_metrics
+
+
 def test_hmm_report_renders_section() -> None:
     feature_record = FeatureRecord(
         schema_version="features.v1",
@@ -427,10 +479,34 @@ def test_hmm_report_renders_section() -> None:
             {"engine": "HMM", "top_regime": "STABLE", "confidence": 0.68, "recommended_posture": "NO_OVERWRITE"},
             {"engine": "Ensemble (disabled)", "top_regime": "Disabled", "confidence": 0.0, "recommended_posture": "Disabled"},
         ],
+        hmm_variant_comparison=[
+            {
+                "model": "HMM v1 Core",
+                "top_state": "STABLE",
+                "confidence": 0.68,
+                "expected_duration_days": 5.0,
+                "high_vol_transition_prob_10d": 0.14,
+                "recommendation": "NO_OVERWRITE",
+                "sector_metrics": {},
+            },
+            {
+                "model": "HMM v2 Core + Sector Corr",
+                "top_state": "EXPANDING_VOL",
+                "confidence": 0.64,
+                "expected_duration_days": 4.0,
+                "high_vol_transition_prob_10d": 0.19,
+                "recommendation": "LIGHT_OVERWRITE",
+                "sector_metrics": {
+                    "avg_pairwise_corr_21d": 0.42,
+                    "first_eigenvalue_share_21d": 0.51,
+                },
+            },
+        ],
     )
 
     assert "HMM Regime Persistence" in markdown
     assert "Belief Reconciliation" in markdown
+    assert "Model Variant Comparison" in markdown
     assert "Current-state expected duration" in markdown
     assert "Emission vs Persistence" in markdown
     assert "State Summaries" in markdown

@@ -22,6 +22,7 @@ from agentic_harness.stores import FilesystemMemoryStore
 
 from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.executors import build_executor_registry
+from agentic_vol_regime_app.pomdp.hmm_belief import load_hmm_config
 
 
 def _trace_safe_payload(value: Any, *, max_string_chars: int = 1000, max_items: int = 10, depth: int = 0) -> Any:
@@ -72,6 +73,10 @@ def default_hmm_agent_path() -> Path:
     return AppPaths.default().agents_dir / "daily_regime_hmm_orchestrator.yaml"
 
 
+def default_hmm_v2_agent_path() -> Path:
+    return AppPaths.default().agents_dir / "daily_regime_hmm_v2_orchestrator.yaml"
+
+
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
 
@@ -80,6 +85,13 @@ def _resolve_memory_namespace(agent_path: str | Path | None = None) -> str:
     resolved_agent_path = Path(agent_path or default_agent_path()).resolve()
     agent_definition = YamlAgentDefinitionService().load(resolved_agent_path)
     return agent_definition.memory_namespace or f"{agent_definition.agent_id}_memory"
+
+
+def _resolve_hmm_variant_id(agent_path: str | Path | None = None) -> str:
+    resolved_agent_path = Path(agent_path or default_hmm_agent_path()).resolve()
+    agent_definition = YamlAgentDefinitionService().load(resolved_agent_path)
+    belief_engine = str(dict(agent_definition.metadata).get("belief_engine", "hmm_gaussian_v1")).strip().lower()
+    return "v2" if belief_engine == "hmm_gaussian_v2" else "v1"
 
 
 def _resolve_runtime_profile(profile_id: str) -> AgentRuntimeProfile:
@@ -311,7 +323,11 @@ def reset_hmm_persisted_state(
     )
 
     resolved_paths = app_paths or AppPaths.default()
-    model_path = resolved_paths.models_dir / "hmm" / "daily_regime_hmm_model.pkl"
+    hmm_config = load_hmm_config(
+        app_paths=resolved_paths,
+        variant_id=_resolve_hmm_variant_id(agent_path or default_hmm_agent_path()),
+    )
+    model_path = resolved_paths.models_dir / "hmm" / hmm_config.model_artifact_name
     artifact_deleted = False
     if model_path.exists():
         model_path.unlink()
@@ -328,12 +344,17 @@ def reset_hmm_persisted_state(
 def snapshot_hmm_baseline(
     *,
     snapshot_label: str | None = None,
+    agent_path: str | Path | None = None,
     app_paths: AppPaths | None = None,
 ) -> dict[str, Any]:
     """Copy the current HMM artifact and feature config into a versioned snapshot folder."""
     resolved_paths = app_paths or AppPaths.default()
-    model_path = resolved_paths.models_dir / "hmm" / "daily_regime_hmm_model.pkl"
-    config_path = resolved_paths.features_dir / "hmm_model_v1.yaml"
+    variant_id = _resolve_hmm_variant_id(agent_path or default_hmm_agent_path())
+    hmm_config = load_hmm_config(app_paths=resolved_paths, variant_id=variant_id)
+    model_path = resolved_paths.models_dir / "hmm" / hmm_config.model_artifact_name
+    config_path = resolved_paths.features_dir / (
+        "hmm_v1_core.yaml" if variant_id == "v1" else "hmm_v2_core_plus_sector_corr.yaml"
+    )
 
     if not model_path.exists():
         raise FileNotFoundError(f"No trained HMM artifact exists yet at: {model_path}")
@@ -352,8 +373,8 @@ def snapshot_hmm_baseline(
     snapshot_dir = resolved_paths.models_dir / "hmm" / "snapshots" / f"{timestamp}_{normalized_label}"
     snapshot_dir.mkdir(parents=True, exist_ok=False)
 
-    copied_model_path = snapshot_dir / "daily_regime_hmm_model.pkl"
-    copied_config_path = snapshot_dir / "hmm_model_v1.yaml"
+    copied_model_path = snapshot_dir / hmm_config.model_artifact_name
+    copied_config_path = snapshot_dir / config_path.name
     manifest_path = snapshot_dir / "snapshot_manifest.json"
 
     shutil.copy2(model_path, copied_model_path)

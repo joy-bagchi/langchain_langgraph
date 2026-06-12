@@ -21,6 +21,7 @@ _ensure_streamlit_imports()
 from agentic_vol_regime_app import (  # noqa: E402
     default_agent_path,
     default_hmm_agent_path,
+    default_hmm_v2_agent_path,
     default_ibkr_agent_path,
     default_ml_agent_path,
     load_latest_live_daily_observation,
@@ -690,8 +691,8 @@ def main() -> None:
         default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
         agent_choice = st.selectbox(
             "Regime Engine",
-            options=["Heuristic Agent", "ML Agent", "HMM Agent"],
-            help="Both agents use the same workflow and report surface. The ML agent swaps only the belief-state engine.",
+            options=["Heuristic Agent", "ML Agent", "HMMv1 Agent", "HMMv2 Agent"],
+            help="All agents use the same workflow surface. HMMv2 adds sector-correlation features on top of the HMMv1 core lens.",
         )
         selected_daily_agent_path = (
             default_agent_path()
@@ -699,6 +700,8 @@ def main() -> None:
             else default_ml_agent_path()
             if agent_choice == "ML Agent"
             else default_hmm_agent_path()
+            if agent_choice == "HMMv1 Agent"
+            else default_hmm_v2_agent_path()
         )
         mode = st.radio(
             "Mode",
@@ -713,7 +716,7 @@ def main() -> None:
         effective_daily_payload: dict[str, Any]
         if mode == "Live IBKR":
             ibkr_defaults = dict(default_live_payload.get("ibkr", {}))
-            default_history_days = 756 if agent_choice == "HMM Agent" else int(ibkr_defaults.get("history_days", 252))
+            default_history_days = 756 if agent_choice in {"HMMv1 Agent", "HMMv2 Agent"} else int(ibkr_defaults.get("history_days", 252))
             with st.expander("Advanced IBKR Settings", expanded=False):
                 live_col1, live_col2, live_col3 = st.columns(3)
                 live_host = live_col1.text_input(
@@ -803,7 +806,7 @@ def main() -> None:
                 "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
             }
             st.caption("Using default symbol set: SPY, VIX, VVIX, VIX9D, and VIX3M.")
-            if agent_choice == "HMM Agent":
+            if agent_choice in {"HMMv1 Agent", "HMMv2 Agent"}:
                 st.caption("HMM live runs default to a 756-day history window. Increase this to 1260 if you want a deeper regime-training window.")
         elif mode == "Scenario":
             latest_live_observation = load_latest_live_daily_observation(
@@ -888,7 +891,7 @@ def main() -> None:
             )
             effective_daily_payload = _parse_json_text(daily_json, fallback=default_daily_payload)
 
-        if agent_choice == "HMM Agent":
+        if agent_choice in {"HMMv1 Agent", "HMMv2 Agent"}:
             with st.expander("HMM Snapshot", expanded=False):
                 st.caption(
                     "Freeze the current trained HMM artifact and feature-set config before experimenting with new features."
@@ -900,7 +903,10 @@ def main() -> None:
                 )
                 if st.button("Create HMM Baseline Snapshot", key="create_hmm_baseline_snapshot", type="secondary"):
                     try:
-                        snapshot_result = snapshot_hmm_baseline(snapshot_label=snapshot_label.strip() or None)
+                        snapshot_result = snapshot_hmm_baseline(
+                            snapshot_label=snapshot_label.strip() or None,
+                            agent_path=selected_daily_agent_path,
+                        )
                     except Exception as exc:
                         st.error(str(exc))
                     else:

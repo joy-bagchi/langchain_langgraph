@@ -2,6 +2,9 @@
 
 Date: 2026-06-10T05:09:17.389454+00:00
 
+Report model: `HMMBeliefAgent`
+Report model version: `hmm_gaussian_v1`
+
 ## Summary
 
 Current regime belief favors: `Vol Expansion Transition`

@@ -155,6 +155,11 @@ class HMMBeliefRecord:
     training_row_count: int = 0
     configured_train_window: int = 0
     inference_feature_vector: dict[str, float] = field(default_factory=dict)
+    variant_id: str = "v1"
+    variant_label: str = "HMM v1 Core"
+    model_converged: bool = False
+    state_usage_counts: dict[str, int] = field(default_factory=dict)
+    sector_metrics: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return _asdict(self)

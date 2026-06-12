@@ -1,6 +1,9 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-05T13:51:12.823014+00:00
+Date: 2026-05-29T20:00:00Z
+
+Report model: `HeuristicBeliefModel`
+Report model version: `belief_model_v1`
 
 ## Summary
 
@@ -14,23 +17,23 @@ Recommended posture: `NO_OVERWRITE`
 
 | Regime | Probability |
 |---|---:|
-| Stable Low-Vol Trend | 0.72 |
-| Mid-Vol Chop | 0.07 |
-| Vol Expansion Transition | 0.08 |
-| High-Vol Risk-Off | 0.06 |
-| Panic Convexity Stress | 0.03 |
-| Post-Panic Compression | 0.04 |
+| Stable Low-Vol Trend | 0.82 |
+| Mid-Vol Chop | 0.03 |
+| Vol Expansion Transition | 0.09 |
+| High-Vol Risk-Off | 0.03 |
+| Panic Convexity Stress | 0.01 |
+| Post-Panic Compression | 0.02 |
 
 ## Key Signals
 
 | Signal | Value | Interpretation |
 |---|---:|---|
-| VIX | 16.45 | Current implied-vol level |
-| VVIX | 88.58 | Vol-of-vol state |
-| VVIX/VIX | 5.38 | Convexity stress ratio |
-| VVIX/VIX z-score | -0.36 | Relative convexity stress |
-| VIX term structure (VIX3M) | contango | Front/back of curve |
-| Realized vol trend | 0.012 | Short-vs-medium realized vol |
+| VIX | 18.40 | Current implied-vol level |
+| VVIX | 101.00 | Vol-of-vol state |
+| VVIX/VIX | 5.49 | Convexity stress ratio |
+| VVIX/VIX z-score | -1.63 | Relative convexity stress |
+| VIX term structure | contango | Front/back of curve |
+| Realized vol trend | -0.006 | Short-vs-medium realized vol |
 
 ## Predictive Alerts
 
@@ -39,6 +42,7 @@ Severity: `NONE`
 Headline: No elevated predictive volatility alert
 
 Drivers:
+- term structure flattening
 - IV over realized-vol spread
 
 ## Policy Recommendation
@@ -51,14 +55,11 @@ Rationale:
 Risk notes:
 - Tight overwrites may truncate upside more than they help.
 
-Overwrite implementation:
-- None
-
 ## Model Confidence
 
 Confidence: 1.00
 
-Uncertainty / entropy: 0.57
+Uncertainty / entropy: 0.40
 
 ## Critic Review
 

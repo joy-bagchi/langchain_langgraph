@@ -26,17 +26,21 @@ or promote memory into trusted priors automatically.
 
 ## HMM Agent
 
-The app now includes a third daily agent path backed by a Gaussian HMM-style
-belief engine:
+The app now includes HMM-backed daily agent paths:
 
-- `configs/agents/daily_regime_hmm_orchestrator.yaml`
+- `configs/agents/daily_regime_hmm_orchestrator.yaml` for `HMMv1`
+- `configs/agents/daily_regime_hmm_v2_orchestrator.yaml` for `HMMv2`
 
-The HMM engine is advisory-first:
+The HMM engines are advisory-first:
 
 - it infers hidden four-state volatility regimes
 - estimates state persistence and expected duration
 - computes 5d / 10d / 21d transition probabilities
 - feeds optional duration guidance into overwrite DTE selection
+
+`HMMv2` extends the `HMMv1` core features with sector-correlation signals
+(`avg_pairwise_corr_21d` and `first_eigenvalue_share_21d`) while keeping the
+original vol-market lens intact.
 
 The HMM dependency is optional. Install it when you want the trained HMM path:
 
@@ -118,6 +122,7 @@ The frontend currently supports:
 
 - running the deterministic daily belief workflow
 - selecting Heuristic, ML, or HMM daily regime agents
+- selecting HMMv1 vs HMMv2 from the same report surface
 - fetching a live IBKR snapshot through the `ibkr_market_data_agent`
 - resuming a review-gated daily run
 

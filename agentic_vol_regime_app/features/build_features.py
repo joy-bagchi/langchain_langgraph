@@ -7,6 +7,7 @@ from statistics import fmean
 from typing import Any
 
 from agentic_vol_regime_app.contracts import FeatureRecord, ObservationRecord
+from agentic_vol_regime_app.features.sector_geometry import compute_sector_geometry_metrics
 
 
 def _safe_mean(values: list[float]) -> float:
@@ -119,6 +120,10 @@ def compute_feature_record(
         back_term_value - vix_value
         for back_term_value, vix_value in zip(term_structure_history[-zscore_short:], vix_history[-zscore_short:])
     ]
+    sector_geometry_metrics, _ = compute_sector_geometry_metrics(
+        observation.history,
+        lookback_days=21,
+    )
 
     rv_5d = _annualized_realized_vol(spy_closes, rv_short)
     rv_21d = _annualized_realized_vol(spy_closes, rv_medium)
@@ -173,8 +178,23 @@ def compute_feature_record(
         "term_structure_state": term_structure_state,
         "trend_persistence_21d": track("trend_persistence_21d", trend_persistence_21d),
         "drawdown_21d": track("drawdown_21d", drawdown_21d),
+        "avg_pairwise_corr_21d": track(
+            "avg_pairwise_corr_21d",
+            sector_geometry_metrics.get("avg_pairwise_corr_21d"),
+        ),
+        "first_eigenvalue_share_21d": track(
+            "first_eigenvalue_share_21d",
+            sector_geometry_metrics.get("first_eigenvalue_share_21d"),
+        ),
+        "effective_rank_21d": track(
+            "effective_rank_21d",
+            sector_geometry_metrics.get("effective_rank_21d"),
+        ),
+        "log_det_corr_21d": track(
+            "log_det_corr_21d",
+            sector_geometry_metrics.get("log_det_corr_21d"),
+        ),
     }
-
     return FeatureRecord(
         schema_version="features.v1",
         as_of=observation.as_of,

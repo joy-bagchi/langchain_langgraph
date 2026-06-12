@@ -7,6 +7,7 @@ ensure_repo_imports()
 from .app_runtime import (
     default_agent_path,
     default_hmm_agent_path,
+    default_hmm_v2_agent_path,
     default_ibkr_agent_path,
     default_ml_agent_path,
     load_latest_live_daily_observation,
@@ -21,6 +22,7 @@ from .app_runtime import (
 __all__ = [
     "default_agent_path",
     "default_hmm_agent_path",
+    "default_hmm_v2_agent_path",
     "default_ibkr_agent_path",
     "default_ml_agent_path",
     "load_latest_live_daily_observation",

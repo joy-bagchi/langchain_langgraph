@@ -2,6 +2,9 @@
 
 Date: 2026-06-06T20:52:56.997298+00:00
 
+Report model: `HeuristicBeliefModel`
+Report model version: `belief_model_v1`
+
 ## Summary
 
 Current regime belief favors: `Vol Expansion Transition`

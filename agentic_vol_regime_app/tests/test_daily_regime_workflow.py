@@ -14,6 +14,7 @@ from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.app_runtime import (
     default_ml_agent_path,
     default_hmm_agent_path,
+    default_hmm_v2_agent_path,
     load_latest_live_daily_observation,
     load_recent_hmm_state_history,
     reset_hmm_persisted_state,
@@ -329,7 +330,7 @@ def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Pat
     assert "HMM Regime Persistence" in result["named_outputs"]["daily_report"]["markdown"]
     assert "Emission vs Persistence" in result["named_outputs"]["daily_report"]["markdown"]
     assert result["named_outputs"]["hmm_belief"]["interpretation_notes"]
-    assert result["named_outputs"]["daily_report"]["comparison_panel"][2]["engine"] == "HMM"
+    assert result["named_outputs"]["daily_report"]["comparison_panel"][2]["engine"] == "HMMV1"
     hmm_history = load_recent_hmm_state_history(
         agent_path=default_hmm_agent_path(),
         storage_root=tmp_path / ".workflow_memory",
@@ -339,6 +340,46 @@ def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Pat
         assert hmm_history[0]["top_state"] == result["named_outputs"]["hmm_belief"]["top_state"]
     else:
         assert hmm_history == []
+
+
+def test_daily_regime_hmm_v2_agent_completes_with_variant_comparison(tmp_path: Path) -> None:
+    input_payload = _load_sample_input("daily_snapshot_watch.json")
+    input_payload["report_root"] = str(tmp_path / "reports")
+    history = {
+        "SPY_close": [560.0 + (index * 0.35) for index in range(900)],
+        "VIX": [14.5 + (index * 0.01) for index in range(900)],
+        "VVIX": [92.0 + (index * 0.03) for index in range(900)],
+        "VIX9D": [14.0 + (index * 0.009) for index in range(900)],
+        "VIX3M": [17.8 + (index * 0.008) for index in range(900)],
+    }
+    for offset, symbol in enumerate(("XLK", "XLF", "XLE", "XLY", "XLP", "XLI", "XLB", "XLV", "XLU", "XLRE")):
+        history[f"{symbol}_close"] = [80.0 + (index * 0.12) + np.sin((index / 8.0) + offset) for index in range(900)]
+    input_payload["market_snapshot"]["history"] = history
+
+    original = hmm_belief.GaussianHMM
+    hmm_belief.GaussianHMM = FakeGaussianHMM
+    try:
+        result = run_daily_regime_agent(
+            input_payload=input_payload,
+            agent_path=default_hmm_v2_agent_path(),
+            storage_root=tmp_path / ".workflow_memory",
+        )
+        if result["status"] == "awaiting_review":
+            result = resume_daily_regime_run(
+                run_id=result["run_id"],
+                decision="approved",
+                notes="reviewed",
+                agent_path=default_hmm_v2_agent_path(),
+                storage_root=tmp_path / ".workflow_memory",
+            )
+    finally:
+        hmm_belief.GaussianHMM = original
+
+    assert result["status"] == "completed"
+    assert result["agent"]["agent_id"] == "daily_regime_hmm_v2_orchestrator"
+    assert result["named_outputs"]["hmm_belief"]["variant_id"] == "v2"
+    assert result["named_outputs"]["daily_report"]["hmm_variant_comparison"]
+    assert "Model Variant Comparison" in result["named_outputs"]["daily_report"]["markdown"]
 
 
 def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> None:
@@ -458,26 +499,27 @@ def test_daily_regime_ml_agent_supports_live_ibkr_input(tmp_path: Path) -> None:
 
 def test_daily_regime_workflow_backfills_missing_live_vol_quotes(tmp_path: Path) -> None:
     sample_input = _load_sample_input("daily_snapshot_watch.json")
-    result = run_daily_regime_agent(
-        input_payload={
-            "data_provider": "ibkr",
-            "symbol": "SPY",
-            "ibkr": {
-                "host": "127.0.0.1",
-                "port": 4001,
-                "client_id": 73,
-                "market_data_type": 1,
-                "exchange": "SMART",
-                "option_exchange": "SMART",
-                "currency": "USD",
-                "index_exchange": "CBOE",
-                "expiry_count": 1,
-                "strike_count": 1,
-                "history_days": 30,
-            },
-            "reference_market_snapshot": dict(sample_input["market_snapshot"]),
-            "report_root": str(tmp_path / "reports"),
+    input_payload = {
+        "data_provider": "ibkr",
+        "symbol": "SPY",
+        "ibkr": {
+            "host": "127.0.0.1",
+            "port": 4001,
+            "client_id": 73,
+            "market_data_type": 1,
+            "exchange": "SMART",
+            "option_exchange": "SMART",
+            "currency": "USD",
+            "index_exchange": "CBOE",
+            "expiry_count": 1,
+            "strike_count": 1,
+            "history_days": 30,
         },
+        "reference_market_snapshot": dict(sample_input["market_snapshot"]),
+        "report_root": str(tmp_path / "reports"),
+    }
+    result = _run_and_complete_daily_agent(
+        input_payload=input_payload,
         storage_root=tmp_path / ".workflow_memory",
         ibkr_data_pipe=FakeDailyIBKRSentinelPipe(),
     )
@@ -589,7 +631,7 @@ def test_reset_hmm_persisted_state_clears_memory_and_model_artifact(tmp_path: Pa
         )
 
     app_root = tmp_path / "app_root"
-    model_path = app_root / "models" / "hmm" / "daily_regime_hmm_model.pkl"
+    model_path = app_root / "models" / "hmm" / "daily_regime_hmm_v1_model.pkl"
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model_path.write_bytes(b"fake-model")
 
@@ -615,7 +657,7 @@ def test_snapshot_hmm_baseline_copies_artifact_and_config(tmp_path: Path) -> Non
     (app_root / "models" / "hmm").mkdir(parents=True, exist_ok=True)
     app_paths = AppPaths(root=app_root)
 
-    config_path = app_root / "configs" / "features" / "hmm_model_v1.yaml"
+    config_path = app_root / "configs" / "features" / "hmm_v1_core.yaml"
     config_path.write_text(
         "\n".join(
             [
@@ -629,7 +671,7 @@ def test_snapshot_hmm_baseline_copies_artifact_and_config(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    artifact_path = app_root / "models" / "hmm" / "daily_regime_hmm_model.pkl"
+    artifact_path = app_root / "models" / "hmm" / "daily_regime_hmm_v1_model.pkl"
     import pickle
 
     with artifact_path.open("wb") as handle:
@@ -651,8 +693,8 @@ def test_snapshot_hmm_baseline_copies_artifact_and_config(tmp_path: Path) -> Non
 
     snapshot_dir = Path(result["snapshot_dir"])
     assert snapshot_dir.exists()
-    assert (snapshot_dir / "daily_regime_hmm_model.pkl").exists()
-    assert (snapshot_dir / "hmm_model_v1.yaml").exists()
+    assert (snapshot_dir / "daily_regime_hmm_v1_model.pkl").exists()
+    assert (snapshot_dir / "hmm_v1_core.yaml").exists()
     manifest = json.loads((snapshot_dir / "snapshot_manifest.json").read_text(encoding="utf-8"))
     assert manifest["snapshot_label"] == "pre_feature_experiments"
     assert manifest["training_row_count"] == 729

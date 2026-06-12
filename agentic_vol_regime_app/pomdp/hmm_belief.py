@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 
 from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.contracts import BeliefRecord, FeatureRecord, HMMBeliefRecord, ObservationRecord
+from agentic_vol_regime_app.features.sector_geometry import compute_sector_geometry_metrics
 
 
 HMM_STATE_ORDER = (
@@ -49,6 +50,49 @@ DEFAULT_FEATURES = [
     "trend_persistence_21d",
 ]
 
+SECTOR_CORR_FEATURES = [
+    "avg_pairwise_corr_21d",
+    "first_eigenvalue_share_21d",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class HMMVariantSpec:
+    variant_id: str
+    model_version: str
+    config_name: str
+    artifact_name: str
+    label: str
+    feature_flags: dict[str, bool]
+
+
+HMM_VARIANTS: dict[str, HMMVariantSpec] = {
+    "v1": HMMVariantSpec(
+        variant_id="v1",
+        model_version="hmm_gaussian_v1",
+        config_name="hmm_v1_core.yaml",
+        artifact_name="daily_regime_hmm_v1_model.pkl",
+        label="HMM v1 Core",
+        feature_flags={
+            "enable_hmm_v2_sector_corr": False,
+            "enable_hmm_v3_sector_geometry": False,
+            "enable_sector_geometry_only_diagnostic": False,
+        },
+    ),
+    "v2": HMMVariantSpec(
+        variant_id="v2",
+        model_version="hmm_gaussian_v2",
+        config_name="hmm_v2_core_plus_sector_corr.yaml",
+        artifact_name="daily_regime_hmm_v2_model.pkl",
+        label="HMM v2 Core + Sector Corr",
+        feature_flags={
+            "enable_hmm_v2_sector_corr": True,
+            "enable_hmm_v3_sector_geometry": False,
+            "enable_sector_geometry_only_diagnostic": False,
+        },
+    ),
+}
+
 
 @dataclass(slots=True)
 class HMMConfig:
@@ -60,28 +104,61 @@ class HMMConfig:
     train_window: int = 756
     retrain_cadence: int = 5
     min_retrain_interval_hours: int = 24
+    variant_id: str = "v1"
+    variant_label: str = "HMM v1 Core"
+    model_version: str = "hmm_gaussian_v1"
+    model_artifact_name: str = "daily_regime_hmm_v1_model.pkl"
+    feature_flags: dict[str, bool] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.feature_list is None:
             self.feature_list = list(DEFAULT_FEATURES)
+        if self.feature_flags is None:
+            self.feature_flags = dict(HMM_VARIANTS[self.variant_id].feature_flags)
 
 
-def load_hmm_config(*, app_paths: AppPaths) -> HMMConfig:
-    config_path = app_paths.features_dir / "hmm_model_v1.yaml"
+def _resolve_variant_spec(variant_id: str | None) -> HMMVariantSpec:
+    normalized = str(variant_id or "v1").strip().lower()
+    return HMM_VARIANTS.get(normalized, HMM_VARIANTS["v1"])
+
+
+def load_hmm_config(*, app_paths: AppPaths, variant_id: str = "v1") -> HMMConfig:
+    spec = _resolve_variant_spec(variant_id)
+    config_path = app_paths.features_dir / spec.config_name
+    legacy_v1_path = app_paths.features_dir / "hmm_model_v1.yaml"
+    if not config_path.exists() and spec.variant_id == "v1" and legacy_v1_path.exists():
+        config_path = legacy_v1_path
     if not config_path.exists():
-        return HMMConfig()
+        return HMMConfig(
+            feature_list=list(DEFAULT_FEATURES) + (SECTOR_CORR_FEATURES if spec.variant_id == "v2" else []),
+            variant_id=spec.variant_id,
+            variant_label=spec.label,
+            model_version=spec.model_version,
+            model_artifact_name=spec.artifact_name,
+            feature_flags=dict(spec.feature_flags),
+        )
+
     import yaml
 
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    default_feature_list = list(DEFAULT_FEATURES) + (SECTOR_CORR_FEATURES if spec.variant_id == "v2" else [])
     return HMMConfig(
         n_components=int(payload.get("n_components", 3)),
         covariance_type=str(payload.get("covariance_type", "diag")),
         n_iter=int(payload.get("n_iter", 500)),
         random_state=int(payload.get("random_state", 17)),
-        feature_list=list(payload.get("feature_list", list(DEFAULT_FEATURES))),
+        feature_list=list(payload.get("feature_list", default_feature_list)),
         train_window=int(payload.get("train_window", 756)),
         retrain_cadence=int(payload.get("retrain_cadence", 5)),
         min_retrain_interval_hours=int(payload.get("min_retrain_interval_hours", 24)),
+        variant_id=str(payload.get("variant_id", spec.variant_id)),
+        variant_label=str(payload.get("variant_label", spec.label)),
+        model_version=str(payload.get("model_version", spec.model_version)),
+        model_artifact_name=str(payload.get("model_artifact_name", spec.artifact_name)),
+        feature_flags={
+            **dict(spec.feature_flags),
+            **dict(payload.get("feature_flags", {})),
+        },
     )
 
 
@@ -160,6 +237,22 @@ def _trend_persistence_at(closes: list[float], index: int, lookback: int) -> flo
     return positive_steps / total_steps
 
 
+def _build_sector_history_window(
+    observation: ObservationRecord,
+    *,
+    end_index: int,
+    window_length: int,
+) -> dict[str, list[float]]:
+    history: dict[str, list[float]] = {}
+    start_index = end_index - window_length + 1
+    for key, values in observation.history.items():
+        if key.endswith("_close") and key.startswith("XL"):
+            numeric = [float(item) for item in values if item is not None]
+            if len(numeric) > end_index:
+                history[key] = numeric[start_index : end_index + 1]
+    return history
+
+
 def _build_historical_feature_rows(
     observation: ObservationRecord,
     *,
@@ -184,6 +277,7 @@ def _build_historical_feature_rows(
     vix3m_history = vix3m_history[-min_length:]
 
     rows: list[dict[str, float]] = []
+    sector_warning_seen = False
     for index in range(min_length):
         if index < 22:
             continue
@@ -213,7 +307,7 @@ def _build_historical_feature_rows(
         trend_persistence = _trend_persistence_at(spy_closes, index, 21)
         term_slope = vix3m - vix
 
-        values = {
+        values: dict[str, float | None] = {
             "spy_return_1d": ((spy / prior_spy) - 1.0) if prior_spy and prior_spy > 0 else None,
             "realized_vol_5d": rv_5d,
             "realized_vol_21d": rv_21d,
@@ -228,9 +322,18 @@ def _build_historical_feature_rows(
             "drawdown_21d": drawdown,
             "trend_persistence_21d": trend_persistence,
         }
+        if config.feature_flags.get("enable_hmm_v2_sector_corr", False):
+            sector_history = _build_sector_history_window(observation, end_index=index, window_length=21)
+            sector_metrics, sector_warnings = compute_sector_geometry_metrics(sector_history, lookback_days=21)
+            if sector_warnings and not sector_warning_seen:
+                warnings.extend(sector_warnings)
+                sector_warning_seen = True
+            values["avg_pairwise_corr_21d"] = sector_metrics.get("avg_pairwise_corr_21d")
+            values["first_eigenvalue_share_21d"] = sector_metrics.get("first_eigenvalue_share_21d")
+
         if any(values.get(name) is None for name in config.feature_list):
             continue
-        rows.append({name: float(values[name]) for name in config.feature_list})
+        rows.append({name: float(values[name]) for name in config.feature_list if values.get(name) is not None})
     if len(rows) < 3:
         warnings.append("Insufficient fully populated feature rows for HMM training.")
     return rows, warnings
@@ -240,14 +343,14 @@ def _matrix_from_rows(rows: list[dict[str, float]], feature_list: list[str]) -> 
     return np.asarray([[row[name] for name in feature_list] for row in rows], dtype=float)
 
 
-def _model_artifact_path(*, app_paths: AppPaths) -> Path:
+def _model_artifact_path(*, app_paths: AppPaths, config: HMMConfig) -> Path:
     model_dir = app_paths.models_dir / "hmm"
     model_dir.mkdir(parents=True, exist_ok=True)
-    return model_dir / "daily_regime_hmm_model.pkl"
+    return model_dir / config.model_artifact_name
 
 
-def _load_artifact(*, app_paths: AppPaths) -> dict[str, Any] | None:
-    path = _model_artifact_path(app_paths=app_paths)
+def _load_artifact(*, app_paths: AppPaths, config: HMMConfig) -> dict[str, Any] | None:
+    path = _model_artifact_path(app_paths=app_paths, config=config)
     if not path.exists():
         return None
     try:
@@ -257,8 +360,8 @@ def _load_artifact(*, app_paths: AppPaths) -> dict[str, Any] | None:
         return None
 
 
-def _save_artifact(*, app_paths: AppPaths, artifact: dict[str, Any]) -> None:
-    path = _model_artifact_path(app_paths=app_paths)
+def _save_artifact(*, app_paths: AppPaths, config: HMMConfig, artifact: dict[str, Any]) -> None:
+    path = _model_artifact_path(app_paths=app_paths, config=config)
     with path.open("wb") as handle:
         pickle.dump(artifact, handle)
 
@@ -280,6 +383,8 @@ def _should_retrain(
     if list(artifact.get("feature_list", [])) != list(config.feature_list):
         return True
     if str(artifact.get("covariance_type", "")) != str(config.covariance_type):
+        return True
+    if str(artifact.get("model_version", "")) != str(config.model_version):
         return True
     current_ts = _parse_timestamp(as_of)
     last_trained_ts = _parse_timestamp(str(artifact.get("last_trained_at", "")))
@@ -304,13 +409,13 @@ def _rank_state_labels(means: np.ndarray, feature_list: list[str]) -> dict[int, 
             - (vector[index_by_name["trend_persistence_21d"]] * 10.0)
             - vector[index_by_name["term_structure_slope"]]
         )
+        if "first_eigenvalue_share_21d" in index_by_name:
+            risk_score += vector[index_by_name["first_eigenvalue_share_21d"]] * 15.0
+        if "avg_pairwise_corr_21d" in index_by_name:
+            risk_score += vector[index_by_name["avg_pairwise_corr_21d"]] * 8.0
         scored.append((raw_state, float(risk_score)))
     ranked = [item[0] for item in sorted(scored, key=lambda item: item[1])]
-    labels = {}
-    ordered_labels = list(HMM_STATE_ORDER)
-    for raw_state, label in zip(ranked, ordered_labels):
-        labels[raw_state] = label
-    return labels
+    return {raw_state: label for raw_state, label in zip(ranked, list(HMM_STATE_ORDER))}
 
 
 def _state_probabilities_from_raw(posterior: np.ndarray, mapping: dict[int, str]) -> dict[str, float]:
@@ -329,11 +434,7 @@ def _softmax(values: np.ndarray) -> np.ndarray:
     return exps / total
 
 
-def _emission_probabilities_from_raw(
-    model: Any,
-    scaled_vector: np.ndarray,
-    mapping: dict[int, str],
-) -> dict[str, float]:
+def _emission_probabilities_from_raw(model: Any, scaled_vector: np.ndarray, mapping: dict[int, str]) -> dict[str, float]:
     if not hasattr(model, "_compute_log_likelihood"):
         return {label: 0.0 for label in HMM_STATE_ORDER}
     try:
@@ -358,24 +459,24 @@ def _build_state_feature_summaries(
         "trend_persistence_21d",
         "vvix_vix_ratio",
         "vix_vix3m_ratio",
+        "avg_pairwise_corr_21d",
+        "first_eigenvalue_share_21d",
     ]
     summaries: dict[str, dict[str, float]] = {}
     for raw_state in range(means.shape[0]):
         label = mapping.get(raw_state, HMM_STATE_ORDER[min(raw_state, len(HMM_STATE_ORDER) - 1)])
         vector = means[raw_state]
-        row = {
+        summaries[label] = {
             name: round(float(vector[index_by_name[name]]), 6)
             for name in summary_features
             if name in index_by_name
         }
-        if "term_structure_slope" in row:
-            row["term_structure_state_hint"] = round(float(row["term_structure_slope"]), 6)
-        summaries[label] = row
     return summaries
 
 
 def _build_interpretation_notes(
     *,
+    config: HMMConfig,
     top_state: str,
     emission_top_state: str,
     state_probabilities: dict[str, float],
@@ -383,12 +484,11 @@ def _build_interpretation_notes(
     persistence_lift: dict[str, float],
     transition_probabilities: dict[str, float],
     state_feature_summaries: dict[str, dict[str, float]],
+    sector_metrics: dict[str, float],
 ) -> list[str]:
     notes: list[str] = []
     if top_state == emission_top_state:
-        notes.append(
-            f"Current features themselves fit `{top_state}` best; emission-only and path-aware posteriors agree."
-        )
+        notes.append(f"Current features themselves fit `{top_state}` best; emission-only and path-aware posteriors agree.")
     else:
         notes.append(
             f"Current features fit `{emission_top_state}` best, but transition persistence lifts the final HMM call to `{top_state}`."
@@ -397,9 +497,7 @@ def _build_interpretation_notes(
     top_lift = persistence_lift.get(top_state, 0.0)
     emission_prob = emission_state_probabilities.get(top_state, 0.0)
     posterior_prob = state_probabilities.get(top_state, 0.0)
-    notes.append(
-        f"`{top_state}` posterior is {posterior_prob:.2f} vs emission-only {emission_prob:.2f}; persistence lift is {top_lift:+.2f}."
-    )
+    notes.append(f"`{top_state}` posterior is {posterior_prob:.2f} vs emission-only {emission_prob:.2f}; persistence lift is {top_lift:+.2f}.")
 
     top_summary = state_feature_summaries.get(top_state, {})
     if top_summary:
@@ -421,6 +519,14 @@ def _build_interpretation_notes(
         notes.append(
             f"Forward transition risk is moderate: 5d expansion/high-vol probability {expansion_risk:.2f}, high-vol stress probability {stress_risk:.2f}."
         )
+
+    if config.feature_flags.get("enable_hmm_v2_sector_corr", False) and sector_metrics:
+        avg_corr = sector_metrics.get("avg_pairwise_corr_21d", 0.0)
+        first_share = sector_metrics.get("first_eigenvalue_share_21d", 0.0)
+        if avg_corr < 0.35 and first_share < 0.35:
+            notes.append("Sector correlations remain relatively independent; the market mode is not dominant.")
+        else:
+            notes.append("Sector co-movement is elevated; rising market-mode dominance raises vol-expansion risk.")
     return notes
 
 
@@ -454,22 +560,30 @@ def _repair_transition_matrix(matrix: np.ndarray) -> tuple[np.ndarray, list[str]
         if row_sum <= 1e-12:
             row = np.zeros_like(row)
             row[index] = 1.0
-            warnings.append(
-                f"HMM transition row {index} had no usable mass and was repaired to a self-loop."
-            )
+            warnings.append(f"HMM transition row {index} had no usable mass and was repaired to a self-loop.")
         else:
             row = row / row_sum
             if abs(row_sum - 1.0) > 1e-6:
-                warnings.append(
-                    f"HMM transition row {index} was renormalized from row sum {row_sum:.6f}."
-                )
+                warnings.append(f"HMM transition row {index} was renormalized from row sum {row_sum:.6f}.")
         repaired[index] = row
     return repaired, warnings
+
+
+def _compute_state_usage_counts(model: Any, scaled_train: np.ndarray, mapping: dict[int, str]) -> dict[str, int]:
+    if scaled_train.size == 0:
+        return {label: 0 for label in HMM_STATE_ORDER}
+    posterior = np.asarray(model.predict_proba(scaled_train), dtype=float)
+    raw_assignments = np.argmax(posterior, axis=1)
+    counts = {label: 0 for label in HMM_STATE_ORDER}
+    for raw_state in raw_assignments:
+        counts[mapping.get(int(raw_state), "STABLE")] += 1
+    return counts
 
 
 def _warning_record(
     *,
     as_of: str,
+    config: HMMConfig,
     warnings: list[str],
     drivers: list[str] | None = None,
     training_status: str = "not_trained_enough",
@@ -479,7 +593,7 @@ def _warning_record(
     return HMMBeliefRecord(
         schema_version="hmm_belief.v1",
         model_name="HMMBeliefAgent",
-        model_version="hmm_gaussian_v1",
+        model_version=config.model_version,
         as_of=as_of,
         is_trained=False,
         training_status=training_status,
@@ -504,9 +618,7 @@ def _warning_record(
         confidence=0.0,
         warnings=list(warnings),
         drivers=list(drivers or []),
-        interpretation_notes=[
-            str(warnings[0]) if warnings else "HMM explainability is unavailable because the advisory model did not run."
-        ],
+        interpretation_notes=[str(warnings[0]) if warnings else "HMM explainability is unavailable because the advisory model did not run."],
         state_label_mapping={str(index): label for index, label in enumerate(HMM_STATE_ORDER)},
         emission_state_probabilities={label: 0.0 for label in HMM_STATE_ORDER},
         emission_top_state="NOT_TRAINED_ENOUGH",
@@ -515,6 +627,11 @@ def _warning_record(
         training_row_count=0,
         configured_train_window=0,
         inference_feature_vector={},
+        variant_id=config.variant_id,
+        variant_label=config.variant_label,
+        model_converged=False,
+        state_usage_counts={label: 0 for label in HMM_STATE_ORDER},
+        sector_metrics={},
     )
 
 
@@ -524,26 +641,50 @@ def compute_hmm_belief_record(
     *,
     app_paths: AppPaths,
     config: HMMConfig | None = None,
+    variant_id: str = "v1",
 ) -> HMMBeliefRecord:
-    config = config or load_hmm_config(app_paths=app_paths)
+    config = config or load_hmm_config(app_paths=app_paths, variant_id=variant_id)
     if GaussianHMM is None:
         return _warning_record(
             as_of=feature_record.as_of,
+            config=config,
             warnings=["hmmlearn is not installed; HMM advisory output is unavailable."],
         )
 
     rows, warnings = _build_historical_feature_rows(observation, config=config)
     if not rows:
+        if config.variant_id != "v1":
+            fallback_record = compute_hmm_belief_record(
+                observation,
+                feature_record,
+                app_paths=app_paths,
+                config=load_hmm_config(app_paths=app_paths, variant_id="v1"),
+                variant_id="v1",
+            )
+            fallback_warnings = list(dict.fromkeys(list(warnings) + list(fallback_record.warnings) + ["Fell back to HMM v1 because HMM v2 sector data was incomplete."]))
+            fallback_record.warnings = fallback_warnings
+            fallback_record.drivers = list(fallback_record.drivers) + ["HMM v2 sector features were unavailable, so the app reverted to the HMM v1 baseline."]
+            return fallback_record
         return _warning_record(
             as_of=feature_record.as_of,
+            config=config,
             warnings=warnings or ["No HMM feature rows could be constructed from the available history."],
         )
 
     latest_row = rows[-1]
     training_rows = rows[:-1]
     if len(training_rows) < max(2, config.n_components):
+        if config.variant_id != "v1":
+            return compute_hmm_belief_record(
+                observation,
+                feature_record,
+                app_paths=app_paths,
+                config=load_hmm_config(app_paths=app_paths, variant_id="v1"),
+                variant_id="v1",
+            )
         return _warning_record(
             as_of=feature_record.as_of,
+            config=config,
             warnings=warnings + ["Insufficient pre-as-of rows to train the HMM without lookahead."],
             drivers=["The latest feature row was held out for inference, leaving too little history for training."],
         )
@@ -551,14 +692,9 @@ def compute_hmm_belief_record(
     training_rows = training_rows[-config.train_window :]
     feature_matrix = _matrix_from_rows(training_rows, config.feature_list)
     inference_matrix = _matrix_from_rows([latest_row], config.feature_list)
-    artifact = _load_artifact(app_paths=app_paths)
+    artifact = _load_artifact(app_paths=app_paths, config=config)
     repair_warnings: list[str] = []
-    if _should_retrain(
-        artifact,
-        config=config,
-        training_row_count=len(training_rows),
-        as_of=feature_record.as_of,
-    ):
+    if _should_retrain(artifact, config=config, training_row_count=len(training_rows), as_of=feature_record.as_of):
         scaler = StandardScaler()
         scaled_train = scaler.fit_transform(feature_matrix)
         model = GaussianHMM(
@@ -573,46 +709,46 @@ def compute_hmm_belief_record(
         if any("had no usable mass" in warning for warning in repair_warnings):
             return _warning_record(
                 as_of=feature_record.as_of,
-                warnings=warnings + repair_warnings + [
-                    "HMM fit was rejected because one or more latent states were effectively unused."
-                ],
-                drivers=[
-                    "The current HMM fit produced a degenerate transition matrix, so the app fell back instead of trusting a brittle posterior."
-                ],
+                config=config,
+                warnings=warnings + repair_warnings + ["HMM fit was rejected because one or more latent states were effectively unused."],
+                drivers=["The current HMM fit produced a degenerate transition matrix, so the app fell back instead of trusting a brittle posterior."],
                 training_status="degenerate_fit",
             )
         means = scaler.inverse_transform(model.means_)
         state_mapping = _rank_state_labels(np.asarray(means, dtype=float), config.feature_list)
+        state_usage_counts = _compute_state_usage_counts(model, scaled_train, state_mapping)
         artifact = {
             "scaler": scaler,
             "model": model,
             "state_mapping": state_mapping,
+            "state_usage_counts": state_usage_counts,
             "training_row_count": len(training_rows),
             "feature_list": list(config.feature_list),
             "n_components": config.n_components,
             "covariance_type": config.covariance_type,
-            "model_version": "hmm_gaussian_v1",
+            "model_version": config.model_version,
             "repair_warnings": list(repair_warnings),
             "last_trained_at": feature_record.as_of,
             "trained_as_of": feature_record.as_of,
             "train_window": config.train_window,
+            "variant_id": config.variant_id,
+            "variant_label": config.variant_label,
+            "model_converged": bool(getattr(getattr(model, "monitor_", None), "converged", True)),
         }
-        _save_artifact(app_paths=app_paths, artifact=artifact)
+        _save_artifact(app_paths=app_paths, config=config, artifact=artifact)
     else:
         scaler = artifact["scaler"]
         model = artifact["model"]
         state_mapping = dict(artifact["state_mapping"])
+        state_usage_counts = {str(key): int(value) for key, value in dict(artifact.get("state_usage_counts", {})).items()}
         repaired_transmat, repair_warnings = _repair_transition_matrix(np.asarray(model.transmat_, dtype=float))
         model.transmat_ = repaired_transmat
         if any("had no usable mass" in warning for warning in repair_warnings):
             return _warning_record(
                 as_of=feature_record.as_of,
-                warnings=list(artifact.get("repair_warnings", [])) + repair_warnings + [
-                    "Stored HMM artifact is degenerate and was not used for inference."
-                ],
-                drivers=[
-                    "The cached HMM artifact contains an unusable transition row, so the app fell back instead of trusting a brittle posterior."
-                ],
+                config=config,
+                warnings=list(artifact.get("repair_warnings", [])) + repair_warnings + ["Stored HMM artifact is degenerate and was not used for inference."],
+                drivers=["The cached HMM artifact contains an unusable transition row, so the app fell back instead of trusting a brittle posterior."],
                 training_status="degenerate_fit",
             )
         means = scaler.inverse_transform(model.means_)
@@ -626,10 +762,7 @@ def compute_hmm_belief_record(
         emission_state_probabilities = dict(state_probabilities)
     emission_top_state = max(emission_state_probabilities, key=emission_state_probabilities.get)
     persistence_lift = {
-        label: round(
-            float(state_probabilities.get(label, 0.0) - emission_state_probabilities.get(label, 0.0)),
-            6,
-        )
+        label: round(float(state_probabilities.get(label, 0.0) - emission_state_probabilities.get(label, 0.0)), 6)
         for label in HMM_STATE_ORDER
     }
     state_feature_summaries = _build_state_feature_summaries(np.asarray(means, dtype=float), config.feature_list, state_mapping)
@@ -637,9 +770,7 @@ def compute_hmm_belief_record(
     transition_matrix = np.asarray(model.transmat_, dtype=float)
     transition_rows = transition_matrix.tolist()
     expected_duration_days = {
-        state_mapping.get(index, HMM_STATE_ORDER[min(index, len(HMM_STATE_ORDER) - 1)]): _safe_expected_duration(
-            float(transition_matrix[index][index])
-        )
+        state_mapping.get(index, HMM_STATE_ORDER[min(index, len(HMM_STATE_ORDER) - 1)]): _safe_expected_duration(float(transition_matrix[index][index]))
         for index in range(transition_matrix.shape[0])
     }
     label_to_index = _state_order_indices(state_mapping)
@@ -656,19 +787,28 @@ def compute_hmm_belief_record(
         persistence_probabilities[f"current_state_{horizon}d"] = round(float(power[current_raw_index][current_raw_index]), 6)
         future_distribution = np.asarray(current_distribution @ power, dtype=float)[0]
         transition_probabilities[f"to_high_vol_stress_{horizon}d"] = round(float(future_distribution[high_vol_index]), 6)
-        transition_probabilities[f"to_vol_expansion_or_high_vol_{horizon}d"] = round(
-            float(future_distribution[expansion_index] + future_distribution[high_vol_index]),
-            6,
-        )
+        transition_probabilities[f"to_vol_expansion_or_high_vol_{horizon}d"] = round(float(future_distribution[expansion_index] + future_distribution[high_vol_index]), 6)
 
+    state_usage_share_warnings = []
+    total_usage = sum(int(value) for value in state_usage_counts.values()) or 1
+    for label, count in state_usage_counts.items():
+        if (count / total_usage) < 0.05:
+            state_usage_share_warnings.append(f"HMM state `{label}` used less than 5% of the training window.")
+
+    sector_metrics = {
+        key: round(float(value), 6)
+        for key, value in latest_row.items()
+        if key in {"avg_pairwise_corr_21d", "first_eigenvalue_share_21d", "effective_rank_21d", "log_det_corr_21d"}
+    }
     confidence = round(min(0.99, max(0.0, float(max(state_probabilities.values()) * 0.72 + 0.18))), 6)
     drivers = [
-        f"Top HMM state is {top_state} with posterior probability {state_probabilities[top_state]:.2f}.",
+        f"{config.variant_label} top state is {top_state} with posterior probability {state_probabilities[top_state]:.2f}.",
         f"Emission-only fit points to {emission_top_state} with probability {emission_state_probabilities[emission_top_state]:.2f}.",
         f"Expected duration for the current state is {current_state_expected_duration_days:.1f} days.",
         f"5d probability of entering vol expansion or high-vol stress is {transition_probabilities['to_vol_expansion_or_high_vol_5d']:.2f}.",
     ]
     interpretation_notes = _build_interpretation_notes(
+        config=config,
         top_state=top_state,
         emission_top_state=emission_top_state,
         state_probabilities=state_probabilities,
@@ -676,12 +816,13 @@ def compute_hmm_belief_record(
         persistence_lift=persistence_lift,
         transition_probabilities=transition_probabilities,
         state_feature_summaries=state_feature_summaries,
+        sector_metrics=sector_metrics,
     )
-    all_warnings = list(warnings) + list(repair_warnings)
+    all_warnings = list(warnings) + list(repair_warnings) + state_usage_share_warnings
     return HMMBeliefRecord(
         schema_version="hmm_belief.v1",
         model_name="HMMBeliefAgent",
-        model_version=str(artifact.get("model_version", "hmm_gaussian_v1")),
+        model_version=str(artifact.get("model_version", config.model_version)),
         as_of=feature_record.as_of,
         is_trained=True,
         training_status="trained",
@@ -704,6 +845,11 @@ def compute_hmm_belief_record(
         training_row_count=len(training_rows),
         configured_train_window=int(config.train_window),
         inference_feature_vector={key: round(float(value), 6) for key, value in latest_row.items()},
+        variant_id=config.variant_id,
+        variant_label=config.variant_label,
+        model_converged=bool(artifact.get("model_converged", True)),
+        state_usage_counts={str(key): int(value) for key, value in state_usage_counts.items()},
+        sector_metrics=sector_metrics,
     )
 
 
@@ -748,10 +894,7 @@ def hmm_to_belief_record(
     previous = previous_belief or {key: 0.0 for key in beliefs}
     total = sum(beliefs.values()) or 1.0
     beliefs = {key: round(value / total, 6) for key, value in beliefs.items()}
-    belief_delta = {
-        key: round(beliefs[key] - float(previous.get(key, 0.0)), 6)
-        for key in beliefs
-    }
+    belief_delta = {key: round(beliefs[key] - float(previous.get(key, 0.0)), 6) for key in beliefs}
     entropy = -sum(prob * math.log(prob) for prob in beliefs.values() if prob > 0.0)
     max_entropy = math.log(len(beliefs))
     normalized_entropy = round((entropy / max_entropy) if max_entropy > 0 else 0.0, 6)

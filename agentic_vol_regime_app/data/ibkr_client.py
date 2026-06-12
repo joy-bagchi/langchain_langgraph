@@ -38,6 +38,8 @@ from agentic_vol_regime_app.contracts import (
 
 
 DEFAULT_VOL_REGIME_SYMBOLS = ("SPY", "VIX", "VVIX", "VIX9D", "VIX3M", "VIX6M", "VIX9M")
+DEFAULT_SECTOR_ETF_SYMBOLS = ("XLK", "XLF", "XLE", "XLY", "XLP", "XLI", "XLB", "XLV", "XLU", "XLRE")
+INDEX_STYLE_SYMBOLS = {"VIX", "VVIX", "VIX9D", "VIX3M", "VIX6M", "VIX9M"}
 _IBKR_UNSET_DOUBLE = 1.7976931348623157e308
 _IBKR_UNSET_INT = 2147483647
 
@@ -252,12 +254,23 @@ class IBKRLiveClient:
                     contract = stock_contract
                     quote_payload = underlying_quote
                 else:
-                    contract = self._qualify_index_contract(
-                        ib,
-                        symbol=normalized_symbol,
-                        exchange=request.index_exchange,
-                        currency=request.currency,
-                    )
+                    if normalized_symbol in INDEX_STYLE_SYMBOLS:
+                        contract = self._qualify_index_contract(
+                            ib,
+                            symbol=normalized_symbol,
+                            exchange=request.index_exchange,
+                            currency=request.currency,
+                        )
+                    else:
+                        try:
+                            contract = self._qualify_stock_contract(
+                                ib,
+                                symbol=normalized_symbol,
+                                exchange=option_request.exchange,
+                                currency=request.currency,
+                            )
+                        except Exception:
+                            contract = None
                     if contract is None:
                         warnings.append(f"unable to qualify contract for {normalized_symbol}")
                         continue
@@ -270,7 +283,7 @@ class IBKRLiveClient:
 
                 history_key = (
                     f"{normalized_symbol}_close"
-                    if normalized_symbol == option_request.symbol.upper()
+                    if normalized_symbol == option_request.symbol.upper() or normalized_symbol not in INDEX_STYLE_SYMBOLS
                     else normalized_symbol
                 )
                 if request.history_days > 0:
