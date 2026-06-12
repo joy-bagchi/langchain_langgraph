@@ -6,7 +6,7 @@ import asyncio
 import math
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 # Patch for Windows asyncio ConnectionResetError: [WinError 10054]
@@ -93,6 +93,31 @@ def _historical_duration_str(history_days: int) -> str:
     return f"{duration_years} Y"
 
 
+def _parse_as_of_date(value: Any) -> date:
+    text = str(value).strip()
+    if not text:
+        raise ValueError("Expected a non-empty as_of_date.")
+    try:
+        parsed = date.fromisoformat(text[:10])
+    except ValueError as exc:
+        raise ValueError("Expected as_of_date in YYYY-MM-DD format.") from exc
+    while parsed.weekday() >= 5:
+        parsed -= timedelta(days=1)
+    return parsed
+
+
+def _historical_end_datetime(as_of_date: str) -> str:
+    normalized_day = _parse_as_of_date(as_of_date)
+    end_dt = datetime.combine(normalized_day, time(hour=23, minute=59, second=59), tzinfo=timezone.utc)
+    return end_dt.strftime("%Y%m%d %H:%M:%S UTC")
+
+
+def _historical_as_of_timestamp(as_of_date: str) -> str:
+    normalized_day = _parse_as_of_date(as_of_date)
+    as_of_dt = datetime.combine(normalized_day, time(hour=21, minute=0, second=0), tzinfo=timezone.utc)
+    return as_of_dt.isoformat().replace("+00:00", "Z")
+
+
 @dataclass(frozen=True, slots=True)
 class IBKRConnectionConfig:
     host: str = "127.0.0.1"
@@ -142,6 +167,7 @@ class IBKRVolRegimeSnapshotRequest:
     regime_symbols: tuple[str, ...] = DEFAULT_VOL_REGIME_SYMBOLS
     index_exchange: str = "CBOE"
     currency: str = "USD"
+    as_of_date: str | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "IBKRVolRegimeSnapshotRequest":
@@ -158,6 +184,7 @@ class IBKRVolRegimeSnapshotRequest:
             regime_symbols=normalized_symbols or DEFAULT_VOL_REGIME_SYMBOLS,
             index_exchange=str(payload.get("index_exchange", "CBOE")),
             currency=str(payload.get("currency", option_chain.currency or "USD")),
+            as_of_date=(str(payload.get("as_of_date")).strip() or None) if payload.get("as_of_date") else None,
         )
 
 
@@ -222,6 +249,9 @@ class IBKRLiveClient:
     def fetch_vol_regime_snapshot(self, request: IBKRVolRegimeSnapshotRequest) -> dict[str, Any]:
         ib = self._connect()
         try:
+            if request.as_of_date:
+                return self._fetch_historical_vol_regime_snapshot(ib, request=request)
+
             option_request = request.option_chain
             stock_contract = self._qualify_stock_contract(
                 ib,
@@ -341,6 +371,137 @@ class IBKRLiveClient:
             }
         finally:
             ib.disconnect()
+
+    def _fetch_historical_vol_regime_snapshot(
+        self,
+        ib: Any,
+        *,
+        request: IBKRVolRegimeSnapshotRequest,
+    ) -> dict[str, Any]:
+        option_request = request.option_chain
+        requested_as_of = str(request.as_of_date or "").strip()
+        as_of_timestamp = _historical_as_of_timestamp(requested_as_of)
+        end_datetime = _historical_end_datetime(requested_as_of)
+
+        stock_contract = self._qualify_stock_contract(
+            ib,
+            symbol=option_request.symbol,
+            exchange=option_request.exchange,
+            currency=option_request.currency,
+        )
+
+        symbols_payload: dict[str, dict[str, Any]] = {}
+        history_payload: dict[str, list[float]] = {}
+        warnings: list[str] = []
+        missing_symbols: list[str] = []
+
+        for symbol in request.regime_symbols:
+            normalized_symbol = symbol.upper()
+            if normalized_symbol == option_request.symbol.upper():
+                contract = stock_contract
+            elif normalized_symbol in INDEX_STYLE_SYMBOLS:
+                contract = self._qualify_index_contract(
+                    ib,
+                    symbol=normalized_symbol,
+                    exchange=request.index_exchange,
+                    currency=request.currency,
+                )
+            else:
+                try:
+                    contract = self._qualify_stock_contract(
+                        ib,
+                        symbol=normalized_symbol,
+                        exchange=option_request.exchange,
+                        currency=request.currency,
+                    )
+                except Exception:
+                    contract = None
+
+            if contract is None:
+                missing_symbols.append(normalized_symbol)
+                warnings.append(f"unable to qualify contract for {normalized_symbol}")
+                continue
+
+            history_key = (
+                f"{normalized_symbol}_close"
+                if normalized_symbol == option_request.symbol.upper() or normalized_symbol not in INDEX_STYLE_SYMBOLS
+                else normalized_symbol
+            )
+            history_values, history_warnings = self._request_daily_history(
+                ib,
+                contract,
+                history_days=request.history_days,
+                history_label=history_key,
+                end_datetime=end_datetime,
+            )
+            if history_values:
+                history_payload[history_key] = history_values
+                close_value = float(history_values[-1])
+                symbols_payload[normalized_symbol] = {
+                    "last": close_value,
+                    "close": close_value,
+                    "bid": None,
+                    "ask": None,
+                    "volume": None,
+                }
+            else:
+                warnings.extend(history_warnings or [f"unable to load daily history for {history_key}"])
+
+        underlying_symbol = option_request.symbol.upper()
+        underlying_history_key = f"{underlying_symbol}_close"
+        underlying_price = None
+        if history_payload.get(underlying_history_key):
+            underlying_price = float(history_payload[underlying_history_key][-1])
+
+        required_history = [
+            ("SPY_close" if symbol.upper() == underlying_symbol else symbol.upper())
+            for symbol in request.regime_symbols
+        ]
+        minimum_history = min(request.history_days, 22) if request.history_days > 0 else 0
+        missing_history = [
+            key for key in required_history if len(history_payload.get(key, [])) < minimum_history
+        ]
+
+        quality = {
+            "is_complete": not missing_symbols and not missing_history,
+            "warnings": warnings,
+            "stale_fields": [],
+            "missing_symbols": missing_symbols,
+            "missing_history": missing_history,
+        }
+
+        option_chain = {
+            "underlying_symbol": option_request.symbol,
+            "underlying_price": underlying_price,
+            "fetched_at": as_of_timestamp,
+            "exchange": option_request.option_exchange,
+            "currency": option_request.currency,
+            "expirations": [],
+            "strikes": [],
+            "rights": list(option_request.rights),
+            "option_quotes": [],
+        }
+
+        return {
+            "schema_version": "observation.v1",
+            "as_of": as_of_timestamp,
+            "source": "IBKR_HISTORICAL_AS_OF",
+            "symbols": symbols_payload,
+            "history": history_payload,
+            "quality": quality,
+            "option_chain": option_chain,
+            "provider_metadata": {
+                "host": self.connection.host,
+                "port": self.connection.port,
+                "client_id": self.connection.client_id,
+                "market_data_type": self.connection.market_data_type,
+                "history_days": request.history_days,
+                "history_fetch_mode": "historical_as_of",
+                "regime_symbols": list(request.regime_symbols),
+                "index_exchange": request.index_exchange,
+                "requested_as_of_date": requested_as_of,
+            },
+        }
 
     def _connect(self) -> Any:
         _ensure_thread_event_loop()
@@ -485,6 +646,7 @@ class IBKRLiveClient:
         *,
         history_days: int,
         history_label: str,
+        end_datetime: str = "",
     ) -> tuple[list[float], list[str]]:
         duration_str = _historical_duration_str(history_days)
         sec_type = str(getattr(contract, "secType", "")).upper()
@@ -498,7 +660,7 @@ class IBKRLiveClient:
             try:
                 bars = ib.reqHistoricalData(
                     contract,
-                    endDateTime="",
+                    endDateTime=end_datetime,
                     durationStr=duration_str,
                     barSizeSetting="1 day",
                     whatToShow=what_to_show,

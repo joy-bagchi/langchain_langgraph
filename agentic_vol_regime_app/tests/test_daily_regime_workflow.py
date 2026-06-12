@@ -209,6 +209,70 @@ class RecordingDailyIBKRPipe:
         return Snapshot()
 
 
+class HistoricalAsOfIBKRPipe:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, object]] = []
+
+    def fetch_vol_regime_snapshot(self, request) -> object:
+        requested_as_of = str(getattr(request, "as_of_date", "") or "")
+        history_days = max(int(getattr(request, "history_days", 0) or 0), 0)
+        self.requests.append(
+            {
+                "history_days": history_days,
+                "as_of_date": requested_as_of,
+                "regime_symbols": list(getattr(request, "regime_symbols", ()) or ()),
+            }
+        )
+
+        history = {
+            "SPY_close": [576.0 + (index * 0.9) for index in range(history_days)],
+            "VIX": [16.1 + (index * 0.05) for index in range(history_days)],
+            "VVIX": [91.0 + (index * 0.18) for index in range(history_days)],
+            "VIX9D": [15.7 + (index * 0.04) for index in range(history_days)],
+            "VIX3M": [19.7 + (index * 0.01) for index in range(history_days)],
+            "VIX6M": [20.1 + (index * 0.01) for index in range(history_days)],
+            "VIX9M": [20.4 + (index * 0.01) for index in range(history_days)],
+        }
+
+        class Snapshot:
+            def to_dict(self_inner) -> dict:
+                as_of = f"{requested_as_of}T21:00:00Z"
+                return {
+                    "schema_version": "observation.v1",
+                    "as_of": as_of,
+                    "source": "IBKR_HISTORICAL_AS_OF",
+                    "symbols": {
+                        request.option_chain.symbol: {"last": history["SPY_close"][-1], "close": history["SPY_close"][-1]},
+                        "VIX": {"last": history["VIX"][-1], "close": history["VIX"][-1]},
+                        "VVIX": {"last": history["VVIX"][-1], "close": history["VVIX"][-1]},
+                        "VIX9D": {"last": history["VIX9D"][-1], "close": history["VIX9D"][-1]},
+                        "VIX3M": {"last": history["VIX3M"][-1], "close": history["VIX3M"][-1]},
+                        "VIX6M": {"last": history["VIX6M"][-1], "close": history["VIX6M"][-1]},
+                        "VIX9M": {"last": history["VIX9M"][-1], "close": history["VIX9M"][-1]},
+                    },
+                    "history": history,
+                    "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
+                    "option_chain": {
+                        "underlying_symbol": request.option_chain.symbol,
+                        "underlying_price": history["SPY_close"][-1],
+                        "fetched_at": as_of,
+                        "exchange": request.option_chain.option_exchange,
+                        "currency": request.option_chain.currency,
+                        "expirations": [],
+                        "strikes": [],
+                        "rights": ["C", "P"],
+                        "option_quotes": [],
+                    },
+                    "provider_metadata": {
+                        "history_days": history_days,
+                        "history_fetch_mode": "historical_as_of",
+                        "requested_as_of_date": requested_as_of,
+                    },
+                }
+
+        return Snapshot()
+
+
 class FakeGaussianHMM:
     def __init__(self, *, n_components: int, covariance_type: str, n_iter: int, random_state: int) -> None:
         self.means_ = None
@@ -263,7 +327,7 @@ def test_daily_regime_workflow_completes_and_writes_report(tmp_path: Path) -> No
     input_payload = _load_sample_input("daily_snapshot_watch.json")
     input_payload["report_root"] = str(tmp_path / "reports")
 
-    result = run_daily_regime_agent(
+    result = _run_and_complete_daily_agent(
         input_payload=input_payload,
         storage_root=tmp_path / ".workflow_memory",
     )
@@ -271,9 +335,38 @@ def test_daily_regime_workflow_completes_and_writes_report(tmp_path: Path) -> No
     assert result["status"] == "completed"
     daily_report = result["named_outputs"]["daily_report"]
     assert "Daily Volatility Regime Report" in daily_report["markdown"]
+    assert "HMM Regime Persistence" not in daily_report["markdown"]
+    assert "Model Variant Comparison" not in daily_report["markdown"]
     assert Path(daily_report["report_path"]).exists()
     assert result["named_outputs"]["belief_state"]["beliefs"]["STABLE_LOW_VOL_TREND"] > 0.0
     assert result["named_outputs"]["memory_candidates"]["candidate_count"] >= 0
+
+
+def test_daily_regime_workflow_supports_historical_as_of_date(tmp_path: Path) -> None:
+    input_payload = _load_sample_input("daily_snapshot_watch.json")
+    input_payload["report_root"] = str(tmp_path / "reports")
+    input_payload["as_of_date"] = "2026-05-27"
+
+    original_spy_history = list(input_payload["market_snapshot"]["history"]["SPY_close"])
+    original_vix_history = list(input_payload["market_snapshot"]["history"]["VIX"])
+
+    result = _run_and_complete_daily_agent(
+        input_payload=input_payload,
+        storage_root=tmp_path / ".workflow_memory",
+    )
+
+    observation = result["named_outputs"]["observation"]
+    daily_report = result["named_outputs"]["daily_report"]
+
+    assert result["status"] == "completed"
+    assert observation["as_of"].startswith("2026-05-27")
+    assert observation["symbols"]["SPY"]["last"] == original_spy_history[-3]
+    assert observation["symbols"]["VIX"]["last"] == original_vix_history[-3]
+    assert len(observation["history"]["SPY_close"]) == len(original_spy_history) - 2
+    assert observation["provider_metadata"]["original_as_of"] == "2026-05-29T20:00:00Z"
+    assert observation["provider_metadata"]["simulated_as_of_date"] == "2026-05-27"
+    assert observation["provider_metadata"]["as_of_rewind_bars"] == 2
+    assert Path(daily_report["report_path"]).name.startswith("daily_regime_report_2026-05-27_")
 
 
 def test_daily_regime_ml_agent_completes_with_linear_model(tmp_path: Path) -> None:
@@ -290,6 +383,8 @@ def test_daily_regime_ml_agent_completes_with_linear_model(tmp_path: Path) -> No
     assert result["named_outputs"]["belief_state"]["model_version"] == "linear_regression_regime_v1"
     assert result["agent"]["agent_id"] == "daily_regime_ml_orchestrator"
     assert result["named_outputs"]["daily_report"]["recommended_action"]
+    assert "HMM Regime Persistence" not in result["named_outputs"]["daily_report"]["markdown"]
+    assert "Model Variant Comparison" not in result["named_outputs"]["daily_report"]["markdown"]
 
 
 def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Path) -> None:
@@ -699,6 +794,96 @@ def test_snapshot_hmm_baseline_copies_artifact_and_config(tmp_path: Path) -> Non
     assert manifest["snapshot_label"] == "pre_feature_experiments"
     assert manifest["training_row_count"] == 729
     assert manifest["feature_list"] == ["vix", "vvix_vix_ratio"]
+
+
+def test_daily_regime_hmm_agent_reuses_historical_as_of_snapshot_from_memory(tmp_path: Path) -> None:
+    pipe = HistoricalAsOfIBKRPipe()
+    storage_root = tmp_path / ".workflow_memory"
+    input_payload = {
+        "data_provider": "ibkr",
+        "symbol": "SPY",
+        "as_of_date": "2026-05-15",
+        "ibkr": {
+            "host": "127.0.0.1",
+            "port": 4001,
+            "client_id": 73,
+            "market_data_type": 1,
+            "exchange": "SMART",
+            "option_exchange": "SMART",
+            "currency": "USD",
+            "index_exchange": "CBOE",
+            "expiry_count": 1,
+            "strike_count": 1,
+            "history_days": 252,
+        },
+        "report_root": str(tmp_path / "reports"),
+    }
+
+    original = hmm_belief.GaussianHMM
+    hmm_belief.GaussianHMM = FakeGaussianHMM
+    try:
+        first = _run_and_complete_daily_agent(
+            input_payload=input_payload,
+            storage_root=storage_root,
+            ibkr_data_pipe=pipe,
+            agent_path=default_hmm_agent_path(),
+        )
+        second = _run_and_complete_daily_agent(
+            input_payload=input_payload,
+            storage_root=storage_root,
+            ibkr_data_pipe=pipe,
+            agent_path=default_hmm_agent_path(),
+        )
+    finally:
+        hmm_belief.GaussianHMM = original
+
+    assert first["status"] == "completed"
+    assert second["status"] == "completed"
+    assert len(pipe.requests) == 1
+    assert pipe.requests[0]["history_days"] == 756
+    assert pipe.requests[0]["as_of_date"] == "2026-05-15"
+    assert second["named_outputs"]["observation"]["provider_metadata"]["history_cache_mode"] == "historical_memory_hit"
+    assert second["named_outputs"]["observation"]["provider_metadata"]["history_requested_from_ibkr"] == 0
+
+
+def test_daily_regime_heuristic_agent_fetches_requested_as_of_date_from_ibkr(tmp_path: Path) -> None:
+    pipe = HistoricalAsOfIBKRPipe()
+    input_payload = {
+        "data_provider": "ibkr",
+        "symbol": "SPY",
+        "as_of_date": "2026-05-15",
+        "ibkr": {
+            "host": "127.0.0.1",
+            "port": 4001,
+            "client_id": 73,
+            "market_data_type": 1,
+            "exchange": "SMART",
+            "option_exchange": "SMART",
+            "currency": "USD",
+            "index_exchange": "CBOE",
+            "expiry_count": 1,
+            "strike_count": 1,
+            "history_days": 252,
+        },
+        "report_root": str(tmp_path / "reports"),
+    }
+
+    first = _run_and_complete_daily_agent(
+        input_payload=input_payload,
+        storage_root=tmp_path / ".workflow_memory_heuristic",
+        ibkr_data_pipe=pipe,
+    )
+    second = _run_and_complete_daily_agent(
+        input_payload=input_payload,
+        storage_root=tmp_path / ".workflow_memory_heuristic",
+        ibkr_data_pipe=pipe,
+    )
+
+    assert first["status"] == "completed"
+    assert second["status"] == "completed"
+    assert len(pipe.requests) == 2
+    assert pipe.requests[0]["as_of_date"] == "2026-05-15"
+    assert first["named_outputs"]["observation"]["as_of"].startswith("2026-05-15")
 
 
 def test_daily_regime_workflow_reuses_cached_ibkr_history_within_24_hours(tmp_path: Path) -> None:

@@ -69,13 +69,13 @@ def _report_model_metadata(
     belief_record,
     hmm_record,
     state: WorkflowGraphState,
-) -> str:
+) -> tuple[str, str]:
     engine = _belief_engine(state)
-    if hmm_record is not None:
-        return str(hmm_record.model_name)
+    if engine.startswith("hmm_gaussian") and hmm_record is not None:
+        return (str(hmm_record.model_name), str(hmm_record.model_version))
     if engine == "ml_linear_regression":
-        return "LinearRegimeBeliefModel"
-    return "HeuristicBeliefModel"
+        return ("LinearRegimeBeliefModel", str(belief_record.model_version))
+    return ("HeuristicBeliefModel", str(belief_record.model_version))
 
 
 def _memory_namespace(state: WorkflowGraphState) -> str:
@@ -134,6 +134,41 @@ def _load_regime_history_cache(*, state: WorkflowGraphState, services) -> dict[s
     payload["record_id"] = matches[0].record.record_id
     payload["created_at"] = matches[0].record.created_at
     return payload
+
+
+def _load_historical_regime_snapshot(
+    *,
+    state: WorkflowGraphState,
+    services,
+    requested_as_of_date: str,
+    history_days: int,
+) -> dict[str, Any] | None:
+    namespace = _memory_namespace(state)
+    matches = services.memory.recall(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=25,
+            memory_types=["historical_regime_snapshot"],
+            structured_filters={
+                "source_kind": "ibkr_historical_regime_snapshot",
+                "requested_as_of_date": requested_as_of_date,
+            },
+        )
+    )
+    best_match: dict[str, Any] | None = None
+    best_window = -1
+    for match in matches:
+        payload = dict(match.record.structured_payload)
+        window = int(payload.get("history_days", 0) or 0)
+        if window < history_days:
+            continue
+        if window > best_window:
+            payload["record_id"] = match.record.record_id
+            payload["created_at"] = match.record.created_at
+            best_match = payload
+            best_window = window
+    return best_match
 
 
 def _history_refresh_mode(
@@ -235,6 +270,41 @@ def _remember_regime_history_cache(
                 "history_refresh_mode": refresh_mode,
                 "history": {key: list(values) for key, values in observation.history.items()},
                 "provider_metadata": dict(observation.provider_metadata),
+            },
+        )
+    )
+
+
+def _remember_historical_regime_snapshot(
+    *,
+    state: WorkflowGraphState,
+    step: WorkflowStep,
+    services,
+    observation: ObservationRecord,
+    history_days: int,
+    requested_as_of_date: str,
+) -> None:
+    namespace = _memory_namespace(state)
+    services.memory.remember(
+        MemoryRecord.create(
+            namespace=namespace,
+            memory_type="historical_regime_snapshot",
+            content=f"IBKR historical regime snapshot {requested_as_of_date}",
+            source_run_id=str(state["run_id"]),
+            source_step_id=step.step_id,
+            metadata={
+                "workflow_id": state.get("workflow_id"),
+                "agent_id": state.get("agent_id"),
+                "source_kind": "ibkr_historical_regime_snapshot",
+                "requested_as_of_date": requested_as_of_date,
+                "observation_as_of": observation.as_of,
+            },
+            structured_payload={
+                "source_kind": "ibkr_historical_regime_snapshot",
+                "requested_as_of_date": requested_as_of_date,
+                "observation_as_of": observation.as_of,
+                "history_days": history_days,
+                "observation": observation.to_dict(),
             },
         )
     )
@@ -447,11 +517,58 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                     "Daily regime orchestrator is not allowed to use the 'ibkr_data_pipeline' tool."
                 )
             ibkr_payload = dict(input_payload.get("ibkr", {}))
+            requested_as_of_date = str(input_payload.get("as_of_date", "")).strip() or None
             requested_history_days = max(int(ibkr_payload.get("history_days", 252)), 0)
+
+            if _uses_hmm_history_cache(state) and requested_as_of_date:
+                hmm_config = load_hmm_config(app_paths=app_paths, variant_id=_hmm_variant_id(state))
+                requested_history_days = max(requested_history_days, int(hmm_config.train_window))
+                historical_snapshot_payload = _load_historical_regime_snapshot(
+                    state=state,
+                    services=services,
+                    requested_as_of_date=requested_as_of_date,
+                    history_days=requested_history_days,
+                )
+                if historical_snapshot_payload:
+                    observation = load_market_snapshot(
+                        {"market_snapshot": historical_snapshot_payload["observation"]},
+                        app_root=app_paths.root,
+                    )
+                    observation = ObservationRecord(
+                        schema_version=observation.schema_version,
+                        as_of=observation.as_of,
+                        source=observation.source,
+                        symbols=dict(observation.symbols),
+                        history={key: list(values) for key, values in observation.history.items()},
+                        quality=dict(observation.quality),
+                        option_chain=dict(observation.option_chain),
+                        provider_metadata={
+                            **dict(observation.provider_metadata),
+                            "history_cache_mode": "historical_memory_hit",
+                            "history_cache_hit": True,
+                            "history_requested_from_ibkr": 0,
+                            "history_window_days": requested_history_days,
+                            "requested_as_of_date": requested_as_of_date,
+                        },
+                    )
+                    _assert_hmm_observation_complete(
+                        observation=observation,
+                        requested_history_days=requested_history_days,
+                    )
+                    return StepExecutionResult(
+                        output=observation.to_dict(),
+                        metadata={
+                            "data_provider": "ibkr",
+                            "source": observation.source,
+                            "historical_as_of_date": requested_as_of_date,
+                            "history_cache_mode": "historical_memory_hit",
+                        },
+                    )
+
             cached_history_payload = None
             refresh_mode = "disabled_for_engine"
             tool_history_days = requested_history_days
-            if _uses_hmm_history_cache(state):
+            if _uses_hmm_history_cache(state) and not requested_as_of_date:
                 hmm_config = load_hmm_config(app_paths=app_paths, variant_id=_hmm_variant_id(state))
                 requested_history_days = max(requested_history_days, int(hmm_config.train_window))
                 cached_history_payload = _load_regime_history_cache(state=state, services=services)
@@ -466,6 +583,8 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 **ibkr_payload,
                 "history_days": tool_history_days,
             }
+            if requested_as_of_date:
+                tool_arguments["as_of_date"] = requested_as_of_date
             if _uses_hmm_history_cache(state):
                 tool_arguments["regime_symbols"] = (
                     [input_payload.get("symbol", ibkr_payload.get("symbol", "SPY")), "VIX", "VVIX", "VIX9D", "VIX3M", *SECTOR_ETF_UNIVERSE]
@@ -548,7 +667,16 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                     primary=live_observation,
                     fallback=_load_reference_observation(input_payload, app_paths=app_paths),
                 )
-            if _uses_hmm_history_cache(state) and refresh_mode in {"full_fetch", "incremental_refresh"}:
+            if _uses_hmm_history_cache(state) and requested_as_of_date:
+                _remember_historical_regime_snapshot(
+                    state=state,
+                    step=step,
+                    services=services,
+                    observation=observation,
+                    history_days=requested_history_days,
+                    requested_as_of_date=requested_as_of_date,
+                )
+            elif _uses_hmm_history_cache(state) and refresh_mode in {"full_fetch", "incremental_refresh"}:
                 _remember_regime_history_cache(
                     state=state,
                     step=step,
@@ -557,18 +685,20 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                     history_days=requested_history_days,
                     refresh_mode=refresh_mode,
                 )
-            _maybe_remember_live_observation(
-                state=state,
-                step=step,
-                services=services,
-                observation=observation,
-            )
+            if not requested_as_of_date:
+                _maybe_remember_live_observation(
+                    state=state,
+                    step=step,
+                    services=services,
+                    observation=observation,
+                )
             return StepExecutionResult(
                 output=observation.to_dict(),
                 metadata={
                     "data_provider": "ibkr",
                     "tool_id": tool_id,
                     "source": observation.source,
+                    "historical_as_of_date": requested_as_of_date,
                 },
             )
 
@@ -619,6 +749,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 feature_record,
                 app_paths=app_paths,
                 variant_id=_hmm_variant_id(state),
+                force_retrain=bool(state.get("input_payload", {}).get("as_of_date")),
             )
             _raise_for_untrained_hmm(hmm_record=hmm_record)
             belief_record = hmm_to_belief_record(
@@ -650,6 +781,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             feature_record,
             app_paths=app_paths,
             variant_id=_hmm_variant_id(state),
+            force_retrain=bool(state.get("input_payload", {}).get("as_of_date")),
         )
         if _belief_engine(state).startswith("hmm_gaussian"):
             _raise_for_untrained_hmm(hmm_record=hmm_record)
@@ -707,7 +839,12 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         belief_record = BeliefRecord(**dict(state["named_outputs"]["belief_state"]))
         transition_record = TransitionProbabilityRecord(**dict(state["named_outputs"]["transition_probabilities"]))
         alert_record = AlertRecord(**dict(state["named_outputs"]["alert_record"]))
-        hmm_record = dict(state["named_outputs"].get("hmm_belief", {}))
+        engine = _belief_engine(state)
+        hmm_record = (
+            dict(state["named_outputs"].get("hmm_belief", {}))
+            if engine.startswith("hmm_gaussian")
+            else {}
+        )
         recommendation = recommend_policy_action(
             feature_record,
             belief_record,
@@ -870,7 +1007,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         policy_record = PolicyRecommendationRecord(**dict(state["named_outputs"]["policy_recommendation"]))
         critic_record = CriticReviewRecord(**dict(state["named_outputs"]["critic_review"]))
         review_decision = state["named_outputs"].get("review_decision")
-        report_model_name = _report_model_metadata(
+        report_model_name, report_model_version = _report_model_metadata(
             belief_record=belief_record,
             hmm_record=hmm_record,
             state=state,
@@ -880,6 +1017,8 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             {"market_snapshot": state["named_outputs"]["observation"]},
             app_root=app_paths.root,
         )
+        engine = _belief_engine(state)
+        report_hmm_record = hmm_record if engine.startswith("hmm_gaussian") else None
         heuristic_belief = update_belief_state(
             feature_record,
             previous_belief=_load_previous_belief(state),
@@ -889,9 +1028,12 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             observation,
             previous_belief=_load_previous_belief(state),
         )
-        hmm_comparison_belief = hmm_to_belief_record(hmm_record, previous_belief=_load_previous_belief(state)) if hmm_record else None
+        hmm_comparison_belief = (
+            hmm_to_belief_record(report_hmm_record, previous_belief=_load_previous_belief(state))
+            if report_hmm_record
+            else None
+        )
         hmm_variant_rows: list[dict[str, Any]] = []
-        engine = _belief_engine(state)
         if engine.startswith("hmm_gaussian"):
             variant_ids = ["v1", "v2"]
             for variant_id in variant_ids:
@@ -950,37 +1092,44 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                     hmm_record=hmm_record.to_dict() if hmm_record else None,
                 ).recommended_action,
             },
-            {
-                "engine": f"HMM{hmm_record.variant_id.upper()}" if hmm_record else "HMM",
-                "top_regime": (
-                    hmm_record.top_state
-                    if (hmm_record and hmm_record.is_trained)
-                    else "Not trained enough"
-                    if hmm_record
-                    else "Unavailable"
-                ),
-                "confidence": (hmm_record.confidence if hmm_record else 0.0),
-                "recommended_posture": recommend_policy_action(
-                    feature_record,
-                    hmm_comparison_belief or heuristic_belief,
-                    transition_record,
-                    alert_record,
-                    hmm_record=hmm_record.to_dict() if hmm_record else None,
-                ).recommended_action if (hmm_record and hmm_record.is_trained) else "Fallback to heuristic" if hmm_record else "Unavailable",
-            },
-            {
-                "engine": "Ensemble (disabled)",
-                "top_regime": "Disabled",
-                "confidence": 0.0,
-                "recommended_posture": "Disabled",
-            },
         ]
+        if report_hmm_record is not None:
+            comparison_panel.extend(
+                [
+                    {
+                        "engine": f"HMM{report_hmm_record.variant_id.upper()}",
+                        "top_regime": (
+                            report_hmm_record.top_state
+                            if report_hmm_record.is_trained
+                            else "Not trained enough"
+                        ),
+                        "confidence": report_hmm_record.confidence,
+                        "recommended_posture": (
+                            recommend_policy_action(
+                                feature_record,
+                                hmm_comparison_belief or heuristic_belief,
+                                transition_record,
+                                alert_record,
+                                hmm_record=report_hmm_record.to_dict(),
+                            ).recommended_action
+                            if report_hmm_record.is_trained
+                            else "Fallback to heuristic"
+                        ),
+                    },
+                    {
+                        "engine": "Ensemble (disabled)",
+                        "top_regime": "Disabled",
+                        "confidence": 0.0,
+                        "recommended_posture": "Disabled",
+                    },
+                ]
+            )
 
         markdown = render_daily_markdown(
             feature_record=feature_record,
             belief_record=belief_record,
             transition_record=transition_record,
-            hmm_record=hmm_record,
+            hmm_record=report_hmm_record,
             alert_record=alert_record,
             policy_record=policy_record,
             critic_record=critic_record,
@@ -988,6 +1137,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             comparison_panel=comparison_panel,
             hmm_variant_comparison=hmm_variant_rows,
             report_model_name=report_model_name,
+            report_model_version=report_model_version,
         )
         report_path = write_daily_report(
             markdown,

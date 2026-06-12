@@ -47,6 +47,7 @@ def render_daily_markdown(
     comparison_panel: list[dict[str, Any]] | None = None,
     hmm_variant_comparison: list[dict[str, Any]] | None = None,
     report_model_name: str | None = None,
+    report_model_version: str | None = None,
 ) -> str:
     """Render the user-facing daily markdown report."""
     alert_label = alert_record.severity
@@ -79,7 +80,7 @@ def render_daily_markdown(
             f"- Notes: {policy_record.overwrite_rationale or 'Derived from current SPY spot and regime posture.'}"
         )
 
-    hmm_section = "HMM advisory is unavailable for this run."
+    hmm_section = ""
     if hmm_record is not None:
         hmm_prob_rows = "\n".join(
             f"| {state} | {_format_probability(probability)} |"
@@ -232,8 +233,8 @@ Warnings:
     model_lines: list[str] = []
     if report_model_name:
         model_lines.append(f"Report model: `{report_model_name}`")
-    report_model_version = hmm_record.model_version if hmm_record is not None else belief_record.model_version
-    model_lines.append(f"Report model version: `{report_model_version}`")
+    if report_model_version:
+        model_lines.append(f"Report model version: `{report_model_version}`")
     model_tag_block = "\n".join(model_lines)
     if model_tag_block:
         model_tag_block = f"\n{model_tag_block}"

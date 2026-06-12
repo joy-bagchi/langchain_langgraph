@@ -386,6 +386,8 @@ def _should_retrain(
         return True
     if str(artifact.get("model_version", "")) != str(config.model_version):
         return True
+    if str(artifact.get("trained_as_of", "")) != str(as_of):
+        return True
     current_ts = _parse_timestamp(as_of)
     last_trained_ts = _parse_timestamp(str(artifact.get("last_trained_at", "")))
     if current_ts is None or last_trained_ts is None:
@@ -642,6 +644,7 @@ def compute_hmm_belief_record(
     app_paths: AppPaths,
     config: HMMConfig | None = None,
     variant_id: str = "v1",
+    force_retrain: bool = False,
 ) -> HMMBeliefRecord:
     config = config or load_hmm_config(app_paths=app_paths, variant_id=variant_id)
     if GaussianHMM is None:
@@ -660,6 +663,7 @@ def compute_hmm_belief_record(
                 app_paths=app_paths,
                 config=load_hmm_config(app_paths=app_paths, variant_id="v1"),
                 variant_id="v1",
+                force_retrain=force_retrain,
             )
             fallback_warnings = list(dict.fromkeys(list(warnings) + list(fallback_record.warnings) + ["Fell back to HMM v1 because HMM v2 sector data was incomplete."]))
             fallback_record.warnings = fallback_warnings
@@ -681,6 +685,7 @@ def compute_hmm_belief_record(
                 app_paths=app_paths,
                 config=load_hmm_config(app_paths=app_paths, variant_id="v1"),
                 variant_id="v1",
+                force_retrain=force_retrain,
             )
         return _warning_record(
             as_of=feature_record.as_of,
@@ -694,7 +699,7 @@ def compute_hmm_belief_record(
     inference_matrix = _matrix_from_rows([latest_row], config.feature_list)
     artifact = _load_artifact(app_paths=app_paths, config=config)
     repair_warnings: list[str] = []
-    if _should_retrain(artifact, config=config, training_row_count=len(training_rows), as_of=feature_record.as_of):
+    if force_retrain or _should_retrain(artifact, config=config, training_row_count=len(training_rows), as_of=feature_record.as_of):
         scaler = StandardScaler()
         scaled_train = scaler.fit_transform(feature_matrix)
         model = GaussianHMM(

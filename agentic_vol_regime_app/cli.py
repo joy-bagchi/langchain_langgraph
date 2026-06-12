@@ -67,6 +67,7 @@ def main() -> None:
     run_parser.add_argument("--database-url", default=None)
     run_parser.add_argument("--langsmith-tracing", action="store_true")
     run_parser.add_argument("--langsmith-project", default=None)
+    run_parser.add_argument("--as-of-date", default=None, help="Optional historical YYYY-MM-DD rewind date.")
     run_parser.add_argument("--output", choices=("summary", "report", "internal"), default="summary")
 
     resume_parser = subparsers.add_parser("resume", help="Resume a review-gated run.")
@@ -103,8 +104,11 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "run-daily":
+        input_payload = _load_input(args.input)
+        if args.as_of_date:
+            input_payload["as_of_date"] = str(args.as_of_date)
         result = run_daily_regime_agent(
-            input_payload=_load_input(args.input),
+            input_payload=input_payload,
             agent_path=args.agent,
             storage_root=args.storage_root,
             database_url=args.database_url,
