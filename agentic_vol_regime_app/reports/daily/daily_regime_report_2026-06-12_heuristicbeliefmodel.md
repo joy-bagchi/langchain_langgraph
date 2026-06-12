@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-12T15:31:08.626029+00:00
+Date: 2026-06-12T15:59:45.556935+00:00
 
 Report model: `HeuristicBeliefModel`
 Report model version: `belief_model_v1`
@@ -9,7 +9,7 @@ Report model version: `belief_model_v1`
 
 Current regime belief favors: `Vol Expansion Transition`
 
-Transition risk: `NONE`
+Transition risk: `WATCH`
 
 Recommended posture: `MEDIUM_OVERWRITE`
 
@@ -17,29 +17,27 @@ Recommended posture: `MEDIUM_OVERWRITE`
 
 | Regime | Probability |
 |---|---:|
-| Stable Low-Vol Trend | 0.32 |
-| Mid-Vol Chop | 0.19 |
-| Vol Expansion Transition | 0.35 |
-| High-Vol Risk-Off | 0.05 |
-| Panic Convexity Stress | 0.04 |
-| Post-Panic Compression | 0.04 |
+| Stable Low-Vol Trend | 0.35 |
+| Mid-Vol Chop | 0.21 |
+| Vol Expansion Transition | 0.38 |
+| High-Vol Risk-Off | 0.06 |
 
 ## Key Signals
 
 | Signal | Value | Interpretation |
 |---|---:|---|
-| VIX | 18.56 | Current implied-vol level |
-| VVIX | 97.20 | Vol-of-vol state |
-| VVIX/VIX | 5.24 | Convexity stress ratio |
-| VVIX/VIX z-score | -0.26 | Relative convexity stress |
+| VIX | 19.31 | Current implied-vol level |
+| VVIX | 99.16 | Vol-of-vol state |
+| VVIX/VIX | 5.14 | Convexity stress ratio |
+| VVIX/VIX z-score | -0.58 | Relative convexity stress |
 | VIX term structure (VIX3M) | contango | Front/back of curve |
-| Realized vol trend | 0.066 | Short-vs-medium realized vol |
+| Realized vol trend | 0.065 | Short-vs-medium realized vol |
 
 ## Predictive Alerts
 
-Severity: `NONE`
+Severity: `WATCH`
 
-Headline: No elevated predictive volatility alert
+Headline: Transition probability has risen but confirmation remains limited
 
 Drivers:
 - realized volatility acceleration
@@ -56,28 +54,17 @@ Risk notes:
 - None
 
 Overwrite implementation:
-- Suggested call overwrite strike: `751.00`
+- Suggested call overwrite strike: `746.00`
 - Suggested DTE: `1`
 - Notes: Medium overwrite moves the call further out to balance premium and upside room.
-
-
-## Belief Reconciliation
-
-| Engine | Top Regime | Confidence | Recommended Posture |
-|---|---|---:|---|
-| Heuristic | VOL_EXPANSION_TRANSITION | 0.71 | MEDIUM_OVERWRITE |
-| Linear ML | STABLE_LOW_VOL_TREND | 0.48 | NO_OVERWRITE |
-
-
-
 
 
 
 ## Model Confidence
 
-Confidence: 0.71
+Confidence: 0.69
 
-Uncertainty / entropy: 0.82
+Uncertainty / entropy: 0.89
 
 ## Critic Review
 
