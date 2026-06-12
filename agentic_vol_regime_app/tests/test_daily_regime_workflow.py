@@ -12,10 +12,13 @@ from agentic_harness.stores import FilesystemMemoryStore
 from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, FeatureRecord, TransitionProbabilityRecord
 from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.app_runtime import (
+    default_agent_path,
     default_ml_agent_path,
     default_hmm_agent_path,
     default_hmm_v2_agent_path,
+    load_historical_belief_report,
     load_latest_live_daily_observation,
+    load_or_run_historical_belief_report,
     load_recent_hmm_state_history,
     reset_hmm_persisted_state,
     snapshot_hmm_baseline,
@@ -25,6 +28,7 @@ from agentic_vol_regime_app.app_runtime import (
 import agentic_vol_regime_app.app_runtime as app_runtime
 import agentic_vol_regime_app.pomdp.hmm_belief as hmm_belief
 from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
+from agentic_vol_regime_app.reports.daily_report import resolve_daily_report_path
 
 
 class FakeDailyIBKRPipe:
@@ -783,6 +787,105 @@ def test_snapshot_hmm_baseline_copies_artifact_and_config(tmp_path: Path) -> Non
     assert manifest["snapshot_label"] == "pre_feature_experiments"
     assert manifest["training_row_count"] == 729
     assert manifest["feature_list"] == ["vix", "vvix_vix_ratio"]
+
+
+def test_load_historical_belief_report_reads_existing_memory_snapshot(tmp_path: Path) -> None:
+    storage_root = tmp_path / ".workflow_memory"
+    memory_store = FilesystemMemoryStore(storage_root)
+    namespace = app_runtime._resolve_memory_namespace(default_agent_path())
+    report_path = resolve_daily_report_path(
+        report_root=tmp_path / "reports",
+        as_of="2026-05-15",
+        report_model_name="HeuristicBeliefModel",
+        report_model_version="belief_model_v1",
+    )
+    memory_store.remember(
+        MemoryRecord.create(
+            namespace=namespace,
+            memory_type="belief_report_artifact",
+            content="belief report artifact 2026-05-15 HeuristicBeliefModel belief_model_v1",
+            source_run_id="run-1",
+            source_step_id="produce_daily_report",
+            metadata={
+                "source_kind": "belief_report_artifact",
+                "observation_as_of": "2026-05-15",
+                "report_as_of_date": "2026-05-15",
+                "report_model_name": "HeuristicBeliefModel",
+                "report_model_version": "belief_model_v1",
+            },
+            structured_payload={
+                "source_kind": "belief_report_artifact",
+                "observation_as_of": "2026-05-15",
+                "report_as_of_date": "2026-05-15",
+                "report_model_name": "HeuristicBeliefModel",
+                "report_model_version": "belief_model_v1",
+                "result_snapshot": {
+                    "status": "completed",
+                    "run_id": "run-1",
+                    "named_outputs": {
+                        "daily_report": {
+                            "report_path": str(report_path),
+                            "markdown": "# Daily Volatility Regime Report\n\nDate: 2026-05-15",
+                        },
+                        "belief_state": {
+                            "as_of": "2026-05-15",
+                            "beliefs": {"STABLE_LOW_VOL_TREND": 0.7},
+                        },
+                    },
+                    "agent": {"name": "HeuristicBeliefModel"},
+                },
+            },
+        )
+    )
+
+    loaded = load_historical_belief_report(
+        as_of_date="2026-05-15",
+        storage_root=storage_root,
+    )
+
+    assert loaded is not None
+    assert loaded["source"] == "history"
+    assert loaded["report_path"] == str(report_path)
+    assert "2026-05-15" in str(loaded["markdown"])
+    assert isinstance(loaded.get("run_result"), dict)
+
+
+def test_load_or_run_historical_belief_report_runs_when_missing(tmp_path: Path) -> None:
+    pipe = HistoricalAsOfIBKRPipe()
+    report_root = tmp_path / "reports"
+    result = load_or_run_historical_belief_report(
+        as_of_date="2026-05-15",
+        input_payload={
+            "data_provider": "ibkr",
+            "symbol": "SPY",
+            "ibkr": {
+                "host": "127.0.0.1",
+                "port": 4001,
+                "client_id": 73,
+                "market_data_type": 1,
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "index_exchange": "CBOE",
+                "expiry_count": 1,
+                "strike_count": 1,
+                "history_days": 252,
+            },
+        },
+        report_root=report_root,
+        storage_root=tmp_path / ".workflow_memory_historical",
+        langsmith_tracing=False,
+        ibkr_data_pipe=pipe,
+    )
+
+    assert result["source"] == "run"
+    assert len(pipe.requests) == 1
+    assert pipe.requests[0]["as_of_date"] == "2026-05-15"
+    assert isinstance(result.get("run_result"), dict)
+    if result.get("report_path"):
+        assert Path(str(result["report_path"])).exists()
+    if result.get("markdown"):
+        assert "2026-05-15" in str(result["markdown"])
 
 
 def test_daily_regime_hmm_agent_reuses_historical_as_of_snapshot_from_memory(tmp_path: Path) -> None:

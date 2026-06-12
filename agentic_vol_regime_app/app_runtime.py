@@ -23,6 +23,7 @@ from agentic_harness.stores import FilesystemMemoryStore
 from agentic_vol_regime_app.config import AppPaths
 from agentic_vol_regime_app.executors import build_executor_registry
 from agentic_vol_regime_app.pomdp.hmm_belief import load_hmm_config
+from agentic_vol_regime_app.reports.daily_report import resolve_daily_report_path
 
 
 def _trace_safe_payload(value: Any, *, max_string_chars: int = 1000, max_items: int = 10, depth: int = 0) -> Any:
@@ -79,6 +80,175 @@ def default_hmm_v2_agent_path() -> Path:
 
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
+
+
+def _resolve_report_model_identity(agent_path: str | Path | None = None) -> tuple[str, str]:
+    resolved_agent_path = Path(agent_path or default_agent_path()).resolve()
+    agent_definition = YamlAgentDefinitionService().load(resolved_agent_path)
+    belief_engine = str(dict(agent_definition.metadata).get("belief_engine", "heuristic")).strip().lower()
+    if belief_engine == "ml_linear_regression":
+        return ("LinearRegimeBeliefModel", "linear_regression_regime_v1")
+    if belief_engine == "hmm_gaussian_v2":
+        return ("HMMBeliefAgent", "hmm_gaussian_v2")
+    if belief_engine.startswith("hmm_gaussian"):
+        return ("HMMBeliefAgent", "hmm_gaussian_v1")
+    return ("HeuristicBeliefModel", "belief_model_v1")
+
+
+def _find_existing_daily_report_path(
+    *,
+    report_root: str | Path,
+    as_of_date: str,
+    report_model_name: str,
+    report_model_version: str,
+) -> Path | None:
+    reports_dir = Path(report_root).resolve() / "daily"
+    exact_path = resolve_daily_report_path(
+        report_root=Path(report_root).resolve(),
+        as_of=as_of_date,
+        report_model_name=report_model_name,
+        report_model_version=report_model_version,
+    )
+    if exact_path.exists():
+        return exact_path
+    legacy_path = resolve_daily_report_path(
+        report_root=Path(report_root).resolve(),
+        as_of=as_of_date,
+        report_model_name=report_model_name,
+        report_model_version=None,
+    )
+    if legacy_path.exists():
+        return legacy_path
+    if not reports_dir.exists():
+        return None
+    pattern = f"daily_regime_report_{as_of_date[:10]}_*.md"
+    candidates = sorted(
+        reports_dir.glob(pattern),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for candidate in candidates:
+        try:
+            markdown = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if report_model_name in markdown and report_model_version in markdown:
+            return candidate
+    return None
+
+
+def load_historical_belief_report(
+    *,
+    as_of_date: str,
+    agent_path: str | Path | None = None,
+    report_root: str | Path | None = None,
+    storage_root: str | Path | None = None,
+    database_url: str | None = None,
+) -> dict[str, Any] | None:
+    report_model_name, report_model_version = _resolve_report_model_identity(agent_path)
+    namespace = _resolve_memory_namespace(agent_path)
+    store_root = Path(storage_root or Path.cwd() / ".workflow_memory")
+    memory_store = FilesystemMemoryStore(store_root, database_url=database_url)
+    matches = memory_store.recall(
+        MemoryQuery(
+            namespace=namespace,
+            text="",
+            max_results=5,
+            memory_types=["belief_report_artifact"],
+            structured_filters={
+                "source_kind": "belief_report_artifact",
+                "report_as_of_date": as_of_date[:10],
+                "report_model_name": report_model_name,
+                "report_model_version": report_model_version,
+            },
+        )
+    )
+    if matches:
+        payload = dict(matches[0].record.structured_payload)
+        result_snapshot = dict(payload.get("result_snapshot", {}))
+        return {
+            "source": "history",
+            "as_of_date": as_of_date,
+            "report_model_name": report_model_name,
+            "report_model_version": report_model_version,
+            "report_path": dict(result_snapshot.get("named_outputs", {})).get("daily_report", {}).get("report_path"),
+            "markdown": dict(result_snapshot.get("named_outputs", {})).get("daily_report", {}).get("markdown"),
+            "run_result": result_snapshot,
+        }
+
+    resolved_report_root = Path(report_root or AppPaths.default().reports_dir).resolve()
+    report_path = _find_existing_daily_report_path(
+        report_root=resolved_report_root,
+        as_of_date=as_of_date,
+        report_model_name=report_model_name,
+        report_model_version=report_model_version,
+    )
+    if report_path is None:
+        return None
+    return {
+        "source": "legacy_markdown_history",
+        "as_of_date": as_of_date,
+        "report_model_name": report_model_name,
+        "report_model_version": report_model_version,
+        "report_path": str(report_path),
+        "markdown": report_path.read_text(encoding="utf-8"),
+    }
+
+
+def load_or_run_historical_belief_report(
+    *,
+    as_of_date: str,
+    input_payload: dict[str, Any],
+    agent_path: str | Path | None = None,
+    report_root: str | Path | None = None,
+    storage_root: str | Path | None = None,
+    database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+    ibkr_data_pipe=None,
+) -> dict[str, Any]:
+    existing = load_historical_belief_report(
+        as_of_date=as_of_date,
+        agent_path=agent_path,
+        report_root=report_root,
+        storage_root=storage_root,
+        database_url=database_url,
+    )
+    if existing is not None:
+        if existing.get("source") == "legacy_markdown_history":
+            existing = None
+        else:
+            return existing
+
+    resolved_report_root = Path(report_root or AppPaths.default().reports_dir).resolve()
+    payload = dict(input_payload)
+    payload["as_of_date"] = as_of_date
+    payload["report_root"] = str(resolved_report_root)
+    result = run_daily_regime_agent(
+        input_payload=payload,
+        agent_path=agent_path,
+        storage_root=storage_root,
+        database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+        ibkr_data_pipe=ibkr_data_pipe,
+    )
+    daily_report = dict(result.get("named_outputs", {}).get("daily_report", {}))
+    return {
+        "source": "run",
+        "as_of_date": as_of_date,
+        "report_model_name": _resolve_report_model_identity(agent_path)[0],
+        "report_model_version": _resolve_report_model_identity(agent_path)[1],
+        "report_path": daily_report.get("report_path"),
+        "markdown": daily_report.get("markdown"),
+        "run_result": result,
+    }
 
 
 def _resolve_memory_namespace(agent_path: str | Path | None = None) -> str:

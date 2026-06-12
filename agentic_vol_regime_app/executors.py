@@ -450,7 +450,7 @@ def _maybe_remember_hmm_state(
     step: WorkflowStep,
     services,
     hmm_record: dict[str, Any],
-) -> None:
+    ) -> None:
     if not bool(hmm_record.get("is_trained", False)):
         return
     namespace = _memory_namespace(state)
@@ -493,6 +493,46 @@ def _maybe_remember_hmm_state(
                 "interpretation_notes": list(hmm_record.get("interpretation_notes", [])),
                 "state_feature_summaries": dict(hmm_record.get("state_feature_summaries", {})),
                 "training_row_count": hmm_record.get("training_row_count", 0),
+            },
+        )
+    )
+
+
+def _remember_belief_report_artifact(
+    *,
+    state: WorkflowGraphState,
+    step: WorkflowStep,
+    services,
+    report_model_name: str,
+    report_model_version: str,
+    result_snapshot: dict[str, Any],
+) -> None:
+    namespace = _memory_namespace(state)
+    as_of = str(dict(result_snapshot.get("named_outputs", {})).get("belief_state", {}).get("as_of", ""))
+    as_of_date = as_of[:10]
+    services.memory.remember(
+        MemoryRecord.create(
+            namespace=namespace,
+            memory_type="belief_report_artifact",
+            content=f"belief report artifact {as_of_date} {report_model_name} {report_model_version}",
+            source_run_id=str(state["run_id"]),
+            source_step_id=step.step_id,
+            metadata={
+                "workflow_id": state.get("workflow_id"),
+                "agent_id": state.get("agent_id"),
+                "source_kind": "belief_report_artifact",
+                "observation_as_of": as_of,
+                "report_as_of_date": as_of_date,
+                "report_model_name": report_model_name,
+                "report_model_version": report_model_version,
+            },
+            structured_payload={
+                "source_kind": "belief_report_artifact",
+                "observation_as_of": as_of,
+                "report_as_of_date": as_of_date,
+                "report_model_name": report_model_name,
+                "report_model_version": report_model_version,
+                "result_snapshot": result_snapshot,
             },
         )
     )
@@ -1040,6 +1080,47 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             report_root=_report_root(state, app_paths),
             as_of=belief_record.as_of,
             report_model_name=report_model_name,
+            report_model_version=report_model_version,
+        )
+        result_snapshot = {
+            "status": "completed",
+            "run_id": str(state.get("run_id", "")),
+            "workflow_id": str(state.get("workflow_id", "")),
+            "current_step": step.step_id,
+            "pending_review": state.get("pending_review"),
+            "last_error": state.get("last_error"),
+            "step_history": list(state.get("step_history", [])),
+            "named_outputs": {
+                "daily_report": {
+                    "report_path": str(report_path),
+                    "markdown": markdown,
+                    "top_regime": max(belief_record.beliefs, key=belief_record.beliefs.get),
+                    "alert_severity": alert_record.severity,
+                    "recommended_action": policy_record.recommended_action,
+                },
+                "belief_state": belief_record.to_dict(),
+                "transition_probabilities": transition_record.to_dict(),
+                "alert_record": alert_record.to_dict(),
+                "policy_recommendation": policy_record.to_dict(),
+                "critic_review": critic_record.to_dict(),
+                "review_decision": review_decision,
+                **({"hmm_belief": report_hmm_record.to_dict()} if report_hmm_record is not None else {}),
+            },
+            "agent": {
+                "agent_id": state.get("agent_id"),
+                "name": state.get("agent_name"),
+                "role": state.get("agent_role"),
+                "workflow_path": state.get("workflow_path"),
+                "runtime_profile": state.get("runtime_profile"),
+            },
+        }
+        _remember_belief_report_artifact(
+            state=state,
+            step=step,
+            services=services,
+            report_model_name=report_model_name,
+            report_model_version=report_model_version,
+            result_snapshot=result_snapshot,
         )
         return StepExecutionResult(
             output={

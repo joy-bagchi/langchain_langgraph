@@ -25,6 +25,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     default_hmm_v2_agent_path,
     default_ibkr_agent_path,
     default_ml_agent_path,
+    load_or_run_historical_belief_report,
     load_latest_live_daily_observation,
     load_recent_hmm_state_history,
     reset_hmm_persisted_state,
@@ -55,6 +56,7 @@ CARD_LABEL_COLOR = "#facc15"
 CARD_VALUE_COLOR = "#fef3c7"
 WIDGET_BORDER_COLOR = "#facc15"
 WIDGET_BORDER_FOCUS = "#fde68a"
+REGIME_ENGINE_OPTIONS = ["Heuristic Agent", "ML Agent", "HMMv1 Agent", "HMMv2 Agent"]
 
 
 def _pretty_json(payload: Any) -> str:
@@ -68,6 +70,20 @@ def _parse_json_text(value: str, *, fallback: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("Expected a top-level JSON object.")
     return parsed
+
+
+def _resolve_daily_agent_path_from_choice(choice: str) -> Path:
+    if choice == "Heuristic Agent":
+        return default_agent_path()
+    if choice == "ML Agent":
+        return default_ml_agent_path()
+    if choice == "HMMv1 Agent":
+        return default_hmm_agent_path()
+    return default_hmm_v2_agent_path()
+
+
+def _default_history_days_for_agent_choice(choice: str, fallback: int) -> int:
+    return 756 if choice in {"HMMv1 Agent", "HMMv2 Agent"} else int(fallback)
 
 
 def _render_runtime_diagnostics(st, result: dict[str, Any]) -> None:
@@ -647,10 +663,11 @@ def main() -> None:
         langsmith_project = st.text_input("LangSmith Project", value="agentic_harness")
         st.caption("IBKR default port is 4001.")
 
-    daily_tab, ibkr_tab, resume_tab = st.tabs(
-        ["Daily Belief Report", "IBKR Snapshot Agent", "Resume Daily Review"]
+    daily_tab, historical_tab, ibkr_tab, resume_tab = st.tabs(
+        ["Daily Belief Report", "Historical Belief Reports", "IBKR Snapshot Agent", "Resume Daily Review"]
     )
     state_daily_result_key = "vol_regime_last_daily_result"
+    state_historical_report_key = "vol_regime_historical_report_result"
 
     with daily_tab:
         st.subheader("Daily Volatility Regime Workflow")
@@ -658,18 +675,10 @@ def main() -> None:
         default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
         agent_choice = st.selectbox(
             "Regime Engine",
-            options=["Heuristic Agent", "ML Agent", "HMMv1 Agent", "HMMv2 Agent"],
+            options=REGIME_ENGINE_OPTIONS,
             help="All agents use the same workflow surface. HMMv2 adds sector-correlation features on top of the HMMv1 core lens.",
         )
-        selected_daily_agent_path = (
-            default_agent_path()
-            if agent_choice == "Heuristic Agent"
-            else default_ml_agent_path()
-            if agent_choice == "ML Agent"
-            else default_hmm_agent_path()
-            if agent_choice == "HMMv1 Agent"
-            else default_hmm_v2_agent_path()
-        )
+        selected_daily_agent_path = _resolve_daily_agent_path_from_choice(agent_choice)
         mode = st.radio(
             "Mode",
             options=["Live IBKR", "Scenario", "Manual JSON"],
@@ -701,7 +710,10 @@ def main() -> None:
         effective_daily_payload: dict[str, Any]
         if mode == "Live IBKR":
             ibkr_defaults = dict(default_live_payload.get("ibkr", {}))
-            default_history_days = 756 if agent_choice in {"HMMv1 Agent", "HMMv2 Agent"} else int(ibkr_defaults.get("history_days", 252))
+            default_history_days = _default_history_days_for_agent_choice(
+                agent_choice,
+                int(ibkr_defaults.get("history_days", 252)),
+            )
             with st.expander("Advanced IBKR Settings", expanded=False):
                 live_col1, live_col2, live_col3 = st.columns(3)
                 live_host = live_col1.text_input(
@@ -961,6 +973,163 @@ def main() -> None:
                 else []
             )
             _render_daily_result(st, current_daily_result, hmm_history=hmm_history)
+
+    with historical_tab:
+        st.subheader("Historical Belief Reports")
+        st.caption(
+            "Load a previously generated report for a specific date and model. "
+            "If it does not exist yet, the app will run the selected model using that as-of date."
+        )
+
+        historical_default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
+        historical_agent_choice = st.selectbox(
+            "Historical Regime Engine",
+            options=REGIME_ENGINE_OPTIONS,
+            key="historical_regime_engine",
+        )
+        selected_historical_agent_path = _resolve_daily_agent_path_from_choice(historical_agent_choice)
+        historical_date = st.date_input(
+            "Historical As-of Date",
+            value=date.today(),
+            max_value=date.today(),
+            key="historical_as_of_date",
+        )
+
+        historical_ibkr_defaults = dict(historical_default_live_payload.get("ibkr", {}))
+        historical_default_history_days = _default_history_days_for_agent_choice(
+            historical_agent_choice,
+            int(historical_ibkr_defaults.get("history_days", 252)),
+        )
+        with st.expander("Advanced Historical IBKR Settings", expanded=False):
+            hist_col1, hist_col2, hist_col3 = st.columns(3)
+            historical_host = hist_col1.text_input(
+                "IBKR Host",
+                value=str(historical_ibkr_defaults.get("host", "127.0.0.1")),
+                key="historical_live_host",
+            )
+            historical_port = hist_col2.number_input(
+                "IBKR Port",
+                value=int(historical_ibkr_defaults.get("port", 4001)),
+                step=1,
+                key="historical_live_port",
+            )
+            historical_client_id = hist_col3.number_input(
+                "Client ID",
+                value=int(historical_ibkr_defaults.get("client_id", 73)),
+                step=1,
+                key="historical_live_client_id",
+            )
+
+            hist_cfg1, hist_cfg2, hist_cfg3, hist_cfg4 = st.columns(4)
+            historical_market_data_type = hist_cfg1.number_input(
+                "Market Data Type",
+                value=int(historical_ibkr_defaults.get("market_data_type", 1)),
+                step=1,
+                key="historical_market_data_type",
+            )
+            historical_history_days = hist_cfg2.number_input(
+                "History Days",
+                value=int(historical_default_history_days),
+                step=1,
+                key="historical_history_days",
+            )
+            historical_expiry_count = hist_cfg3.number_input(
+                "Expiry Count",
+                value=int(historical_ibkr_defaults.get("expiry_count", 2)),
+                step=1,
+                key="historical_expiry_count",
+            )
+            historical_strike_count = hist_cfg4.number_input(
+                "Strike Count",
+                value=int(historical_ibkr_defaults.get("strike_count", 8)),
+                step=1,
+                key="historical_strike_count",
+            )
+
+            hist_cfg5, hist_cfg6, hist_cfg7 = st.columns(3)
+            historical_exchange = hist_cfg5.text_input(
+                "Exchange",
+                value=str(historical_ibkr_defaults.get("exchange", "SMART")),
+                key="historical_exchange",
+            )
+            historical_option_exchange = hist_cfg6.text_input(
+                "Option Exchange",
+                value=str(historical_ibkr_defaults.get("option_exchange", "SMART")),
+                key="historical_option_exchange",
+            )
+            historical_index_exchange = hist_cfg7.text_input(
+                "Index Exchange",
+                value=str(historical_ibkr_defaults.get("index_exchange", "CBOE")),
+                key="historical_index_exchange",
+            )
+
+            historical_currency = st.text_input(
+                "Currency",
+                value=str(historical_ibkr_defaults.get("currency", "USD")),
+                key="historical_currency",
+            )
+
+        if st.button("Load Historical Report", type="primary", key="load_historical_report_button"):
+            historical_payload = {
+                "data_provider": "ibkr",
+                "symbol": str(historical_default_live_payload.get("symbol", "SPY")),
+                "ibkr": {
+                    "host": historical_host.strip() or "127.0.0.1",
+                    "port": int(historical_port),
+                    "client_id": int(historical_client_id),
+                    "market_data_type": int(historical_market_data_type),
+                    "exchange": historical_exchange.strip() or "SMART",
+                    "option_exchange": historical_option_exchange.strip() or "SMART",
+                    "currency": historical_currency.strip() or "USD",
+                    "index_exchange": historical_index_exchange.strip() or "CBOE",
+                    "expiry_count": int(historical_expiry_count),
+                    "strike_count": int(historical_strike_count),
+                    "history_days": int(historical_history_days),
+                    "min_days_to_expiry": 0,
+                },
+                "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
+            }
+            try:
+                historical_result = load_or_run_historical_belief_report(
+                    as_of_date=historical_date.isoformat(),
+                    input_payload=historical_payload,
+                    agent_path=selected_historical_agent_path,
+                    report_root=APP_PATHS.reports_dir,
+                    storage_root=storage_root,
+                    database_url=database_url or None,
+                    langsmith_tracing=langsmith_tracing,
+                    langsmith_project=langsmith_project or None,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[state_historical_report_key] = historical_result
+
+        current_historical_result = st.session_state.get(state_historical_report_key)
+        if isinstance(current_historical_result, dict):
+            historical_source = str(current_historical_result.get("source", "unknown"))
+            historical_report_path = str(current_historical_result.get("report_path") or "").strip()
+            historical_markdown = str(current_historical_result.get("markdown") or "").strip()
+            historical_run_result = current_historical_result.get("run_result")
+
+            if historical_source == "history":
+                st.success("Loaded report from history.")
+            elif historical_source == "run":
+                st.success("Generated report because no historical report existed for that date/model.")
+            elif historical_source == "legacy_markdown_history":
+                st.warning(
+                    "Found only a legacy markdown artifact for this date/model. "
+                    "Run the historical report again to backfill the full structured artifact into harness memory."
+                )
+
+            if historical_report_path:
+                st.caption(f"Report path: `{historical_report_path}`")
+
+            if isinstance(historical_run_result, dict) and historical_run_result:
+                _render_daily_result(st, historical_run_result, hmm_history=[])
+            elif historical_markdown:
+                st.subheader("Historical Report")
+                st.markdown(_strip_report_heading_and_summary(historical_markdown))
 
     with ibkr_tab:
         st.subheader("Live IBKR Market Data Agent")

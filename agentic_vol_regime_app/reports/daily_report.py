@@ -34,6 +34,31 @@ def _slugify_report_model_name(model_name: str | None) -> str:
     return compact or "unknown_model"
 
 
+def _slugify_report_model_version(model_version: str | None) -> str:
+    if not model_version:
+        return ""
+    normalized = "".join(character.lower() if character.isalnum() else "_" for character in str(model_version))
+    compact = "_".join(part for part in normalized.split("_") if part)
+    return compact
+
+
+def resolve_daily_report_path(
+    *,
+    report_root: Path,
+    as_of: str,
+    report_model_name: str | None = None,
+    report_model_version: str | None = None,
+) -> Path:
+    """Return the canonical on-disk path for a daily report."""
+    reports_dir = report_root / "daily"
+    model_slug = _slugify_report_model_name(report_model_name)
+    version_slug = _slugify_report_model_version(report_model_version)
+    report_name = f"daily_regime_report_{as_of[:10]}_{model_slug}.md"
+    if version_slug:
+        report_name = f"daily_regime_report_{as_of[:10]}_{model_slug}_{version_slug}.md"
+    return reports_dir / report_name
+
+
 def render_daily_markdown(
     *,
     feature_record: FeatureRecord,
@@ -209,12 +234,16 @@ def write_daily_report(
     report_root: Path,
     as_of: str,
     report_model_name: str | None = None,
+    report_model_version: str | None = None,
 ) -> Path:
     """Persist the report to disk."""
     reports_dir = report_root / "daily"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    model_slug = _slugify_report_model_name(report_model_name)
-    report_name = f"daily_regime_report_{as_of[:10]}_{model_slug}.md"
-    report_path = reports_dir / report_name
+    report_path = resolve_daily_report_path(
+        report_root=report_root,
+        as_of=as_of,
+        report_model_name=report_model_name,
+        report_model_version=report_model_version,
+    )
     report_path.write_text(markdown, encoding="utf-8")
     return report_path
