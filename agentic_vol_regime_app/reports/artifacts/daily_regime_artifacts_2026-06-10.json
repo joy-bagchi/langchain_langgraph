@@ -1,6 +1,6 @@
 {
   "alert_record": {
-    "alert_id": "40edf55c-fa65-459a-8930-14c81c7a3aff",
+    "alert_id": "c0578149-13c5-442e-b743-94879b22a7fb",
     "alert_type": "PREDICTIVE_VOL_EXPANSION",
     "as_of": "2026-06-10T21:00:00Z",
     "belief_state": {
@@ -4847,7 +4847,7 @@
         "VIX6M",
         "VIX9M"
       ],
-      "requested_as_of_date": "2026-06-04"
+      "requested_as_of_date": "2026-06-12"
     },
     "quality": {
       "is_complete": false,

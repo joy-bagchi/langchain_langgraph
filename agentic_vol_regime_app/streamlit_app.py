@@ -693,24 +693,6 @@ def main() -> None:
                 "live call and perturbs the latest live observation stored in memory."
             ),
         )
-        enable_as_of_date = st.checkbox(
-            "Run as prior as-of date",
-            value=False,
-            help=(
-                "Rewinds the loaded snapshot history to the selected business date and runs the "
-                "report as if that were the observation date."
-            ),
-        )
-        selected_as_of_date = (
-            st.date_input(
-                "As-of Date",
-                value=date.today(),
-                max_value=date.today(),
-                disabled=not enable_as_of_date,
-            )
-            if enable_as_of_date
-            else None
-        )
 
         effective_daily_payload: dict[str, Any]
         if mode == "Live IBKR":
@@ -938,8 +920,6 @@ def main() -> None:
         if st.button("Run Daily Workflow", type="primary"):
             try:
                 payload = dict(effective_daily_payload)
-                if enable_as_of_date and selected_as_of_date is not None:
-                    payload["as_of_date"] = selected_as_of_date.isoformat()
                 result = run_daily_regime_agent(
                     input_payload=payload,
                     agent_path=selected_daily_agent_path,

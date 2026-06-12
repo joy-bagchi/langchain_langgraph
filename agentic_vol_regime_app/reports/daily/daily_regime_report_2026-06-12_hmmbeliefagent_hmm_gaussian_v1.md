@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-12T22:03:30.630482+00:00
+Date: 2026-06-12T23:17:28.201832+00:00
 
 Report model: `HMMBeliefAgent`
 Report model version: `hmm_gaussian_v1`
@@ -53,7 +53,7 @@ Risk notes:
 - Stay flexible because chop can resolve in either direction.
 
 Overwrite implementation:
-- Suggested call overwrite strike: `746.00`
+- Suggested call overwrite strike: `747.00`
 - Suggested DTE: `5`
 - Notes: HMM expected regime duration suggests approximately 5 DTE.
 

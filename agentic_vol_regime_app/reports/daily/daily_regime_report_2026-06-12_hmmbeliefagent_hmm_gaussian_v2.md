@@ -1,6 +1,6 @@
 # Daily Volatility Regime Report
 
-Date: 2026-06-12T21:49:58.603210+00:00
+Date: 2026-06-12T23:07:27.640551+00:00
 
 Report model: `HMMBeliefAgent`
 Report model version: `hmm_gaussian_v2`
@@ -70,7 +70,7 @@ Trained and active.
 
 Top HMM state: `VOL_EXPANSION`
 
-Current-state expected duration: `9.66` days
+Current-state expected duration: `8.12` days
 
 ### HMM State Probabilities
 
@@ -83,22 +83,39 @@ Current-state expected duration: `9.66` days
 
 ### HMM Persistence
 
-- Current state persists 5d: `0.62`
-- Current state persists 10d: `0.46`
-- Current state persists 21d: `0.35`
-- VOL_EXPANSION or HIGH_VOL within 5d: `0.64`
-- VOL_EXPANSION or HIGH_VOL within 10d: `0.48`
-- VOL_EXPANSION or HIGH_VOL within 21d: `0.38`
+- Current state persists 5d: `0.57`
+- Current state persists 10d: `0.39`
+- Current state persists 21d: `0.27`
+- VOL_EXPANSION or HIGH_VOL within 5d: `0.59`
+- VOL_EXPANSION or HIGH_VOL within 10d: `0.42`
+- VOL_EXPANSION or HIGH_VOL within 21d: `0.30`
 
 Warnings:
 - HMM state `HIGH_VOL_STRESS` used less than 5% of the training window.
+
+## Sector Correlation / Market Mode
+
+- avg_pairwise_corr_21d: `0.1471`
+- first_eigenvalue_share_21d: `0.4215`
+
+Interpretation:
+- Rising avg correlation and rising first eigenvalue share point to increasing vol-expansion risk.
+
+
+## Model Variant Comparison
+
+| Model | Top State | Confidence | Expected Duration | 10d High-Vol Transition Prob | Recommendation |
+|---|---|---:|---:|---:|---|
+| HMM v1 Core | VOL_EXPANSION | 0.90 | 6.59 | 0.10 | MEDIUM_OVERWRITE |
+| HMM v2 Core + Sector Corr | VOL_EXPANSION | 0.90 | 8.12 | 0.03 | MEDIUM_OVERWRITE |
+| HMM v3 Core + Geometry | VOL_EXPANSION | 0.90 | 8.81 | 0.02 | MEDIUM_OVERWRITE |
 
 
 ## Model Confidence
 
 Confidence: 0.90
 
-Uncertainty / entropy: -0.00
+Uncertainty / entropy: 0.01
 
 ## Critic Review
 
