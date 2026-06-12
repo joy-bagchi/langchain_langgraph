@@ -16,6 +16,7 @@ from agentic_vol_regime_app.app_runtime import (
     default_ml_agent_path,
     default_hmm_agent_path,
     default_hmm_v2_agent_path,
+    default_hmm_v3_agent_path,
     load_historical_belief_report,
     load_latest_live_daily_observation,
     load_or_run_historical_belief_report,
@@ -422,8 +423,8 @@ def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Pat
     assert initial_result["agent"]["agent_id"] == "daily_regime_hmm_orchestrator"
     assert "hmm_belief" in result["named_outputs"]
     assert "HMM Regime Persistence" in result["named_outputs"]["daily_report"]["markdown"]
-    assert "Emission vs Persistence" not in result["named_outputs"]["daily_report"]["markdown"]
-    assert "comparison_panel" not in result["named_outputs"]["daily_report"]
+    assert "Model Variant Comparison" in result["named_outputs"]["daily_report"]["markdown"]
+    assert result["named_outputs"]["daily_report"]["hmm_variant_comparison"]
     hmm_history = load_recent_hmm_state_history(
         agent_path=default_hmm_agent_path(),
         storage_root=tmp_path / ".workflow_memory",
@@ -466,8 +467,46 @@ def test_daily_regime_hmm_v2_agent_completes_with_variant_comparison(tmp_path: P
     assert result["status"] == "completed"
     assert result["agent"]["agent_id"] == "daily_regime_hmm_v2_orchestrator"
     assert result["named_outputs"]["hmm_belief"]["variant_id"] == "v2"
-    assert "hmm_variant_comparison" not in result["named_outputs"]["daily_report"]
-    assert "Model Variant Comparison" not in result["named_outputs"]["daily_report"]["markdown"]
+    assert result["named_outputs"]["daily_report"]["hmm_variant_comparison"]
+    assert "Model Variant Comparison" in result["named_outputs"]["daily_report"]["markdown"]
+    assert "Sector Correlation / Market Mode" in result["named_outputs"]["daily_report"]["markdown"]
+
+
+def test_daily_regime_hmm_v3_agent_completes_with_geometry_variant(tmp_path: Path) -> None:
+    input_payload = _load_sample_input("daily_snapshot_watch.json")
+    input_payload["report_root"] = str(tmp_path / "reports")
+    history = {
+        "SPY_close": [560.0 + (index * 0.35) for index in range(900)],
+        "VIX": [14.5 + (index * 0.01) for index in range(900)],
+        "VVIX": [92.0 + (index * 0.03) for index in range(900)],
+        "VIX9D": [14.0 + (index * 0.009) for index in range(900)],
+        "VIX3M": [17.8 + (index * 0.008) for index in range(900)],
+    }
+    for offset, symbol in enumerate(("XLK", "XLF", "XLE", "XLY", "XLP", "XLI", "XLB", "XLV", "XLU", "XLRE")):
+        history[f"{symbol}_close"] = [
+            float(80.0 + (index * 0.12) + np.sin((index / 8.0) + offset))
+            for index in range(900)
+        ]
+    input_payload["market_snapshot"]["history"] = history
+
+    original = hmm_belief.GaussianHMM
+    hmm_belief.GaussianHMM = FakeGaussianHMM
+    try:
+        result = _run_and_complete_daily_agent(
+            input_payload=input_payload,
+            storage_root=tmp_path / ".workflow_memory",
+            agent_path=default_hmm_v3_agent_path(),
+        )
+    finally:
+        hmm_belief.GaussianHMM = original
+
+    assert result["status"] == "completed"
+    assert result["agent"]["agent_id"] == "daily_regime_hmm_v3_orchestrator"
+    assert result["named_outputs"]["hmm_belief"]["variant_id"] == "v3"
+    assert "effective_rank_21d" in result["named_outputs"]["hmm_belief"]["inference_feature_vector"]
+    assert "log_det_corr_21d" in result["named_outputs"]["hmm_belief"]["inference_feature_vector"]
+    assert "Model Variant Comparison" in result["named_outputs"]["daily_report"]["markdown"]
+    assert "Sector Correlation / Market Mode" in result["named_outputs"]["daily_report"]["markdown"]
 
 
 def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> None:

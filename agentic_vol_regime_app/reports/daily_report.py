@@ -143,6 +143,49 @@ Current-state expected duration: `{hmm_record.current_state_expected_duration_da
 Warnings:
 {hmm_warning_lines}
 """
+        sector_metrics = dict(hmm_record.sector_metrics or {})
+        if sector_metrics:
+            interpretation_lines: list[str] = []
+            avg_corr = float(sector_metrics.get("avg_pairwise_corr_21d", 0.0) or 0.0)
+            first_share = float(sector_metrics.get("first_eigenvalue_share_21d", 0.0) or 0.0)
+            effective_rank = sector_metrics.get("effective_rank_21d")
+            log_det_corr = sector_metrics.get("log_det_corr_21d")
+            if avg_corr < 0.35 and first_share < 0.35:
+                interpretation_lines.append("Low avg correlation and low first eigenvalue share suggest stable sector independence.")
+            else:
+                interpretation_lines.append("Rising avg correlation and rising first eigenvalue share point to increasing vol-expansion risk.")
+            if effective_rank is not None:
+                interpretation_lines.append(
+                    "Lower effective rank implies one-factor market behavior and dimensional collapse."
+                )
+            if log_det_corr is not None:
+                interpretation_lines.append(
+                    "More negative log determinant indicates geometric volume collapse in the correlation structure."
+                )
+            metric_lines = [
+                f"- avg_pairwise_corr_21d: `{avg_corr:.4f}`",
+                f"- first_eigenvalue_share_21d: `{first_share:.4f}`",
+            ]
+            if effective_rank is not None:
+                metric_lines.append(f"- effective_rank_21d: `{float(effective_rank):.4f}`")
+            if log_det_corr is not None:
+                metric_lines.append(f"- log_det_corr_21d: `{float(log_det_corr):.4f}`")
+            hmm_section += "\n## Sector Correlation / Market Mode\n\n" + "\n".join(metric_lines)
+            hmm_section += "\n\nInterpretation:\n" + "\n".join(f"- {line}" for line in interpretation_lines) + "\n"
+
+    variant_section = ""
+    if hmm_variant_comparison:
+        variant_rows = "\n".join(
+            f"| {row.get('model', 'n/a')} | {row.get('top_state', 'n/a')} | {_format_probability(float(row.get('confidence', 0.0) or 0.0))} | {float(row.get('expected_duration_days', 0.0) or 0.0):.2f} | {float(row.get('transition_10d_high_vol_prob', 0.0) or 0.0):.2f} | {row.get('recommendation', 'n/a')} |"
+            for row in hmm_variant_comparison
+        )
+        variant_section = f"""
+## Model Variant Comparison
+
+| Model | Top State | Confidence | Expected Duration | 10d High-Vol Transition Prob | Recommendation |
+|---|---|---:|---:|---:|---|
+{variant_rows}
+"""
 
     model_lines: list[str] = []
     if report_model_name:
@@ -206,6 +249,7 @@ Overwrite implementation:
 {overwrite_plan}
 
 {hmm_section}
+{variant_section}
 
 ## Model Confidence
 

@@ -318,6 +318,77 @@ def test_sector_geometry_metrics_return_expected_ranges() -> None:
     assert metrics["effective_rank_21d"] >= 1.0
 
 
+def test_perfectly_correlated_synthetic_sectors_raise_market_mode_share() -> None:
+    history: dict[str, list[float]] = {}
+    base = [100.0 + float(index) for index in range(30)]
+    for symbol in SECTOR_ETF_UNIVERSE:
+        history[f"{symbol}_close"] = list(base)
+
+    metrics, warnings = compute_sector_geometry_metrics(history, lookback_days=21)
+
+    assert warnings == []
+    assert 0.0 <= metrics["first_eigenvalue_share_21d"] <= 1.0
+    assert metrics["first_eigenvalue_share_21d"] > 0.9
+
+
+def test_independent_synthetic_sectors_lower_market_mode_share() -> None:
+    history: dict[str, list[float]] = {}
+    for position, symbol in enumerate(SECTOR_ETF_UNIVERSE):
+        history[f"{symbol}_close"] = [
+            100.0
+            + (index * (1.0 + position * 0.03))
+            + math.sin((index / 3.0) + position) * (4.0 + position * 0.1)
+            + math.cos((index / 5.0) + position * 0.5) * 2.0
+            for index in range(30)
+        ]
+
+    metrics, warnings = compute_sector_geometry_metrics(history, lookback_days=21)
+
+    assert warnings == []
+    assert 0.0 <= metrics["first_eigenvalue_share_21d"] <= 1.0
+    assert metrics["first_eigenvalue_share_21d"] < 0.6
+
+
+def test_effective_rank_decreases_when_sectors_become_highly_correlated() -> None:
+    independent_history: dict[str, list[float]] = {}
+    correlated_history: dict[str, list[float]] = {}
+    base = [100.0 + float(index) for index in range(30)]
+    for position, symbol in enumerate(SECTOR_ETF_UNIVERSE):
+        independent_history[f"{symbol}_close"] = [
+            100.0
+            + (index * (1.0 + position * 0.03))
+            + math.sin((index / 3.0) + position) * (4.0 + position * 0.1)
+            + math.cos((index / 5.0) + position * 0.5) * 2.0
+            for index in range(30)
+        ]
+        correlated_history[f"{symbol}_close"] = [value + (position * 0.01) for value in base]
+
+    independent_metrics, _ = compute_sector_geometry_metrics(independent_history, lookback_days=21)
+    correlated_metrics, _ = compute_sector_geometry_metrics(correlated_history, lookback_days=21)
+
+    assert correlated_metrics["effective_rank_21d"] < independent_metrics["effective_rank_21d"]
+
+
+def test_log_det_corr_falls_when_correlation_matrix_nears_singularity() -> None:
+    independent_history: dict[str, list[float]] = {}
+    near_singular_history: dict[str, list[float]] = {}
+    base = [100.0 + float(index) for index in range(30)]
+    for position, symbol in enumerate(SECTOR_ETF_UNIVERSE):
+        independent_history[f"{symbol}_close"] = [
+            100.0
+            + (index * (1.0 + position * 0.03))
+            + math.sin((index / 3.0) + position) * (4.0 + position * 0.1)
+            + math.cos((index / 5.0) + position * 0.5) * 2.0
+            for index in range(30)
+        ]
+        near_singular_history[f"{symbol}_close"] = [value + (position * 0.0001) for value in base]
+
+    independent_metrics, _ = compute_sector_geometry_metrics(independent_history, lookback_days=21)
+    near_singular_metrics, _ = compute_sector_geometry_metrics(near_singular_history, lookback_days=21)
+
+    assert near_singular_metrics["log_det_corr_21d"] < independent_metrics["log_det_corr_21d"]
+
+
 def test_sector_return_matrix_warns_when_symbols_are_missing() -> None:
     history = _observation(days=40).history
     for symbol in SECTOR_ETF_UNIVERSE[:2]:
@@ -348,6 +419,47 @@ def test_hmm_v2_uses_sector_correlation_features(monkeypatch, tmp_path: Path) ->
     assert "avg_pairwise_corr_21d" in record.inference_feature_vector
     assert "first_eigenvalue_share_21d" in record.inference_feature_vector
     assert "avg_pairwise_corr_21d" in record.sector_metrics
+
+
+def test_hmm_v3_uses_sector_geometry_features(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hmm_belief, "GaussianHMM", FakeGaussianHMM)
+    observation = _observation(days=120)
+    feature_record = _feature_record(observation)
+    config = hmm_belief.load_hmm_config(app_paths=AppPaths(root=tmp_path), variant_id="v3")
+    record = compute_hmm_belief_record(
+        observation,
+        feature_record,
+        app_paths=AppPaths(root=tmp_path),
+        config=config,
+        variant_id="v3",
+    )
+
+    assert record.variant_id == "v3"
+    assert record.variant_label == "HMM v3 Core + Geometry"
+    assert "avg_pairwise_corr_21d" in record.inference_feature_vector
+    assert "first_eigenvalue_share_21d" in record.inference_feature_vector
+    assert "effective_rank_21d" in record.inference_feature_vector
+    assert "log_det_corr_21d" in record.inference_feature_vector
+
+
+def test_hmm_v3_falls_back_to_v1_when_sector_geometry_inputs_are_missing(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hmm_belief, "GaussianHMM", FakeGaussianHMM)
+    observation = _observation(days=120)
+    for symbol in SECTOR_ETF_UNIVERSE:
+        observation.history.pop(f"{symbol}_close", None)
+    feature_record = _feature_record(observation)
+    config = hmm_belief.load_hmm_config(app_paths=AppPaths(root=tmp_path), variant_id="v3")
+
+    record = compute_hmm_belief_record(
+        observation,
+        feature_record,
+        app_paths=AppPaths(root=tmp_path),
+        config=config,
+        variant_id="v3",
+    )
+
+    assert record.variant_id == "v1"
+    assert any("fell back to hmm v1" in warning.lower() for warning in record.warnings)
 
 
 def test_hmm_report_renders_section() -> None:
@@ -435,6 +547,12 @@ def test_hmm_report_renders_section() -> None:
                 "vvix_vix_ratio": 5.5,
             }
         },
+        sector_metrics={
+            "avg_pairwise_corr_21d": 0.42,
+            "first_eigenvalue_share_21d": 0.53,
+            "effective_rank_21d": 2.81,
+            "log_det_corr_21d": -3.12,
+        },
     )
     alert_record = AlertRecord(
         schema_version="alert.v1",
@@ -474,13 +592,38 @@ def test_hmm_report_renders_section() -> None:
         alert_record=alert_record,
         policy_record=policy_record,
         critic_record=critic_record,
+        hmm_variant_comparison=[
+            {
+                "model": "HMM v1 Core",
+                "top_state": "LOW_VOL_TREND",
+                "confidence": 0.68,
+                "expected_duration_days": 5.0,
+                "transition_10d_high_vol_prob": 0.14,
+                "recommendation": "NO_OVERWRITE",
+            },
+            {
+                "model": "HMM v2 Core + Sector Corr",
+                "top_state": "VOL_EXPANSION",
+                "confidence": 0.72,
+                "expected_duration_days": 4.1,
+                "transition_10d_high_vol_prob": 0.22,
+                "recommendation": "LIGHT_OVERWRITE",
+            },
+            {
+                "model": "HMM v3 Core + Geometry",
+                "top_state": "HIGH_VOL_STRESS",
+                "confidence": 0.77,
+                "expected_duration_days": 3.4,
+                "transition_10d_high_vol_prob": 0.31,
+                "recommendation": "MEDIUM_OVERWRITE",
+            },
+        ],
     )
 
     assert "HMM Regime Persistence" in markdown
     assert "Current-state expected duration" in markdown
-    assert "Belief Reconciliation" not in markdown
-    assert "Model Variant Comparison" not in markdown
-    assert "Emission vs Persistence" not in markdown
+    assert "Model Variant Comparison" in markdown
+    assert "Sector Correlation / Market Mode" in markdown
 
 
 def test_hmm_to_belief_record_maps_four_states_into_global_beliefs() -> None:

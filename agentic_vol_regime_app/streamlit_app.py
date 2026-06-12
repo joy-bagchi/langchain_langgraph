@@ -23,6 +23,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     default_agent_path,
     default_hmm_agent_path,
     default_hmm_v2_agent_path,
+    default_hmm_v3_agent_path,
     default_ibkr_agent_path,
     default_ml_agent_path,
     load_or_run_historical_belief_report,
@@ -56,7 +57,7 @@ CARD_LABEL_COLOR = "#facc15"
 CARD_VALUE_COLOR = "#fef3c7"
 WIDGET_BORDER_COLOR = "#facc15"
 WIDGET_BORDER_FOCUS = "#fde68a"
-REGIME_ENGINE_OPTIONS = ["Heuristic Agent", "ML Agent", "HMMv1 Agent", "HMMv2 Agent"]
+REGIME_ENGINE_OPTIONS = ["Heuristic Agent", "ML Agent", "HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"]
 
 
 def _pretty_json(payload: Any) -> str:
@@ -79,11 +80,15 @@ def _resolve_daily_agent_path_from_choice(choice: str) -> Path:
         return default_ml_agent_path()
     if choice == "HMMv1 Agent":
         return default_hmm_agent_path()
-    return default_hmm_v2_agent_path()
+    if choice == "HMMv2 Agent":
+        return default_hmm_v2_agent_path()
+    if choice == "HMMv3 Agent":
+        return default_hmm_v3_agent_path()
+    return default_agent_path()
 
 
 def _default_history_days_for_agent_choice(choice: str, fallback: int) -> int:
-    return 756 if choice in {"HMMv1 Agent", "HMMv2 Agent"} else int(fallback)
+    return 756 if choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"} else int(fallback)
 
 
 def _render_runtime_diagnostics(st, result: dict[str, Any]) -> None:
@@ -676,7 +681,7 @@ def main() -> None:
         agent_choice = st.selectbox(
             "Regime Engine",
             options=REGIME_ENGINE_OPTIONS,
-            help="All agents use the same workflow surface. HMMv2 adds sector-correlation features on top of the HMMv1 core lens.",
+            help="All agents use the same workflow surface. HMM variants additively extend the HMMv1 core lens.",
         )
         selected_daily_agent_path = _resolve_daily_agent_path_from_choice(agent_choice)
         mode = st.radio(
@@ -803,7 +808,7 @@ def main() -> None:
                 "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
             }
             st.caption("Using default symbol set: SPY, VIX, VVIX, VIX9D, and VIX3M.")
-            if agent_choice in {"HMMv1 Agent", "HMMv2 Agent"}:
+            if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"}:
                 st.caption("HMM live runs default to a 756-day history window. Increase this to 1260 if you want a deeper regime-training window.")
         elif mode == "Scenario":
             latest_live_observation = load_latest_live_daily_observation(
@@ -888,7 +893,7 @@ def main() -> None:
             )
             effective_daily_payload = _parse_json_text(daily_json, fallback=default_daily_payload)
 
-        if agent_choice in {"HMMv1 Agent", "HMMv2 Agent"}:
+        if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"}:
             with st.expander("HMM Snapshot", expanded=False):
                 st.caption(
                     "Freeze the current trained HMM artifact and feature-set config before experimenting with new features."
@@ -969,7 +974,7 @@ def main() -> None:
                     database_url=database_url or None,
                     limit=12,
                 )
-                if agent_choice in {"HMMv1 Agent", "HMMv2 Agent"}
+                if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"}
                 else []
             )
             _render_daily_result(st, current_daily_result, hmm_history=hmm_history)

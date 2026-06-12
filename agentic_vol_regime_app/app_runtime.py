@@ -78,6 +78,10 @@ def default_hmm_v2_agent_path() -> Path:
     return AppPaths.default().agents_dir / "daily_regime_hmm_v2_orchestrator.yaml"
 
 
+def default_hmm_v3_agent_path() -> Path:
+    return AppPaths.default().agents_dir / "daily_regime_hmm_v3_orchestrator.yaml"
+
+
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
 
@@ -88,6 +92,8 @@ def _resolve_report_model_identity(agent_path: str | Path | None = None) -> tupl
     belief_engine = str(dict(agent_definition.metadata).get("belief_engine", "heuristic")).strip().lower()
     if belief_engine == "ml_linear_regression":
         return ("LinearRegimeBeliefModel", "linear_regression_regime_v1")
+    if belief_engine == "hmm_gaussian_v3":
+        return ("HMMBeliefAgent", "hmm_gaussian_v3")
     if belief_engine == "hmm_gaussian_v2":
         return ("HMMBeliefAgent", "hmm_gaussian_v2")
     if belief_engine.startswith("hmm_gaussian"):
@@ -261,6 +267,8 @@ def _resolve_hmm_variant_id(agent_path: str | Path | None = None) -> str:
     resolved_agent_path = Path(agent_path or default_hmm_agent_path()).resolve()
     agent_definition = YamlAgentDefinitionService().load(resolved_agent_path)
     belief_engine = str(dict(agent_definition.metadata).get("belief_engine", "hmm_gaussian_v1")).strip().lower()
+    if belief_engine == "hmm_gaussian_v3":
+        return "v3"
     return "v2" if belief_engine == "hmm_gaussian_v2" else "v1"
 
 
@@ -522,9 +530,12 @@ def snapshot_hmm_baseline(
     variant_id = _resolve_hmm_variant_id(agent_path or default_hmm_agent_path())
     hmm_config = load_hmm_config(app_paths=resolved_paths, variant_id=variant_id)
     model_path = resolved_paths.models_dir / "hmm" / hmm_config.model_artifact_name
-    config_path = resolved_paths.features_dir / (
-        "hmm_v1_core.yaml" if variant_id == "v1" else "hmm_v2_core_plus_sector_corr.yaml"
-    )
+    config_file_name = {
+        "v1": "hmm_v1_core.yaml",
+        "v2": "hmm_v2_core_plus_sector_corr.yaml",
+        "v3": "hmm_v3_core_plus_sector_geometry.yaml",
+    }.get(variant_id, "hmm_v1_core.yaml")
+    config_path = resolved_paths.features_dir / config_file_name
 
     if not model_path.exists():
         raise FileNotFoundError(f"No trained HMM artifact exists yet at: {model_path}")

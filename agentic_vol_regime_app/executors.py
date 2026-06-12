@@ -12,7 +12,7 @@ from agentic_harness.contracts import MemoryQuery, MemoryRecord, StepExecutionRe
 
 from agentic_vol_regime_app.alerts.predictive_alerts import build_alert_record
 from agentic_vol_regime_app.config import AppPaths, load_yaml
-from agentic_vol_regime_app.contracts import CriticReviewRecord, HMMBeliefRecord, ObservationRecord
+from agentic_vol_regime_app.contracts import AlertRecord, BeliefRecord, CriticReviewRecord, FeatureRecord, HMMBeliefRecord, ObservationRecord, PolicyRecommendationRecord, TransitionProbabilityRecord
 from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
 from agentic_vol_regime_app.data.quality import validate_observation
 from agentic_vol_regime_app.features.build_features import compute_feature_record
@@ -55,6 +55,8 @@ def _belief_engine(state: WorkflowGraphState) -> str:
 
 def _hmm_variant_id(state: WorkflowGraphState) -> str:
     engine = _belief_engine(state)
+    if engine == "hmm_gaussian_v3":
+        return "v3"
     if engine == "hmm_gaussian_v2":
         return "v2"
     return "v1"
@@ -62,6 +64,10 @@ def _hmm_variant_id(state: WorkflowGraphState) -> str:
 
 def _uses_hmm_history_cache(state: WorkflowGraphState) -> bool:
     return _belief_engine(state).startswith("hmm_gaussian")
+
+
+def _all_hmm_variant_ids() -> tuple[str, ...]:
+    return ("v1", "v2", "v3")
 
 
 def _report_model_metadata(
@@ -76,6 +82,56 @@ def _report_model_metadata(
     if engine == "ml_linear_regression":
         return ("LinearRegimeBeliefModel", str(belief_record.model_version))
     return ("HeuristicBeliefModel", str(belief_record.model_version))
+
+
+def _compute_hmm_variant_comparison(
+    *,
+    observation: ObservationRecord,
+    feature_record: FeatureRecord,
+    threshold_config: dict[str, Any],
+    app_paths: AppPaths,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for variant_id in _all_hmm_variant_ids():
+        variant_config = load_hmm_config(app_paths=app_paths, variant_id=variant_id)
+        hmm_record = compute_hmm_belief_record(
+            observation,
+            feature_record,
+            app_paths=app_paths,
+            variant_id=variant_id,
+        )
+        belief_record = hmm_to_belief_record(hmm_record)
+        transition_record = estimate_transition_probabilities(feature_record, belief_record)
+        alert_record = build_alert_record(
+            feature_record,
+            belief_record,
+            transition_record,
+            thresholds=dict(threshold_config),
+        )
+        policy_record = recommend_policy_action(
+            feature_record,
+            belief_record,
+            transition_record,
+            alert_record,
+            hmm_record=hmm_record.to_dict(),
+        )
+        rows.append(
+            {
+                "variant_id": variant_id,
+                "model": variant_config.variant_label,
+                "top_state": hmm_record.top_state,
+                "confidence": float(hmm_record.confidence),
+                "expected_duration_days": float(hmm_record.current_state_expected_duration_days),
+                "transition_10d_high_vol_prob": float(
+                    hmm_record.transition_probabilities.get("to_high_vol_stress_10d", 0.0)
+                ),
+                "recommendation": policy_record.recommended_action,
+                "training_status": hmm_record.training_status,
+                "model_converged": bool(hmm_record.model_converged),
+                "effective_variant_id": hmm_record.variant_id,
+            }
+        )
+    return rows
 
 
 def _memory_namespace(state: WorkflowGraphState) -> str:
@@ -1062,6 +1118,16 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
 
         engine = _belief_engine(state)
         report_hmm_record = hmm_record if engine.startswith("hmm_gaussian") else None
+        hmm_variant_comparison = (
+            _compute_hmm_variant_comparison(
+                observation=load_market_snapshot({"market_snapshot": state["named_outputs"]["observation"]}, app_root=app_paths.root),
+                feature_record=feature_record,
+                threshold_config=threshold_config,
+                app_paths=app_paths,
+            )
+            if engine.startswith("hmm_gaussian")
+            else None
+        )
 
         markdown = render_daily_markdown(
             feature_record=feature_record,
@@ -1072,6 +1138,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             policy_record=policy_record,
             critic_record=critic_record,
             review_decision=review_decision,
+            hmm_variant_comparison=hmm_variant_comparison,
             report_model_name=report_model_name,
             report_model_version=report_model_version,
         )
@@ -1105,6 +1172,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 "critic_review": critic_record.to_dict(),
                 "review_decision": review_decision,
                 **({"hmm_belief": report_hmm_record.to_dict()} if report_hmm_record is not None else {}),
+                **({"hmm_variant_comparison": list(hmm_variant_comparison or [])} if hmm_variant_comparison else {}),
             },
             "agent": {
                 "agent_id": state.get("agent_id"),
@@ -1129,6 +1197,7 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 "top_regime": max(belief_record.beliefs, key=belief_record.beliefs.get),
                 "alert_severity": alert_record.severity,
                 "recommended_action": policy_record.recommended_action,
+                **({"hmm_variant_comparison": list(hmm_variant_comparison or [])} if hmm_variant_comparison else {}),
             }
         )
 

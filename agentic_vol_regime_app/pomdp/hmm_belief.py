@@ -57,6 +57,11 @@ SECTOR_CORR_FEATURES = [
     "first_eigenvalue_share_21d",
 ]
 
+SECTOR_GEOMETRY_FEATURES = [
+    "effective_rank_21d",
+    "log_det_corr_21d",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class HMMVariantSpec:
@@ -90,6 +95,18 @@ HMM_VARIANTS: dict[str, HMMVariantSpec] = {
         feature_flags={
             "enable_hmm_v2_sector_corr": True,
             "enable_hmm_v3_sector_geometry": False,
+            "enable_sector_geometry_only_diagnostic": False,
+        },
+    ),
+    "v3": HMMVariantSpec(
+        variant_id="v3",
+        model_version="hmm_gaussian_v3",
+        config_name="hmm_v3_core_plus_sector_geometry.yaml",
+        artifact_name="daily_regime_hmm_v3_model.pkl",
+        label="HMM v3 Core + Geometry",
+        feature_flags={
+            "enable_hmm_v2_sector_corr": True,
+            "enable_hmm_v3_sector_geometry": True,
             "enable_sector_geometry_only_diagnostic": False,
         },
     ),
@@ -131,8 +148,13 @@ def load_hmm_config(*, app_paths: AppPaths, variant_id: str = "v1") -> HMMConfig
     if not config_path.exists() and spec.variant_id == "v1" and legacy_v1_path.exists():
         config_path = legacy_v1_path
     if not config_path.exists():
+        default_feature_list = list(DEFAULT_FEATURES)
+        if spec.feature_flags.get("enable_hmm_v2_sector_corr", False):
+            default_feature_list += list(SECTOR_CORR_FEATURES)
+        if spec.feature_flags.get("enable_hmm_v3_sector_geometry", False):
+            default_feature_list += list(SECTOR_GEOMETRY_FEATURES)
         return HMMConfig(
-            feature_list=list(DEFAULT_FEATURES) + (SECTOR_CORR_FEATURES if spec.variant_id == "v2" else []),
+            feature_list=default_feature_list,
             variant_id=spec.variant_id,
             variant_label=spec.label,
             model_version=spec.model_version,
@@ -143,7 +165,11 @@ def load_hmm_config(*, app_paths: AppPaths, variant_id: str = "v1") -> HMMConfig
     import yaml
 
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    default_feature_list = list(DEFAULT_FEATURES) + (SECTOR_CORR_FEATURES if spec.variant_id == "v2" else [])
+    default_feature_list = list(DEFAULT_FEATURES)
+    if spec.feature_flags.get("enable_hmm_v2_sector_corr", False):
+        default_feature_list += list(SECTOR_CORR_FEATURES)
+    if spec.feature_flags.get("enable_hmm_v3_sector_geometry", False):
+        default_feature_list += list(SECTOR_GEOMETRY_FEATURES)
     return HMMConfig(
         n_components=int(payload.get("n_components", 4)),
         covariance_type=str(payload.get("covariance_type", "diag")),
@@ -324,7 +350,7 @@ def _build_historical_feature_rows(
             "drawdown_21d": drawdown,
             "trend_persistence_21d": trend_persistence,
         }
-        if config.feature_flags.get("enable_hmm_v2_sector_corr", False):
+        if config.feature_flags.get("enable_hmm_v2_sector_corr", False) or config.feature_flags.get("enable_hmm_v3_sector_geometry", False):
             sector_history = _build_sector_history_window(observation, end_index=index, window_length=21)
             sector_metrics, sector_warnings = compute_sector_geometry_metrics(sector_history, lookback_days=21)
             if sector_warnings and not sector_warning_seen:
@@ -332,6 +358,8 @@ def _build_historical_feature_rows(
                 sector_warning_seen = True
             values["avg_pairwise_corr_21d"] = sector_metrics.get("avg_pairwise_corr_21d")
             values["first_eigenvalue_share_21d"] = sector_metrics.get("first_eigenvalue_share_21d")
+            values["effective_rank_21d"] = sector_metrics.get("effective_rank_21d")
+            values["log_det_corr_21d"] = sector_metrics.get("log_det_corr_21d")
 
         if any(values.get(name) is None for name in config.feature_list):
             continue
@@ -470,6 +498,8 @@ def _build_state_feature_summaries(
         "vix_vix3m_ratio",
         "avg_pairwise_corr_21d",
         "first_eigenvalue_share_21d",
+        "effective_rank_21d",
+        "log_det_corr_21d",
     ]
     summaries: dict[str, dict[str, float]] = {}
     for raw_state in range(means.shape[0]):
@@ -536,7 +566,39 @@ def _build_interpretation_notes(
             notes.append("Sector correlations remain relatively independent; the market mode is not dominant.")
         else:
             notes.append("Sector co-movement is elevated; rising market-mode dominance raises vol-expansion risk.")
+    if config.feature_flags.get("enable_hmm_v3_sector_geometry", False) and sector_metrics:
+        effective_rank = sector_metrics.get("effective_rank_21d", 0.0)
+        log_det_corr = sector_metrics.get("log_det_corr_21d", 0.0)
+        if effective_rank > 0.0:
+            notes.append(
+                f"Sector effective rank is {effective_rank:.2f}; lower values indicate dimensional collapse into fewer market directions."
+            )
+        notes.append(
+            f"Regularized sector-correlation log determinant is {log_det_corr:.2f}; more negative values indicate geometric volume collapse."
+        )
     return notes
+
+
+def _fallback_to_v1_record(
+    *,
+    observation: ObservationRecord,
+    feature_record: FeatureRecord,
+    app_paths: AppPaths,
+    force_retrain: bool,
+    warnings: list[str],
+    reason: str,
+) -> HMMBeliefRecord:
+    fallback_record = compute_hmm_belief_record(
+        observation,
+        feature_record,
+        app_paths=app_paths,
+        config=load_hmm_config(app_paths=app_paths, variant_id="v1"),
+        variant_id="v1",
+        force_retrain=force_retrain,
+    )
+    fallback_record.warnings = list(dict.fromkeys(list(warnings) + list(fallback_record.warnings) + [reason]))
+    fallback_record.drivers = list(fallback_record.drivers) + [reason]
+    return fallback_record
 
 
 def _safe_expected_duration(persistence: float) -> float:
@@ -664,18 +726,14 @@ def compute_hmm_belief_record(
     rows, warnings = _build_historical_feature_rows(observation, config=config)
     if not rows:
         if config.variant_id != "v1":
-            fallback_record = compute_hmm_belief_record(
-                observation,
-                feature_record,
+            return _fallback_to_v1_record(
+                observation=observation,
+                feature_record=feature_record,
                 app_paths=app_paths,
-                config=load_hmm_config(app_paths=app_paths, variant_id="v1"),
-                variant_id="v1",
                 force_retrain=force_retrain,
+                warnings=warnings,
+                reason=f"Fell back to HMM v1 because {config.variant_label} sector/geometry data was incomplete.",
             )
-            fallback_warnings = list(dict.fromkeys(list(warnings) + list(fallback_record.warnings) + ["Fell back to HMM v1 because HMM v2 sector data was incomplete."]))
-            fallback_record.warnings = fallback_warnings
-            fallback_record.drivers = list(fallback_record.drivers) + ["HMM v2 sector features were unavailable, so the app reverted to the HMM v1 baseline."]
-            return fallback_record
         return _warning_record(
             as_of=feature_record.as_of,
             config=config,
@@ -686,13 +744,13 @@ def compute_hmm_belief_record(
     training_rows = rows[:-1]
     if len(training_rows) < max(2, config.n_components):
         if config.variant_id != "v1":
-            return compute_hmm_belief_record(
-                observation,
-                feature_record,
+            return _fallback_to_v1_record(
+                observation=observation,
+                feature_record=feature_record,
                 app_paths=app_paths,
-                config=load_hmm_config(app_paths=app_paths, variant_id="v1"),
-                variant_id="v1",
                 force_retrain=force_retrain,
+                warnings=warnings,
+                reason=f"Fell back to HMM v1 because {config.variant_label} had insufficient fully populated training rows.",
             )
         return _warning_record(
             as_of=feature_record.as_of,
