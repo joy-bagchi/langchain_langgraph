@@ -35,7 +35,6 @@ def build_alert_record(
         **probabilities,
         "transition_belief": beliefs.get("VOL_EXPANSION_TRANSITION", 0.0),
         "high_vol_belief": beliefs.get("HIGH_VOL_RISK_OFF", 0.0),
-        "panic_belief": beliefs.get("PANIC_CONVEXITY_STRESS", 0.0),
     }
     confirming_features_count = transition_record.confirming_features_count
     drivers = list(transition_record.top_predictive_factors)
@@ -88,7 +87,7 @@ def build_alert_record(
         belief_state={
             "VOL_EXPANSION_TRANSITION": round(beliefs.get("VOL_EXPANSION_TRANSITION", 0.0), 6),
             "HIGH_VOL_RISK_OFF": round(beliefs.get("HIGH_VOL_RISK_OFF", 0.0), 6),
-            "PANIC_CONVEXITY_STRESS": round(beliefs.get("PANIC_CONVEXITY_STRESS", 0.0), 6),
+            "MID_VOL_CHOP": round(beliefs.get("MID_VOL_CHOP", 0.0), 6),
         },
         drivers=drivers[:4],
         recommended_review=review_map[severity],

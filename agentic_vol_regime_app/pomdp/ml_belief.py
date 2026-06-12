@@ -153,8 +153,6 @@ def update_belief_state_with_linear_regression(
         "MID_VOL_CHOP": 1.0,
         "VOL_EXPANSION_TRANSITION": 0.9,
         "HIGH_VOL_RISK_OFF": 0.7,
-        "PANIC_CONVEXITY_STRESS": 0.35,
-        "POST_PANIC_COMPRESSION": 0.55,
     }
     drivers: list[str] = []
 
@@ -177,7 +175,7 @@ def update_belief_state_with_linear_regression(
         scores["STABLE_LOW_VOL_TREND"] += 0.85
     if normalized_gap <= -0.75:
         scores["STABLE_LOW_VOL_TREND"] += 0.7
-        scores["POST_PANIC_COMPRESSION"] += 0.8
+        scores["MID_VOL_CHOP"] += 0.55
         drivers.append("Observed VIX is below the regression-implied level, which points to compression.")
 
     if 18.5 <= current_vix < 22.5:
@@ -201,15 +199,15 @@ def update_belief_state_with_linear_regression(
         scores["HIGH_VOL_RISK_OFF"] += 0.7
 
     if normalized_gap >= 2.25 and vvix_ratio >= 6.4:
-        scores["PANIC_CONVEXITY_STRESS"] += 1.35
+        scores["HIGH_VOL_RISK_OFF"] += 1.35
         drivers.append("VIX and convexity are both far above the fitted relationship.")
     if drawdown >= 0.07:
-        scores["PANIC_CONVEXITY_STRESS"] += 0.8
+        scores["HIGH_VOL_RISK_OFF"] += 0.8
 
     if normalized_gap <= -0.8 and current_vix > 20.0 and term_state == "contango":
-        scores["POST_PANIC_COMPRESSION"] += 1.0
+        scores["MID_VOL_CHOP"] += 1.0
     if trend_persistence >= 0.6 and normalized_gap <= 0.0:
-        scores["POST_PANIC_COMPRESSION"] += 0.35
+        scores["STABLE_LOW_VOL_TREND"] += 0.35
 
     beliefs = _softmax(scores)
     if previous_belief:

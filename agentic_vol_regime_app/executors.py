@@ -12,7 +12,7 @@ from agentic_harness.contracts import MemoryQuery, MemoryRecord, StepExecutionRe
 
 from agentic_vol_regime_app.alerts.predictive_alerts import build_alert_record
 from agentic_vol_regime_app.config import AppPaths, load_yaml
-from agentic_vol_regime_app.contracts import CriticReviewRecord, ObservationRecord
+from agentic_vol_regime_app.contracts import CriticReviewRecord, HMMBeliefRecord, ObservationRecord
 from agentic_vol_regime_app.data.market_data_loader import load_market_snapshot
 from agentic_vol_regime_app.data.quality import validate_observation
 from agentic_vol_regime_app.features.build_features import compute_feature_record
@@ -744,13 +744,16 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 previous_belief=_load_previous_belief(state),
             )
         elif engine.startswith("hmm_gaussian"):
-            hmm_record = compute_hmm_belief_record(
-                observation,
-                feature_record,
-                app_paths=app_paths,
-                variant_id=_hmm_variant_id(state),
-                force_retrain=bool(state.get("input_payload", {}).get("as_of_date")),
-            )
+            existing_hmm_payload = dict(state["named_outputs"].get("hmm_belief", {}))
+            hmm_record = HMMBeliefRecord(**existing_hmm_payload) if existing_hmm_payload else None
+            if hmm_record is None:
+                hmm_record = compute_hmm_belief_record(
+                    observation,
+                    feature_record,
+                    app_paths=app_paths,
+                    variant_id=_hmm_variant_id(state),
+                    force_retrain=bool(state.get("input_payload", {}).get("as_of_date")),
+                )
             _raise_for_untrained_hmm(hmm_record=hmm_record)
             belief_record = hmm_to_belief_record(
                 hmm_record,
@@ -768,6 +771,8 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         state: WorkflowGraphState,
         _: dict[str, Any],
     ) -> StepExecutionResult:
+        if not _belief_engine(state).startswith("hmm_gaussian"):
+            return StepExecutionResult(output={}, metadata={"skipped": True, "reason": "non_hmm_engine"})
         observation = load_market_snapshot(
             {"market_snapshot": state["named_outputs"]["observation"]},
             app_root=app_paths.root,
@@ -915,12 +920,14 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             "feature_record": state["named_outputs"]["feature_record"],
             "belief_state": state["named_outputs"]["belief_state"],
             "transition_probabilities": state["named_outputs"]["transition_probabilities"],
-            "hmm_belief": state["named_outputs"].get("hmm_belief"),
             "alert_record": state["named_outputs"]["alert_record"],
             "policy_recommendation": state["named_outputs"]["policy_recommendation"],
             "critic_review": state["named_outputs"]["critic_review"],
             "review_decision": state["named_outputs"].get("review_decision"),
         }
+        hmm_payload = state["named_outputs"].get("hmm_belief")
+        if hmm_payload:
+            payload["hmm_belief"] = hmm_payload
         artifact_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return StepExecutionResult(
             output={
@@ -1013,117 +1020,8 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             state=state,
         )
 
-        observation = load_market_snapshot(
-            {"market_snapshot": state["named_outputs"]["observation"]},
-            app_root=app_paths.root,
-        )
         engine = _belief_engine(state)
         report_hmm_record = hmm_record if engine.startswith("hmm_gaussian") else None
-        heuristic_belief = update_belief_state(
-            feature_record,
-            previous_belief=_load_previous_belief(state),
-        )
-        ml_belief = update_belief_state_with_linear_regression(
-            feature_record,
-            observation,
-            previous_belief=_load_previous_belief(state),
-        )
-        hmm_comparison_belief = (
-            hmm_to_belief_record(report_hmm_record, previous_belief=_load_previous_belief(state))
-            if report_hmm_record
-            else None
-        )
-        hmm_variant_rows: list[dict[str, Any]] = []
-        if engine.startswith("hmm_gaussian"):
-            variant_ids = ["v1", "v2"]
-            for variant_id in variant_ids:
-                variant_record = compute_hmm_belief_record(
-                    observation,
-                    feature_record,
-                    app_paths=app_paths,
-                    variant_id=variant_id,
-                )
-                variant_belief = hmm_to_belief_record(
-                    variant_record,
-                    previous_belief=_load_previous_belief(state),
-                )
-                variant_policy = recommend_policy_action(
-                    feature_record,
-                    variant_belief if variant_record.is_trained else heuristic_belief,
-                    transition_record,
-                    alert_record,
-                    hmm_record=variant_record.to_dict(),
-                )
-                hmm_variant_rows.append(
-                    {
-                        "model": variant_record.variant_label,
-                        "top_state": variant_record.top_state if variant_record.is_trained else "Not trained enough",
-                        "confidence": variant_record.confidence,
-                        "expected_duration_days": variant_record.current_state_expected_duration_days,
-                        "high_vol_transition_prob_10d": float(
-                            variant_record.transition_probabilities.get("to_high_vol_stress_10d", 0.0)
-                        ),
-                        "recommendation": variant_policy.recommended_action if variant_record.is_trained else "Fallback to heuristic",
-                        "sector_metrics": dict(variant_record.sector_metrics),
-                    }
-                )
-        comparison_panel = [
-            {
-                "engine": "Heuristic",
-                "top_regime": max(heuristic_belief.beliefs, key=heuristic_belief.beliefs.get),
-                "confidence": heuristic_belief.confidence,
-                "recommended_posture": recommend_policy_action(
-                    feature_record,
-                    heuristic_belief,
-                    transition_record,
-                    alert_record,
-                    hmm_record=hmm_record.to_dict() if hmm_record else None,
-                ).recommended_action,
-            },
-            {
-                "engine": "Linear ML",
-                "top_regime": max(ml_belief.beliefs, key=ml_belief.beliefs.get),
-                "confidence": ml_belief.confidence,
-                "recommended_posture": recommend_policy_action(
-                    feature_record,
-                    ml_belief,
-                    transition_record,
-                    alert_record,
-                    hmm_record=hmm_record.to_dict() if hmm_record else None,
-                ).recommended_action,
-            },
-        ]
-        if report_hmm_record is not None:
-            comparison_panel.extend(
-                [
-                    {
-                        "engine": f"HMM{report_hmm_record.variant_id.upper()}",
-                        "top_regime": (
-                            report_hmm_record.top_state
-                            if report_hmm_record.is_trained
-                            else "Not trained enough"
-                        ),
-                        "confidence": report_hmm_record.confidence,
-                        "recommended_posture": (
-                            recommend_policy_action(
-                                feature_record,
-                                hmm_comparison_belief or heuristic_belief,
-                                transition_record,
-                                alert_record,
-                                hmm_record=report_hmm_record.to_dict(),
-                            ).recommended_action
-                            if report_hmm_record.is_trained
-                            else "Fallback to heuristic"
-                        ),
-                    },
-                    {
-                        "engine": "Ensemble (disabled)",
-                        "top_regime": "Disabled",
-                        "confidence": 0.0,
-                        "recommended_posture": "Disabled",
-                    },
-                ]
-            )
 
         markdown = render_daily_markdown(
             feature_record=feature_record,
@@ -1134,8 +1032,6 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             policy_record=policy_record,
             critic_record=critic_record,
             review_decision=review_decision,
-            comparison_panel=comparison_panel,
-            hmm_variant_comparison=hmm_variant_rows,
             report_model_name=report_model_name,
             report_model_version=report_model_version,
         )
@@ -1152,8 +1048,6 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
                 "top_regime": max(belief_record.beliefs, key=belief_record.beliefs.get),
                 "alert_severity": alert_record.severity,
                 "recommended_action": policy_record.recommended_action,
-                "comparison_panel": comparison_panel,
-                "hmm_variant_comparison": hmm_variant_rows,
             }
         )
 

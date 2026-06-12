@@ -1,4 +1,4 @@
-n_components: 3
+n_components: 4
 covariance_type: diag
 n_iter: 500
 random_state: 17

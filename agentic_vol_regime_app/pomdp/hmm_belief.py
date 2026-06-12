@@ -23,15 +23,17 @@ from agentic_vol_regime_app.features.sector_geometry import compute_sector_geome
 
 
 HMM_STATE_ORDER = (
-    "STABLE",
-    "EXPANDING_VOL",
-    "HIGH_VOL",
+    "LOW_VOL_TREND",
+    "MID_VOL_CHOP",
+    "VOL_EXPANSION",
+    "HIGH_VOL_STRESS",
 )
 
 HMM_TO_GLOBAL_REGIME = {
-    "STABLE": "STABLE_LOW_VOL_TREND",
-    "EXPANDING_VOL": "VOL_EXPANSION_TRANSITION",
-    "HIGH_VOL": "HIGH_VOL_RISK_OFF",
+    "LOW_VOL_TREND": "STABLE_LOW_VOL_TREND",
+    "MID_VOL_CHOP": "MID_VOL_CHOP",
+    "VOL_EXPANSION": "VOL_EXPANSION_TRANSITION",
+    "HIGH_VOL_STRESS": "HIGH_VOL_RISK_OFF",
 }
 
 DEFAULT_FEATURES = [
@@ -96,7 +98,7 @@ HMM_VARIANTS: dict[str, HMMVariantSpec] = {
 
 @dataclass(slots=True)
 class HMMConfig:
-    n_components: int = 3
+    n_components: int = 4
     covariance_type: str = "diag"
     n_iter: int = 500
     random_state: int = 17
@@ -143,7 +145,7 @@ def load_hmm_config(*, app_paths: AppPaths, variant_id: str = "v1") -> HMMConfig
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     default_feature_list = list(DEFAULT_FEATURES) + (SECTOR_CORR_FEATURES if spec.variant_id == "v2" else [])
     return HMMConfig(
-        n_components=int(payload.get("n_components", 3)),
+        n_components=int(payload.get("n_components", 4)),
         covariance_type=str(payload.get("covariance_type", "diag")),
         n_iter=int(payload.get("n_iter", 500)),
         random_state=int(payload.get("random_state", 17)),
@@ -386,9 +388,14 @@ def _should_retrain(
         return True
     if str(artifact.get("model_version", "")) != str(config.model_version):
         return True
-    if str(artifact.get("trained_as_of", "")) != str(as_of):
+    trained_as_of_ts = _parse_timestamp(str(artifact.get("trained_as_of", "")))
+    current_as_of_ts = _parse_timestamp(str(as_of))
+    if trained_as_of_ts is None or current_as_of_ts is None:
+        if str(artifact.get("trained_as_of", "")) != str(as_of):
+            return True
+    elif trained_as_of_ts.date() != current_as_of_ts.date():
         return True
-    current_ts = _parse_timestamp(as_of)
+    current_ts = current_as_of_ts
     last_trained_ts = _parse_timestamp(str(artifact.get("last_trained_at", "")))
     if current_ts is None or last_trained_ts is None:
         return abs(training_row_count - previous_rows) >= max(1, config.retrain_cadence)
@@ -578,7 +585,7 @@ def _compute_state_usage_counts(model: Any, scaled_train: np.ndarray, mapping: d
     raw_assignments = np.argmax(posterior, axis=1)
     counts = {label: 0 for label in HMM_STATE_ORDER}
     for raw_state in raw_assignments:
-        counts[mapping.get(int(raw_state), "STABLE")] += 1
+        counts[mapping.get(int(raw_state), "LOW_VOL_TREND")] += 1
     return counts
 
 
@@ -784,8 +791,8 @@ def compute_hmm_belief_record(
 
     persistence_probabilities: dict[str, float] = {}
     transition_probabilities: dict[str, float] = {}
-    high_vol_index = label_to_index.get("HIGH_VOL", current_raw_index)
-    expansion_index = label_to_index.get("EXPANDING_VOL", current_raw_index)
+    high_vol_index = label_to_index.get("HIGH_VOL_STRESS", current_raw_index)
+    expansion_index = label_to_index.get("VOL_EXPANSION", current_raw_index)
     current_distribution = np.asarray([posterior], dtype=float)
     for horizon in (5, 10, 21):
         power = _matrix_power(transition_matrix, horizon)
@@ -873,28 +880,22 @@ def hmm_to_belief_record(
                 "MID_VOL_CHOP": 0.0,
                 "VOL_EXPANSION_TRANSITION": 0.0,
                 "HIGH_VOL_RISK_OFF": 0.0,
-                "PANIC_CONVEXITY_STRESS": 0.0,
-                "POST_PANIC_COMPRESSION": 0.0,
             },
             belief_delta={
                 "STABLE_LOW_VOL_TREND": 0.0,
                 "MID_VOL_CHOP": 0.0,
                 "VOL_EXPANSION_TRANSITION": 0.0,
                 "HIGH_VOL_RISK_OFF": 0.0,
-                "PANIC_CONVEXITY_STRESS": 0.0,
-                "POST_PANIC_COMPRESSION": 0.0,
             },
             entropy=1.0,
             confidence=0.0,
             drivers=list(hmm_record.interpretation_notes[:3]),
         )
     beliefs = {
-        "STABLE_LOW_VOL_TREND": round(float(hmm_record.state_probabilities.get("STABLE", 0.0)), 6),
-        "MID_VOL_CHOP": 0.0,
-        "VOL_EXPANSION_TRANSITION": round(float(hmm_record.state_probabilities.get("EXPANDING_VOL", 0.0)), 6),
-        "HIGH_VOL_RISK_OFF": round(float(hmm_record.state_probabilities.get("HIGH_VOL", 0.0)), 6),
-        "PANIC_CONVEXITY_STRESS": 0.0,
-        "POST_PANIC_COMPRESSION": 0.0,
+        "STABLE_LOW_VOL_TREND": round(float(hmm_record.state_probabilities.get("LOW_VOL_TREND", 0.0)), 6),
+        "MID_VOL_CHOP": round(float(hmm_record.state_probabilities.get("MID_VOL_CHOP", 0.0)), 6),
+        "VOL_EXPANSION_TRANSITION": round(float(hmm_record.state_probabilities.get("VOL_EXPANSION", 0.0)), 6),
+        "HIGH_VOL_RISK_OFF": round(float(hmm_record.state_probabilities.get("HIGH_VOL_STRESS", 0.0)), 6),
     }
     previous = previous_belief or {key: 0.0 for key in beliefs}
     total = sum(beliefs.values()) or 1.0

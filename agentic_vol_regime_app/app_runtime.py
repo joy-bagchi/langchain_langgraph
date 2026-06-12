@@ -478,6 +478,14 @@ def resume_daily_regime_run(
                     "last_error": result.get("last_error"),
                 }
             )
+    result["agent"] = {
+        "agent_id": agent_definition.agent_id,
+        "name": agent_definition.name,
+        "role": agent_definition.role,
+        "workflow_path": agent_definition.workflow_path,
+        "memory_service_type": agent_definition.memory_service_type,
+        "runtime_profile": agent_definition.runtime_profile,
+    }
     return result
 
 

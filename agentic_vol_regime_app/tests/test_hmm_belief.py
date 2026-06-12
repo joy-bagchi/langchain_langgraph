@@ -368,8 +368,6 @@ def test_hmm_report_renders_section() -> None:
             "MID_VOL_CHOP": 0.2,
             "VOL_EXPANSION_TRANSITION": 0.15,
             "HIGH_VOL_RISK_OFF": 0.1,
-            "PANIC_CONVEXITY_STRESS": 0.03,
-            "POST_PANIC_COMPRESSION": 0.02,
         },
         belief_delta={},
         entropy=0.2,
@@ -392,13 +390,14 @@ def test_hmm_report_renders_section() -> None:
         is_trained=True,
         training_status="trained",
         state_probabilities={
-            "STABLE": 0.4,
-            "EXPANDING_VOL": 0.35,
-            "HIGH_VOL": 0.25,
+            "LOW_VOL_TREND": 0.3,
+            "MID_VOL_CHOP": 0.1,
+            "VOL_EXPANSION": 0.35,
+            "HIGH_VOL_STRESS": 0.25,
         },
-        top_state="STABLE",
-        transition_matrix=[[0.8, 0.15, 0.05], [0.1, 0.7, 0.2], [0.03, 0.17, 0.8]],
-        expected_duration_days={"STABLE": 5.0, "EXPANDING_VOL": 3.3, "HIGH_VOL": 5.0},
+        top_state="LOW_VOL_TREND",
+        transition_matrix=[[0.8, 0.15, 0.03, 0.02], [0.1, 0.65, 0.15, 0.1], [0.03, 0.17, 0.65, 0.15], [0.02, 0.08, 0.2, 0.7]],
+        expected_duration_days={"LOW_VOL_TREND": 5.0, "MID_VOL_CHOP": 2.9, "VOL_EXPANSION": 2.9, "HIGH_VOL_STRESS": 3.3},
         current_state_expected_duration_days=5.0,
         persistence_probabilities={"current_state_5d": 0.33, "current_state_10d": 0.18, "current_state_21d": 0.07},
         transition_probabilities={
@@ -412,20 +411,22 @@ def test_hmm_report_renders_section() -> None:
         confidence=0.68,
         warnings=[],
         drivers=[],
-        interpretation_notes=["Current features themselves fit STABLE best."],
+        interpretation_notes=["Current features themselves fit LOW_VOL_TREND best."],
         emission_state_probabilities={
-            "STABLE": 0.43,
-            "EXPANDING_VOL": 0.31,
-            "HIGH_VOL": 0.26,
+            "LOW_VOL_TREND": 0.34,
+            "MID_VOL_CHOP": 0.12,
+            "VOL_EXPANSION": 0.31,
+            "HIGH_VOL_STRESS": 0.23,
         },
-        emission_top_state="STABLE",
+        emission_top_state="LOW_VOL_TREND",
         persistence_lift={
-            "STABLE": -0.03,
-            "EXPANDING_VOL": 0.04,
-            "HIGH_VOL": -0.01,
+            "LOW_VOL_TREND": -0.04,
+            "MID_VOL_CHOP": -0.02,
+            "VOL_EXPANSION": 0.04,
+            "HIGH_VOL_STRESS": 0.02,
         },
         state_feature_summaries={
-            "STABLE": {
+            "LOW_VOL_TREND": {
                 "vix": 14.3,
                 "realized_vol_21d": 11.8,
                 "drawdown_21d": 0.01,
@@ -473,44 +474,13 @@ def test_hmm_report_renders_section() -> None:
         alert_record=alert_record,
         policy_record=policy_record,
         critic_record=critic_record,
-        comparison_panel=[
-            {"engine": "Heuristic", "top_regime": "Stable Low-Vol Trend", "confidence": 0.72, "recommended_posture": "NO_OVERWRITE"},
-            {"engine": "Linear ML", "top_regime": "Stable Low-Vol Trend", "confidence": 0.66, "recommended_posture": "LIGHT_OVERWRITE"},
-            {"engine": "HMM", "top_regime": "STABLE", "confidence": 0.68, "recommended_posture": "NO_OVERWRITE"},
-            {"engine": "Ensemble (disabled)", "top_regime": "Disabled", "confidence": 0.0, "recommended_posture": "Disabled"},
-        ],
-        hmm_variant_comparison=[
-            {
-                "model": "HMM v1 Core",
-                "top_state": "STABLE",
-                "confidence": 0.68,
-                "expected_duration_days": 5.0,
-                "high_vol_transition_prob_10d": 0.14,
-                "recommendation": "NO_OVERWRITE",
-                "sector_metrics": {},
-            },
-            {
-                "model": "HMM v2 Core + Sector Corr",
-                "top_state": "EXPANDING_VOL",
-                "confidence": 0.64,
-                "expected_duration_days": 4.0,
-                "high_vol_transition_prob_10d": 0.19,
-                "recommendation": "LIGHT_OVERWRITE",
-                "sector_metrics": {
-                    "avg_pairwise_corr_21d": 0.42,
-                    "first_eigenvalue_share_21d": 0.51,
-                },
-            },
-        ],
     )
 
     assert "HMM Regime Persistence" in markdown
-    assert "Belief Reconciliation" in markdown
-    assert "Model Variant Comparison" in markdown
     assert "Current-state expected duration" in markdown
-    assert "Emission vs Persistence" in markdown
-    assert "State Summaries" in markdown
-    assert "Interpretation Notes" in markdown
+    assert "Belief Reconciliation" not in markdown
+    assert "Model Variant Comparison" not in markdown
+    assert "Emission vs Persistence" not in markdown
 
 
 def test_hmm_to_belief_record_maps_four_states_into_global_beliefs() -> None:
@@ -521,8 +491,8 @@ def test_hmm_to_belief_record_maps_four_states_into_global_beliefs() -> None:
         as_of="2026-06-09T20:00:00Z",
         is_trained=True,
         training_status="trained",
-        state_probabilities={"STABLE": 0.4, "EXPANDING_VOL": 0.35, "HIGH_VOL": 0.25},
-        top_state="EXPANDING_VOL",
+        state_probabilities={"LOW_VOL_TREND": 0.25, "MID_VOL_CHOP": 0.15, "VOL_EXPANSION": 0.35, "HIGH_VOL_STRESS": 0.25},
+        top_state="VOL_EXPANSION",
         transition_matrix=[],
         expected_duration_days={},
         current_state_expected_duration_days=0.0,
@@ -532,9 +502,9 @@ def test_hmm_to_belief_record_maps_four_states_into_global_beliefs() -> None:
         warnings=[],
         drivers=[],
         interpretation_notes=[],
-        emission_state_probabilities={"STABLE": 0.35, "EXPANDING_VOL": 0.4, "HIGH_VOL": 0.25},
-        emission_top_state="EXPANDING_VOL",
-        persistence_lift={"STABLE": 0.05, "EXPANDING_VOL": -0.05, "HIGH_VOL": 0.0},
+        emission_state_probabilities={"LOW_VOL_TREND": 0.2, "MID_VOL_CHOP": 0.2, "VOL_EXPANSION": 0.4, "HIGH_VOL_STRESS": 0.2},
+        emission_top_state="VOL_EXPANSION",
+        persistence_lift={"LOW_VOL_TREND": 0.05, "MID_VOL_CHOP": -0.05, "VOL_EXPANSION": -0.05, "HIGH_VOL_STRESS": 0.05},
         state_feature_summaries={},
     )
 

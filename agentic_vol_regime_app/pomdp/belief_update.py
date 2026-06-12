@@ -55,8 +55,6 @@ def update_belief_state(
         "MID_VOL_CHOP": 1.3,
         "VOL_EXPANSION_TRANSITION": 1.0,
         "HIGH_VOL_RISK_OFF": 0.8,
-        "PANIC_CONVEXITY_STRESS": 0.4,
-        "POST_PANIC_COMPRESSION": 0.6,
     }
     drivers: list[str] = []
 
@@ -87,13 +85,14 @@ def update_belief_state(
     if term_state == "backwardation":
         scores["HIGH_VOL_RISK_OFF"] += 1.0
     if vix >= 32.0 and vvix_ratio_z >= 1.4:
-        scores["PANIC_CONVEXITY_STRESS"] += 1.8
+        scores["HIGH_VOL_RISK_OFF"] += 1.8
         drivers.append("Convexity stress signals are simultaneously elevated.")
     if drawdown >= 0.08:
-        scores["PANIC_CONVEXITY_STRESS"] += 1.1
+        scores["HIGH_VOL_RISK_OFF"] += 1.1
     if vix >= 24.0 and term_spread > 1.5 and trend_persistence > 0.5:
-        scores["POST_PANIC_COMPRESSION"] += 1.3
-        drivers.append("Volatility remains elevated but term structure has re-steepened.")
+        scores["MID_VOL_CHOP"] += 1.0
+        scores["VOL_EXPANSION_TRANSITION"] -= 0.2
+        drivers.append("Volatility remains elevated but the curve has re-steepened into a choppier regime.")
     if vix_spread > 0.05:
         scores["VOL_EXPANSION_TRANSITION"] += 0.4
         scores["HIGH_VOL_RISK_OFF"] += 0.3

@@ -66,12 +66,6 @@ def render_daily_markdown(
     risk_notes = "\n".join(f"- {item}" for item in policy_record.risk_notes) or "- None"
     drivers = "\n".join(f"- {item}" for item in alert_record.drivers) or "- None"
     critic_findings = "\n".join(f"- {item}" for item in critic_record.findings) or "- None"
-    comparison_rows = ""
-    if comparison_panel:
-        comparison_rows = "\n".join(
-            f"| {row['engine']} | {row['top_regime']} | {float(row['confidence']):.2f} | {row['recommended_posture']} |"
-            for row in comparison_panel
-        )
     overwrite_plan = "- None"
     if policy_record.overwrite_call_strike is not None and policy_record.overwrite_dte is not None:
         overwrite_plan = (
@@ -86,36 +80,7 @@ def render_daily_markdown(
             f"| {state} | {_format_probability(probability)} |"
             for state, probability in hmm_record.state_probabilities.items()
         )
-        emission_rows = "\n".join(
-            f"| {state} | {_format_probability(probability)} | {_format_probability(hmm_record.persistence_lift.get(state, 0.0))} |"
-            for state, probability in hmm_record.emission_state_probabilities.items()
-        )
-        state_summary_rows = "\n".join(
-            (
-                f"| {state} | "
-                f"{float(summary.get('vix', 0.0)):.2f} | "
-                f"{float(summary.get('realized_vol_21d', 0.0)):.2f} | "
-                f"{float(summary.get('drawdown_21d', 0.0)):.2f} | "
-                f"{float(summary.get('term_structure_slope', 0.0)):.2f} | "
-                f"{float(summary.get('trend_persistence_21d', 0.0)):.2f} | "
-                f"{float(summary.get('vvix_vix_ratio', 0.0)):.2f} |"
-            )
-            for state, summary in hmm_record.state_feature_summaries.items()
-        )
-        interpretation_lines = "\n".join(f"- {item}" for item in hmm_record.interpretation_notes) or "- None"
-        hmm_transition_rows = "\n".join(
-            "| " + " | ".join(f"{value:.2f}" for value in row) + " |"
-            for row in hmm_record.transition_matrix
-        ) or "| 0.00 | 0.00 | 0.00 | 0.00 |"
         hmm_warning_lines = "\n".join(f"- {item}" for item in hmm_record.warnings) or "- None"
-        usage_lines = "\n".join(
-            f"- {state}: {count}"
-            for state, count in hmm_record.state_usage_counts.items()
-        ) or "- None"
-        sector_metric_lines = "\n".join(
-            f"- {name}: `{value:.2f}`"
-            for name, value in hmm_record.sector_metrics.items()
-        ) or "- None"
         training_status_line = (
             "Trained and active."
             if hmm_record.is_trained
@@ -141,24 +106,6 @@ Current-state expected duration: `{hmm_record.current_state_expected_duration_da
 |---|---:|
 {hmm_prob_rows}
 
-### Emission vs Persistence
-
-Emission-only top state: `{hmm_record.emission_top_state}`
-
-| State | Emission-Only Probability | Persistence Lift |
-|---|---:|---:|
-{emission_rows}
-
-### State Summaries
-
-| State | Avg VIX | Avg RV21 | Avg Drawdown | Term Slope | Trend Persistence | VVIX/VIX |
-|---|---:|---:|---:|---:|---:|---:|
-{state_summary_rows}
-
-### Interpretation Notes
-
-{interpretation_lines}
-
 ### HMM Persistence
 
 - Current state persists 5d: `{hmm_record.persistence_probabilities.get("current_state_5d", 0.0):.2f}`
@@ -168,66 +115,8 @@ Emission-only top state: `{hmm_record.emission_top_state}`
 - VOL_EXPANSION or HIGH_VOL within 10d: `{hmm_record.transition_probabilities.get("to_vol_expansion_or_high_vol_10d", 0.0):.2f}`
 - VOL_EXPANSION or HIGH_VOL within 21d: `{hmm_record.transition_probabilities.get("to_vol_expansion_or_high_vol_21d", 0.0):.2f}`
 
-### HMM Transition Matrix
-
-{hmm_transition_rows}
-
-### State Usage Counts
-
-{usage_lines}
-
-### Sector Metrics
-
-{sector_metric_lines}
-
 Warnings:
 {hmm_warning_lines}
-"""
-
-    comparison_section = ""
-    if comparison_rows:
-        comparison_section = f"""
-## Belief Reconciliation
-
-| Engine | Top Regime | Confidence | Recommended Posture |
-|---|---|---:|---|
-{comparison_rows}
-"""
-
-    model_variant_section = ""
-    if hmm_variant_comparison:
-        variant_rows = "\n".join(
-            (
-                f"| {row['model']} | {row['top_state']} | {float(row['confidence']):.2f} | "
-                f"{float(row['expected_duration_days']):.2f} | {float(row['high_vol_transition_prob_10d']):.2f} | {row['recommendation']} |"
-            )
-            for row in hmm_variant_comparison
-        )
-        first_sector_metrics = next(
-            (dict(row.get("sector_metrics", {})) for row in hmm_variant_comparison if dict(row.get("sector_metrics", {}))),
-            {},
-        )
-        sector_section = ""
-        if first_sector_metrics:
-            interpretation = (
-                "Low avg correlation plus low first eigenvalue share suggests sector independence; "
-                "rising values suggest market-mode dominance and higher vol-expansion risk."
-            )
-            sector_section = f"""
-### Sector Correlation / Market Mode
-
-- `avg_pairwise_corr_21d`: `{float(first_sector_metrics.get('avg_pairwise_corr_21d', 0.0)):.2f}`
-- `first_eigenvalue_share_21d`: `{float(first_sector_metrics.get('first_eigenvalue_share_21d', 0.0)):.2f}`
-- Interpretation: {interpretation}
-"""
-        model_variant_section = f"""
-## Model Variant Comparison
-
-| Model | Top State | Confidence | Expected Duration | 10d High-Vol Transition Prob | Recommendation |
-|---|---|---:|---:|---:|---|
-{variant_rows}
-
-{sector_section}
 """
 
     model_lines: list[str] = []
@@ -290,10 +179,6 @@ Risk notes:
 
 Overwrite implementation:
 {overwrite_plan}
-
-{comparison_section}
-
-{model_variant_section}
 
 {hmm_section}
 

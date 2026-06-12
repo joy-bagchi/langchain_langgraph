@@ -45,8 +45,7 @@ def estimate_transition_probabilities(
 
     expansion = beliefs.get("VOL_EXPANSION_TRANSITION", 0.0)
     high_vol = beliefs.get("HIGH_VOL_RISK_OFF", 0.0)
-    panic = beliefs.get("PANIC_CONVEXITY_STRESS", 0.0)
-    post_panic = beliefs.get("POST_PANIC_COMPRESSION", 0.0)
+    chop = beliefs.get("MID_VOL_CHOP", 0.0)
 
     vvix_ratio_z = _feature(features, "vvix_vix_z_22d")
     rv_acceleration = _feature(features, "realized_vol_acceleration")
@@ -83,8 +82,7 @@ def estimate_transition_probabilities(
         ),
         "vix_explosion_10d": _clamp(
             0.02
-            + (0.55 * panic)
-            + (0.22 * high_vol)
+            + (0.58 * high_vol)
             + (0.12 * confirming_boost)
             + (0.08 * max(drawdown, 0.0))
         ),
@@ -97,9 +95,9 @@ def estimate_transition_probabilities(
         ),
         "vol_compression_10d": _clamp(
             0.04
-            + (0.45 * post_panic)
+            + (0.30 * chop)
             + (0.07 * max(term_spread, 0.0))
-            - (0.20 * panic)
+            - (0.18 * high_vol)
         ),
     }
 

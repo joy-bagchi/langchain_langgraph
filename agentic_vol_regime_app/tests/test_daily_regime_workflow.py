@@ -279,9 +279,10 @@ class FakeGaussianHMM:
         self.n_components = n_components
         self.transmat_ = np.asarray(
             [
-                [0.86, 0.10, 0.04],
-                [0.08, 0.72, 0.20],
-                [0.03, 0.17, 0.80],
+                [0.74, 0.18, 0.06, 0.02],
+                [0.15, 0.58, 0.19, 0.08],
+                [0.06, 0.17, 0.58, 0.19],
+                [0.03, 0.07, 0.22, 0.68],
             ],
             dtype=float,
         )
@@ -291,7 +292,7 @@ class FakeGaussianHMM:
         return self
 
     def predict_proba(self, values: np.ndarray) -> np.ndarray:
-        return np.asarray([[0.52, 0.31, 0.17] for _ in range(values.shape[0])], dtype=float)
+        return np.asarray([[0.34, 0.16, 0.32, 0.18] for _ in range(values.shape[0])], dtype=float)
 
 
 def _load_sample_input(name: str) -> dict:
@@ -311,14 +312,18 @@ def _run_and_complete_daily_agent(
         storage_root=storage_root,
         ibkr_data_pipe=ibkr_data_pipe,
         agent_path=agent_path,
+        langsmith_tracing=False,
     )
-    if result["status"] == "awaiting_review":
+    for _ in range(3):
+        if result["status"] != "awaiting_review":
+            break
         result = resume_daily_regime_run(
             run_id=result["run_id"],
             decision="approved",
             notes="test approval",
             storage_root=storage_root,
             agent_path=agent_path,
+            langsmith_tracing=False,
         )
     return result
 
@@ -373,10 +378,10 @@ def test_daily_regime_ml_agent_completes_with_linear_model(tmp_path: Path) -> No
     input_payload = _load_sample_input("daily_snapshot_watch.json")
     input_payload["report_root"] = str(tmp_path / "reports")
 
-    result = run_daily_regime_agent(
+    result = _run_and_complete_daily_agent(
         input_payload=input_payload,
-        agent_path=default_ml_agent_path(),
         storage_root=tmp_path / ".workflow_memory",
+        agent_path=default_ml_agent_path(),
     )
 
     assert result["status"] == "completed"
@@ -384,7 +389,6 @@ def test_daily_regime_ml_agent_completes_with_linear_model(tmp_path: Path) -> No
     assert result["agent"]["agent_id"] == "daily_regime_ml_orchestrator"
     assert result["named_outputs"]["daily_report"]["recommended_action"]
     assert "HMM Regime Persistence" not in result["named_outputs"]["daily_report"]["markdown"]
-    assert "Model Variant Comparison" not in result["named_outputs"]["daily_report"]["markdown"]
 
 
 def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Path) -> None:
@@ -401,21 +405,12 @@ def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Pat
     original = hmm_belief.GaussianHMM
     hmm_belief.GaussianHMM = FakeGaussianHMM
     try:
-        result = run_daily_regime_agent(
+        result = _run_and_complete_daily_agent(
             input_payload=input_payload,
-            agent_path=default_hmm_agent_path(),
             storage_root=tmp_path / ".workflow_memory",
+            agent_path=default_hmm_agent_path(),
         )
         initial_result = result
-
-        if result["status"] == "awaiting_review":
-            result = resume_daily_regime_run(
-                run_id=result["run_id"],
-                decision="approved",
-                notes="reviewed",
-                agent_path=default_hmm_agent_path(),
-                storage_root=tmp_path / ".workflow_memory",
-            )
     finally:
         hmm_belief.GaussianHMM = original
 
@@ -423,9 +418,8 @@ def test_daily_regime_hmm_agent_completes_with_hmm_advisory_output(tmp_path: Pat
     assert initial_result["agent"]["agent_id"] == "daily_regime_hmm_orchestrator"
     assert "hmm_belief" in result["named_outputs"]
     assert "HMM Regime Persistence" in result["named_outputs"]["daily_report"]["markdown"]
-    assert "Emission vs Persistence" in result["named_outputs"]["daily_report"]["markdown"]
-    assert result["named_outputs"]["hmm_belief"]["interpretation_notes"]
-    assert result["named_outputs"]["daily_report"]["comparison_panel"][2]["engine"] == "HMMV1"
+    assert "Emission vs Persistence" not in result["named_outputs"]["daily_report"]["markdown"]
+    assert "comparison_panel" not in result["named_outputs"]["daily_report"]
     hmm_history = load_recent_hmm_state_history(
         agent_path=default_hmm_agent_path(),
         storage_root=tmp_path / ".workflow_memory",
@@ -448,33 +442,28 @@ def test_daily_regime_hmm_v2_agent_completes_with_variant_comparison(tmp_path: P
         "VIX3M": [17.8 + (index * 0.008) for index in range(900)],
     }
     for offset, symbol in enumerate(("XLK", "XLF", "XLE", "XLY", "XLP", "XLI", "XLB", "XLV", "XLU", "XLRE")):
-        history[f"{symbol}_close"] = [80.0 + (index * 0.12) + np.sin((index / 8.0) + offset) for index in range(900)]
+        history[f"{symbol}_close"] = [
+            float(80.0 + (index * 0.12) + np.sin((index / 8.0) + offset))
+            for index in range(900)
+        ]
     input_payload["market_snapshot"]["history"] = history
 
     original = hmm_belief.GaussianHMM
     hmm_belief.GaussianHMM = FakeGaussianHMM
     try:
-        result = run_daily_regime_agent(
+        result = _run_and_complete_daily_agent(
             input_payload=input_payload,
-            agent_path=default_hmm_v2_agent_path(),
             storage_root=tmp_path / ".workflow_memory",
+            agent_path=default_hmm_v2_agent_path(),
         )
-        if result["status"] == "awaiting_review":
-            result = resume_daily_regime_run(
-                run_id=result["run_id"],
-                decision="approved",
-                notes="reviewed",
-                agent_path=default_hmm_v2_agent_path(),
-                storage_root=tmp_path / ".workflow_memory",
-            )
     finally:
         hmm_belief.GaussianHMM = original
 
     assert result["status"] == "completed"
     assert result["agent"]["agent_id"] == "daily_regime_hmm_v2_orchestrator"
     assert result["named_outputs"]["hmm_belief"]["variant_id"] == "v2"
-    assert result["named_outputs"]["daily_report"]["hmm_variant_comparison"]
-    assert "Model Variant Comparison" in result["named_outputs"]["daily_report"]["markdown"]
+    assert "hmm_variant_comparison" not in result["named_outputs"]["daily_report"]
+    assert "Model Variant Comparison" not in result["named_outputs"]["daily_report"]["markdown"]
 
 
 def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> None:
@@ -1077,10 +1066,9 @@ def test_policy_recommendation_emits_overwrite_strike_and_dte() -> None:
         model_version="heuristic",
         beliefs={
             "STABLE_LOW_VOL_TREND": 0.18,
+            "MID_VOL_CHOP": 0.24,
             "VOL_EXPANSION_TRANSITION": 0.41,
             "HIGH_VOL_RISK_OFF": 0.17,
-            "PANIC_CONVEXITY_STRESS": 0.05,
-            "POST_PANIC_COMPRESSION": 0.05,
         },
         belief_delta={},
         entropy=0.8,

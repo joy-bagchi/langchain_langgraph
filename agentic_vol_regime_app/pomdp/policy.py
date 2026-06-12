@@ -87,19 +87,18 @@ def recommend_policy_action(
     severity = alert_record.severity
 
     stable = beliefs.get("STABLE_LOW_VOL_TREND", 0.0)
+    chop = beliefs.get("MID_VOL_CHOP", 0.0)
     expansion = beliefs.get("VOL_EXPANSION_TRANSITION", 0.0)
     high_vol = beliefs.get("HIGH_VOL_RISK_OFF", 0.0)
-    panic = beliefs.get("PANIC_CONVEXITY_STRESS", 0.0)
-    post_panic = beliefs.get("POST_PANIC_COMPRESSION", 0.0)
 
     recommended_action = "LIGHT_OVERWRITE"
     rationale: list[str] = []
     risk_notes: list[str] = []
     requires_human_review = severity in {"HIGH_RISK", "CRITICAL"}
 
-    if panic >= 0.22 or severity == "CRITICAL":
+    if severity == "CRITICAL":
         recommended_action = "MANUAL_REVIEW"
-        rationale.append("Convexity stress or critical alert conditions are active.")
+        rationale.append("Critical alert conditions are active and require a manual decision.")
         risk_notes.append("Do not add fresh overwrite exposure without review.")
     elif high_vol >= 0.28 or transitions.get("risk_off_transition_10d", 0.0) >= 0.40:
         recommended_action = "AGGRESSIVE_OVERWRITE"
@@ -108,10 +107,10 @@ def recommend_policy_action(
     elif expansion >= 0.24 or transitions.get("vol_expansion_5d", 0.0) >= 0.35:
         recommended_action = "MEDIUM_OVERWRITE"
         rationale.append("Transition risk is elevated and argues for additional premium capture.")
-    elif post_panic >= 0.24:
-        recommended_action = "REDUCE_OVERWRITE"
-        rationale.append("Post-panic compression favors preserving upside rebound room.")
-        risk_notes.append("Avoid replacing downside fear with fresh upside truncation.")
+    elif chop >= 0.34:
+        recommended_action = "LIGHT_OVERWRITE"
+        rationale.append("Mid-volatility chop favors collecting premium without leaning too aggressive.")
+        risk_notes.append("Stay flexible because chop can resolve in either direction.")
     elif stable >= 0.42 and severity in {"NONE", "WATCH"}:
         recommended_action = "NO_OVERWRITE"
         rationale.append("Stable low-volatility trend remains the dominant regime.")
