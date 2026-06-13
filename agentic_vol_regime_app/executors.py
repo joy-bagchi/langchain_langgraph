@@ -55,6 +55,8 @@ def _belief_engine(state: WorkflowGraphState) -> str:
 
 def _hmm_variant_id(state: WorkflowGraphState) -> str:
     engine = _belief_engine(state)
+    if engine == "hmm_gaussian_v3_1":
+        return "v3_1"
     if engine == "hmm_gaussian_v3":
         return "v3"
     if engine == "hmm_gaussian_v2":
@@ -67,7 +69,7 @@ def _uses_hmm_history_cache(state: WorkflowGraphState) -> bool:
 
 
 def _all_hmm_variant_ids() -> tuple[str, ...]:
-    return ("v1", "v2", "v3")
+    return ("v1", "v2", "v3", "v3_1")
 
 
 def _report_model_metadata(
@@ -682,9 +684,10 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             if requested_as_of_date:
                 tool_arguments["as_of_date"] = requested_as_of_date
             if _uses_hmm_history_cache(state):
+                hmm_variant = _hmm_variant_id(state)
                 tool_arguments["regime_symbols"] = (
                     [input_payload.get("symbol", ibkr_payload.get("symbol", "SPY")), "VIX", "VVIX", "VIX9D", "VIX3M", *SECTOR_ETF_UNIVERSE]
-                    if _hmm_variant_id(state) == "v2"
+                    if hmm_variant in {"v2", "v3", "v3_1"}
                     else ibkr_payload.get("regime_symbols", [input_payload.get("symbol", ibkr_payload.get("symbol", "SPY")), "VIX", "VVIX", "VIX9D", "VIX3M", "VIX6M", "VIX9M"])
                 )
             tool_response = services.tools.execute(

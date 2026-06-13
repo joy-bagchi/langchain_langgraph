@@ -1,0 +1,19 @@
+start_date: "2026-01-02"
+end_date: "2026-06-12"
+train_lookback_days: 756
+min_train_rows: 504
+horizons: [1, 2, 3]
+models:
+  - heuristic
+  - hmm_v1_core
+  - hmm_v2_core_plus_sector_corr
+  - hmm_v3_core_plus_sector_geometry
+  - hmm_v3_1_meta_blend
+retrain_each_date: true
+covariance_type: diag
+n_components: 4
+random_state: 42
+output_dir: reports/backtests/hmm_replay/
+artifact_dir: data/backtests/hmm_replay/
+feature_store_path: agentic_vol_regime_app/data/processed/features_daily.parquet
+freeze_policy_outputs: true

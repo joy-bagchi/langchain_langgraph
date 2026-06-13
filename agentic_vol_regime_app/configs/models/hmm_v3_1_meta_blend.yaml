@@ -1,0 +1,23 @@
+model_name: hmm_v3_1_meta_blend
+core_model: hmm_v1_core
+geometry_stress:
+  preferred_lookback: 252
+  fallback_lookback: 126
+  min_lookback: 63
+  component_weights:
+    avg_corr_stress: 0.30
+    eigen_stress: 0.30
+    effective_rank_stress: 0.25
+    log_det_stress: 0.15
+meta_blend:
+  core_vol_weight: 0.75
+  geometry_weight: 0.25
+  risk_thresholds:
+    stable_low_vol_max: 0.25
+    mid_vol_chop_max: 0.50
+    vol_expansion_max: 0.75
+  downgrade_cap:
+    max_levels: 1
+    strict_exception:
+      geometry_stress_below: 0.20
+      core_confidence_below: 0.55

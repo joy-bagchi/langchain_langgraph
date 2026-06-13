@@ -15,24 +15,28 @@ class AppPaths:
     root: Path
 
     @property
+    def configs_dir(self) -> Path:
+        return self.root / "configs"
+
+    @property
     def agents_dir(self) -> Path:
-        return self.root / "configs" / "agents"
+        return self.configs_dir / "agents"
 
     @property
     def workflows_dir(self) -> Path:
-        return self.root / "configs" / "workflows"
+        return self.configs_dir / "workflows"
 
     @property
     def thresholds_dir(self) -> Path:
-        return self.root / "configs" / "thresholds"
+        return self.configs_dir / "thresholds"
 
     @property
     def features_dir(self) -> Path:
-        return self.root / "configs" / "features"
+        return self.configs_dir / "features"
 
     @property
     def sample_inputs_dir(self) -> Path:
-        return self.root / "configs" / "sample_inputs"
+        return self.configs_dir / "sample_inputs"
 
     @property
     def reports_dir(self) -> Path:

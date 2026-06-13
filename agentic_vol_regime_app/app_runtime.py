@@ -21,6 +21,7 @@ from agentic_harness.runtime import resume_workflow, run_agent_workflow, start_w
 from agentic_harness.stores import FilesystemMemoryStore
 
 from agentic_vol_regime_app.config import AppPaths
+from agentic_vol_regime_app.backtest_feature_store import build_backtest_feature_store_from_ibkr
 from agentic_vol_regime_app.executors import build_executor_registry
 from agentic_vol_regime_app.pomdp.hmm_belief import load_hmm_config
 from agentic_vol_regime_app.reports.daily_report import resolve_daily_report_path
@@ -82,6 +83,10 @@ def default_hmm_v3_agent_path() -> Path:
     return AppPaths.default().agents_dir / "daily_regime_hmm_v3_orchestrator.yaml"
 
 
+def default_hmm_v3_1_agent_path() -> Path:
+    return AppPaths.default().agents_dir / "daily_regime_hmm_v3_1_meta_blend_orchestrator.yaml"
+
+
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
 
@@ -94,6 +99,8 @@ def _resolve_report_model_identity(agent_path: str | Path | None = None) -> tupl
         return ("LinearRegimeBeliefModel", "linear_regression_regime_v1")
     if belief_engine == "hmm_gaussian_v3":
         return ("HMMBeliefAgent", "hmm_gaussian_v3")
+    if belief_engine == "hmm_gaussian_v3_1":
+        return ("HMMBeliefAgent", "hmm_gaussian_v3_1")
     if belief_engine == "hmm_gaussian_v2":
         return ("HMMBeliefAgent", "hmm_gaussian_v2")
     if belief_engine.startswith("hmm_gaussian"):
@@ -267,6 +274,8 @@ def _resolve_hmm_variant_id(agent_path: str | Path | None = None) -> str:
     resolved_agent_path = Path(agent_path or default_hmm_agent_path()).resolve()
     agent_definition = YamlAgentDefinitionService().load(resolved_agent_path)
     belief_engine = str(dict(agent_definition.metadata).get("belief_engine", "hmm_gaussian_v1")).strip().lower()
+    if belief_engine == "hmm_gaussian_v3_1":
+        return "v3_1"
     if belief_engine == "hmm_gaussian_v3":
         return "v3"
     return "v2" if belief_engine == "hmm_gaussian_v2" else "v1"
@@ -534,6 +543,7 @@ def snapshot_hmm_baseline(
         "v1": "hmm_v1_core.yaml",
         "v2": "hmm_v2_core_plus_sector_corr.yaml",
         "v3": "hmm_v3_core_plus_sector_geometry.yaml",
+        "v3_1": "hmm_v3_1_meta_blend.yaml",
     }.get(variant_id, "hmm_v1_core.yaml")
     config_path = resolved_paths.features_dir / config_file_name
 
@@ -681,7 +691,7 @@ def run_ibkr_market_data_agent(
     langsmith_endpoint: str | None = None,
     langsmith_project: str | None = None,
     langsmith_workspace_id: str | None = None,
-) -> dict[str, Any]:
+    ) -> dict[str, Any]:
     """Run the IBKR tool-backed market data agent through the harness runtime."""
     resolved_agent_path = Path(agent_path or default_ibkr_agent_path()).resolve()
     services = build_platform_services(
@@ -732,4 +742,135 @@ def run_ibkr_market_data_agent(
                     "last_error": result.get("last_error"),
                 }
             )
+    return result
+
+
+def run_hmm_replay_backtester(
+    *,
+    config_path: str | Path,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    as_of_date: str | None = None,
+    models: list[str] | None = None,
+    horizons: list[int] | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+) -> dict[str, Any]:
+    """Run the deterministic HMM replay backtester."""
+    from src.backtest.hmm_replay.replay_config import load_replay_config
+    from src.backtest.hmm_replay.replay_runner import run_hmm_replay
+
+    resolved_config_path = Path(config_path).resolve()
+    config = load_replay_config(resolved_config_path)
+    services = build_platform_services(
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
+    with services.observability.trace_span(
+        "agentic_vol_regime_app:run_hmm_replay_backtester",
+        run_type="chain",
+        inputs={
+            "config_path": str(resolved_config_path),
+            "start_date": start_date,
+            "end_date": end_date,
+            "as_of_date": as_of_date,
+            "models": list(models or []),
+            "horizons": list(horizons or []),
+        },
+        tags=["agentic_vol_regime_app", "hmm_replay_backtester"],
+        metadata={"application": "agentic_vol_regime_app"},
+    ) as app_span:
+        result = run_hmm_replay(
+            config=config,
+            start_date=start_date,
+            end_date=end_date,
+            as_of_date=as_of_date,
+            models=models,
+            horizons=horizons,
+        )
+        if hasattr(app_span, "end"):
+            app_span.end(outputs=_trace_safe_payload(result))
+    return result
+
+
+def build_backtest_feature_store(
+    *,
+    config_path: str | Path,
+    history_days: int = 1512,
+    as_of_date: str | None = None,
+    symbol: str = "SPY",
+    host: str = "127.0.0.1",
+    port: int = 4001,
+    client_id: int = 73,
+    market_data_type: int = 1,
+    exchange: str = "SMART",
+    option_exchange: str = "SMART",
+    index_exchange: str = "CBOE",
+    currency: str = "USD",
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+) -> dict[str, Any]:
+    from src.backtest.hmm_replay.replay_config import load_replay_config
+
+    resolved_config = Path(config_path).resolve()
+    replay_config = load_replay_config(resolved_config)
+    output_path = replay_config.feature_store_path
+    services = build_platform_services(
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
+    with services.observability.trace_span(
+        "agentic_vol_regime_app:build_backtest_feature_store",
+        run_type="chain",
+        inputs={
+            "config_path": str(resolved_config),
+            "output_path": output_path,
+            "history_days": int(history_days),
+            "as_of_date": as_of_date,
+            "symbol": symbol,
+            "host": host,
+            "port": int(port),
+            "client_id": int(client_id),
+            "market_data_type": int(market_data_type),
+        },
+        tags=["agentic_vol_regime_app", "hmm_replay_backtester", "feature_store_builder"],
+        metadata={"application": "agentic_vol_regime_app"},
+    ) as app_span:
+        built = build_backtest_feature_store_from_ibkr(
+            app_paths=AppPaths.default(),
+            output_path=output_path,
+            symbol=symbol,
+            history_days=int(history_days),
+            as_of_date=as_of_date,
+            host=host,
+            port=int(port),
+            client_id=int(client_id),
+            market_data_type=int(market_data_type),
+            exchange=exchange,
+            option_exchange=option_exchange,
+            index_exchange=index_exchange,
+            currency=currency,
+        )
+        result = {
+            "feature_store_path": built.feature_store_path,
+            "rows": built.rows,
+            "start_date": built.start_date,
+            "end_date": built.end_date,
+            "source_as_of": built.source_as_of,
+            "warnings": list(built.warnings),
+        }
+        if hasattr(app_span, "end"):
+            app_span.end(outputs=_trace_safe_payload(result))
     return result

@@ -20,10 +20,12 @@ def _ensure_streamlit_imports() -> None:
 _ensure_streamlit_imports()
 
 from agentic_vol_regime_app import (  # noqa: E402
+    build_backtest_feature_store,
     default_agent_path,
     default_hmm_agent_path,
     default_hmm_v2_agent_path,
     default_hmm_v3_agent_path,
+    default_hmm_v3_1_agent_path,
     default_ibkr_agent_path,
     default_ml_agent_path,
     load_or_run_historical_belief_report,
@@ -33,6 +35,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     snapshot_hmm_baseline,
     resume_daily_regime_run,
     run_daily_regime_agent,
+    run_hmm_replay_backtester,
     run_ibkr_market_data_agent,
 )
 from agentic_vol_regime_app.config import AppPaths, load_json  # noqa: E402
@@ -53,11 +56,27 @@ APP_PATHS = AppPaths.default()
 DEFAULT_DAILY_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_watch.json"
 DEFAULT_DAILY_LIVE_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_ibkr_live.json"
 DEFAULT_IBKR_INPUT = APP_PATHS.sample_inputs_dir / "ibkr_spy_snapshot.json"
+DEFAULT_BACKTEST_CONFIG = APP_PATHS.configs_dir / "backtest" / "hmm_replay.yaml"
 CARD_LABEL_COLOR = "#facc15"
 CARD_VALUE_COLOR = "#fef3c7"
 WIDGET_BORDER_COLOR = "#facc15"
 WIDGET_BORDER_FOCUS = "#fde68a"
-REGIME_ENGINE_OPTIONS = ["Heuristic Agent", "ML Agent", "HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"]
+REGIME_ENGINE_OPTIONS = [
+    "Heuristic Agent",
+    "ML Agent",
+    "HMMv1 Agent",
+    "HMMv2 Agent",
+    "HMMv3 Agent",
+    "HMMv3.1 Meta-Blend Agent",
+]
+BACKTEST_MODEL_OPTIONS = [
+    "heuristic",
+    "hmm_v1_core",
+    "hmm_v2_core_plus_sector_corr",
+    "hmm_v3_core_plus_sector_geometry",
+    "hmm_v3_1_meta_blend",
+]
+BACKTEST_HORIZON_OPTIONS = [1, 2, 3, 5, 10]
 
 
 def _pretty_json(payload: Any) -> str:
@@ -84,11 +103,17 @@ def _resolve_daily_agent_path_from_choice(choice: str) -> Path:
         return default_hmm_v2_agent_path()
     if choice == "HMMv3 Agent":
         return default_hmm_v3_agent_path()
+    if choice == "HMMv3.1 Meta-Blend Agent":
+        return default_hmm_v3_1_agent_path()
     return default_agent_path()
 
 
 def _default_history_days_for_agent_choice(choice: str, fallback: int) -> int:
-    return 756 if choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"} else int(fallback)
+    return (
+        756
+        if choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent", "HMMv3.1 Meta-Blend Agent"}
+        else int(fallback)
+    )
 
 
 def _render_runtime_diagnostics(st, result: dict[str, Any]) -> None:
@@ -645,6 +670,29 @@ def _build_scenario_snapshot(
     return snapshot
 
 
+def _load_text_file(path: str) -> str:
+    if not path.strip():
+        return ""
+    file_path = Path(path).resolve()
+    if not file_path.exists():
+        return ""
+    return file_path.read_text(encoding="utf-8")
+
+
+def _resolve_existing_backtest_feature_store(config_path: str) -> Path | None:
+    try:
+        from src.backtest.hmm_replay.replay_config import load_replay_config
+        from src.backtest.hmm_replay.replay_dataset import _resolve_feature_store_path
+    except Exception:
+        return None
+    try:
+        config = load_replay_config(config_path)
+    except Exception:
+        return None
+    resolved, _ = _resolve_feature_store_path(config.feature_store_path)
+    return resolved if resolved.exists() else None
+
+
 def main() -> None:
     st = _load_streamlit()
 
@@ -668,11 +716,13 @@ def main() -> None:
         langsmith_project = st.text_input("LangSmith Project", value="agentic_harness")
         st.caption("IBKR default port is 4001.")
 
-    daily_tab, historical_tab, ibkr_tab, resume_tab = st.tabs(
-        ["Daily Belief Report", "Historical Belief Reports", "IBKR Snapshot Agent", "Resume Daily Review"]
+    daily_tab, historical_tab, backtester_tab, ibkr_tab, resume_tab = st.tabs(
+        ["Daily Belief Report", "Historical Belief Reports", "Backtester", "IBKR Snapshot Agent", "Resume Daily Review"]
     )
     state_daily_result_key = "vol_regime_last_daily_result"
     state_historical_report_key = "vol_regime_historical_report_result"
+    state_backtester_result_key = "vol_regime_backtester_result"
+    state_backtester_build_key = "vol_regime_backtester_build_result"
 
     with daily_tab:
         st.subheader("Daily Volatility Regime Workflow")
@@ -790,7 +840,7 @@ def main() -> None:
                 "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
             }
             st.caption("Using default symbol set: SPY, VIX, VVIX, VIX9D, and VIX3M.")
-            if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"}:
+            if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent", "HMMv3.1 Meta-Blend Agent"}:
                 st.caption("HMM live runs default to a 756-day history window. Increase this to 1260 if you want a deeper regime-training window.")
         elif mode == "Scenario":
             latest_live_observation = load_latest_live_daily_observation(
@@ -875,7 +925,7 @@ def main() -> None:
             )
             effective_daily_payload = _parse_json_text(daily_json, fallback=default_daily_payload)
 
-        if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"}:
+        if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent", "HMMv3.1 Meta-Blend Agent"}:
             with st.expander("HMM Snapshot", expanded=False):
                 st.caption(
                     "Freeze the current trained HMM artifact and feature-set config before experimenting with new features."
@@ -954,7 +1004,7 @@ def main() -> None:
                     database_url=database_url or None,
                     limit=12,
                 )
-                if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent"}
+                if agent_choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent", "HMMv3.1 Meta-Blend Agent"}
                 else []
             )
             _render_daily_result(st, current_daily_result, hmm_history=hmm_history)
@@ -1115,6 +1165,192 @@ def main() -> None:
             elif historical_markdown:
                 st.subheader("Historical Report")
                 st.markdown(_strip_report_heading_and_summary(historical_markdown))
+
+    with backtester_tab:
+        st.subheader("Backtester")
+        st.caption(
+            "Deterministic historical replay with strict no-lookahead constraints. "
+            "This mode is fully offline and does not call IBKR."
+        )
+
+        config_path = st.text_input(
+            "Replay Config Path",
+            value=str(DEFAULT_BACKTEST_CONFIG.resolve()),
+            key="backtest_config_path",
+        )
+        st.markdown("**Feature Store Builder (IBKR)**")
+        default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
+        builder_ibkr = dict(default_live_payload.get("ibkr", {}))
+        bcol1, bcol2, bcol3, bcol4 = st.columns(4)
+        backtest_symbol = bcol1.text_input("Symbol", value=str(default_live_payload.get("symbol", "SPY")), key="backtest_build_symbol")
+        backtest_history_days = bcol2.number_input("History Days", value=1512, min_value=252, step=1, key="backtest_build_history_days")
+        backtest_host = bcol3.text_input("IBKR Host", value=str(builder_ibkr.get("host", "127.0.0.1")), key="backtest_build_host")
+        backtest_port = bcol4.number_input("IBKR Port", value=int(builder_ibkr.get("port", 4001)), step=1, key="backtest_build_port")
+        bcol5, bcol6, bcol7, bcol8 = st.columns(4)
+        backtest_client_id = bcol5.number_input("Client ID", value=int(builder_ibkr.get("client_id", 73)), step=1, key="backtest_build_client_id")
+        backtest_market_data_type = bcol6.number_input("Market Data Type", value=int(builder_ibkr.get("market_data_type", 1)), step=1, key="backtest_build_market_data_type")
+        backtest_exchange = bcol7.text_input("Exchange", value=str(builder_ibkr.get("exchange", "SMART")), key="backtest_build_exchange")
+        backtest_index_exchange = bcol8.text_input("Index Exchange", value=str(builder_ibkr.get("index_exchange", "CBOE")), key="backtest_build_index_exchange")
+        backtest_as_of = st.date_input(
+            "Feature Store As-of Date (optional historical cut)",
+            value=date.today(),
+            max_value=date.today(),
+            key="backtest_build_as_of",
+            help="The builder fetches up to this date from IBKR. Use today's date for current replay data.",
+        )
+        if st.button("Build / Refresh Feature Store", type="secondary", key="build_backtest_feature_store_button"):
+            try:
+                build_result = build_backtest_feature_store(
+                    config_path=config_path.strip(),
+                    history_days=int(backtest_history_days),
+                    as_of_date=backtest_as_of.isoformat(),
+                    symbol=backtest_symbol.strip() or "SPY",
+                    host=backtest_host.strip() or "127.0.0.1",
+                    port=int(backtest_port),
+                    client_id=int(backtest_client_id),
+                    market_data_type=int(backtest_market_data_type),
+                    exchange=backtest_exchange.strip() or "SMART",
+                    option_exchange=str(builder_ibkr.get("option_exchange", "SMART")),
+                    index_exchange=backtest_index_exchange.strip() or "CBOE",
+                    currency=str(builder_ibkr.get("currency", "USD")),
+                    langsmith_tracing=langsmith_tracing,
+                    langsmith_project=langsmith_project or None,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[state_backtester_build_key] = build_result
+
+        current_build_result = st.session_state.get(state_backtester_build_key)
+        if isinstance(current_build_result, dict):
+            st.caption(
+                "Feature store ready: "
+                f"`{current_build_result.get('feature_store_path', '')}` "
+                f"| rows={current_build_result.get('rows', 0)} "
+                f"| {current_build_result.get('start_date', '')} -> {current_build_result.get('end_date', '')}"
+            )
+            build_warnings = list(current_build_result.get("warnings", []))
+            if build_warnings:
+                st.warning(" | ".join(str(item) for item in build_warnings))
+
+        resolved_store = _resolve_existing_backtest_feature_store(config_path.strip())
+        if resolved_store is not None:
+            st.caption(f"Feature store: `{resolved_store}`")
+        else:
+            st.warning(
+                "Feature store file is missing for the current config. "
+                "Update `feature_store_path` in the replay config to a valid parquet/csv dataset."
+            )
+        run_mode = st.radio(
+            "Replay Mode",
+            options=["Date Range", "Single Date"],
+            horizontal=True,
+            key="backtest_mode",
+        )
+
+        backtest_models = st.multiselect(
+            "Models",
+            options=BACKTEST_MODEL_OPTIONS,
+            default=BACKTEST_MODEL_OPTIONS,
+            key="backtest_models",
+        )
+        backtest_horizons = st.multiselect(
+            "Horizons (trading days)",
+            options=BACKTEST_HORIZON_OPTIONS,
+            default=[1, 2, 3],
+            key="backtest_horizons",
+        )
+
+        as_of_date: str | None = None
+        start_date: str | None = None
+        end_date: str | None = None
+        if run_mode == "Single Date":
+            selected_as_of = st.date_input(
+                "As-of Date",
+                value=date.today(),
+                max_value=date.today(),
+                key="backtest_as_of_date",
+            )
+            as_of_date = selected_as_of.isoformat()
+        else:
+            date_col1, date_col2 = st.columns(2)
+            selected_start = date_col1.date_input(
+                "Start Date",
+                value=date.today(),
+                max_value=date.today(),
+                key="backtest_start_date",
+            )
+            selected_end = date_col2.date_input(
+                "End Date",
+                value=date.today(),
+                max_value=date.today(),
+                key="backtest_end_date",
+            )
+            start_date = selected_start.isoformat()
+            end_date = selected_end.isoformat()
+
+        if st.button("Run Backtest", type="primary", key="run_backtest_button"):
+            try:
+                backtest_result = run_hmm_replay_backtester(
+                    config_path=config_path.strip(),
+                    start_date=start_date,
+                    end_date=end_date,
+                    as_of_date=as_of_date,
+                    models=list(backtest_models) or None,
+                    horizons=[int(item) for item in list(backtest_horizons)] or None,
+                    langsmith_tracing=langsmith_tracing,
+                    langsmith_project=langsmith_project or None,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[state_backtester_result_key] = backtest_result
+
+        current_backtest_result = st.session_state.get(state_backtester_result_key)
+        if isinstance(current_backtest_result, dict):
+            summary_metrics = list(current_backtest_result.get("summary_metrics", []))
+            st.caption(f"Report: `{current_backtest_result.get('report_path', '')}`")
+            st.caption(f"Summary CSV: `{current_backtest_result.get('summary_metrics_path', '')}`")
+            st.caption(f"Economic Summary CSV: `{current_backtest_result.get('economic_summary_path', '')}`")
+            st.caption(f"Prediction Distribution CSV: `{current_backtest_result.get('prediction_distribution_path', '')}`")
+            st.caption(f"Outcome Distribution CSV: `{current_backtest_result.get('outcome_distribution_path', '')}`")
+            st.caption(f"Confusion Matrix CSV: `{current_backtest_result.get('confusion_matrix_path', '')}`")
+            st.caption(f"False Alarms CSV: `{current_backtest_result.get('false_alarms_path', '')}`")
+            st.caption(f"Missed Risks CSV: `{current_backtest_result.get('missed_risks_path', '')}`")
+            st.caption(f"Disagreement Attribution CSV: `{current_backtest_result.get('disagreement_attribution_path', '')}`")
+            st.caption(f"Disagreement Summary CSV: `{current_backtest_result.get('disagreement_summary_path', '')}`")
+            st.caption(f"Geometry Override Cases CSV: `{current_backtest_result.get('geometry_override_path', '')}`")
+            st.caption(
+                f"Geometry False Suppression CSV: `{current_backtest_result.get('geometry_false_suppression_path', '')}`"
+            )
+            st.caption(
+                f"Geometry False Suppression Analysis CSV: `{current_backtest_result.get('geometry_false_suppression_analysis_path', '')}`"
+            )
+            st.caption(f"Geometry Success CSV: `{current_backtest_result.get('geometry_success_path', '')}`")
+            st.caption(
+                f"Geometry Smooth Modifier CSV: `{current_backtest_result.get('geometry_smooth_modifier_path', '')}`"
+            )
+            st.caption(f"Predictions JSONL: `{current_backtest_result.get('prediction_records_path', '')}`")
+            st.caption(f"Outcomes JSONL: `{current_backtest_result.get('outcome_records_path', '')}`")
+            st.caption(f"Scored JSONL: `{current_backtest_result.get('scored_records_path', '')}`")
+
+            if summary_metrics:
+                st.subheader("Summary Metrics")
+                st.dataframe(summary_metrics, use_container_width=True, hide_index=True)
+            geometry_false_suppression_analysis = list(
+                current_backtest_result.get("geometry_false_suppression_analysis", [])
+            )
+            if geometry_false_suppression_analysis:
+                st.subheader("Geometry False Suppression Analysis")
+                st.dataframe(geometry_false_suppression_analysis, use_container_width=True, hide_index=True)
+
+            report_markdown = _load_text_file(str(current_backtest_result.get("report_path", "")))
+            if report_markdown:
+                st.subheader("Replay Report")
+                st.markdown(report_markdown)
+
+            with st.expander("Backtest Artifacts"):
+                st.code(_pretty_json(current_backtest_result), language="json")
 
     with ibkr_tab:
         st.subheader("Live IBKR Market Data Agent")

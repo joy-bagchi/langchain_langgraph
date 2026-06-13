@@ -110,6 +110,19 @@ HMM_VARIANTS: dict[str, HMMVariantSpec] = {
             "enable_sector_geometry_only_diagnostic": False,
         },
     ),
+    "v3_1": HMMVariantSpec(
+        variant_id="v3_1",
+        model_version="hmm_gaussian_v3_1",
+        config_name="hmm_v3_1_meta_blend.yaml",
+        artifact_name="daily_regime_hmm_v3_1_model.pkl",
+        label="HMM v3.1 Meta-Blend",
+        feature_flags={
+            "enable_hmm_v2_sector_corr": True,
+            "enable_hmm_v3_sector_geometry": True,
+            "enable_sector_geometry_only_diagnostic": False,
+            "enable_hmm_v3_1_meta_blend": True,
+        },
+    ),
 }
 
 
@@ -367,6 +380,374 @@ def _build_historical_feature_rows(
     if len(rows) < 3:
         warnings.append("Insufficient fully populated feature rows for HMM training.")
     return rows, warnings
+
+
+def _load_v3_1_meta_blend_config(*, app_paths: AppPaths) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
+        "geometry_stress": {
+            "preferred_lookback": 252,
+            "fallback_lookback": 126,
+            "min_lookback": 63,
+            "component_weights": {
+                "avg_corr_stress": 0.30,
+                "eigen_stress": 0.30,
+                "effective_rank_stress": 0.25,
+                "log_det_stress": 0.15,
+            },
+        },
+        "meta_blend": {
+            "core_vol_weight": 0.75,
+            "geometry_weight": 0.25,
+            "risk_thresholds": {
+                "stable_low_vol_max": 0.25,
+                "mid_vol_chop_max": 0.50,
+                "vol_expansion_max": 0.75,
+            },
+            "downgrade_cap": {
+                "max_levels": 1,
+                "strict_exception": {
+                    "geometry_stress_below": 0.20,
+                    "core_confidence_below": 0.55,
+                },
+            },
+        },
+    }
+    config_path = app_paths.configs_dir / "models" / "hmm_v3_1_meta_blend.yaml"
+    if not config_path.exists():
+        return defaults
+    try:
+        import yaml
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return defaults
+    merged = dict(defaults)
+    merged["geometry_stress"] = {**dict(defaults["geometry_stress"]), **dict(payload.get("geometry_stress", {}))}
+    merged["meta_blend"] = {**dict(defaults["meta_blend"]), **dict(payload.get("meta_blend", {}))}
+    merged["meta_blend"]["risk_thresholds"] = {
+        **dict(defaults["meta_blend"]["risk_thresholds"]),
+        **dict(dict(merged["meta_blend"]).get("risk_thresholds", {})),
+    }
+    merged["meta_blend"]["downgrade_cap"] = {
+        **dict(defaults["meta_blend"]["downgrade_cap"]),
+        **dict(dict(merged["meta_blend"]).get("downgrade_cap", {})),
+    }
+    merged["meta_blend"]["downgrade_cap"]["strict_exception"] = {
+        **dict(defaults["meta_blend"]["downgrade_cap"]["strict_exception"]),
+        **dict(dict(merged["meta_blend"]["downgrade_cap"]).get("strict_exception", {})),
+    }
+    return merged
+
+
+def _percentile_rank(values: list[float], current: float) -> float:
+    if not values:
+        return 0.5
+    sorted_values = sorted(float(item) for item in values)
+    count_le = sum(1 for item in sorted_values if item <= float(current))
+    return min(1.0, max(0.0, count_le / len(sorted_values)))
+
+
+def _geometry_stress_from_observation(
+    *,
+    observation: ObservationRecord,
+    config: dict[str, Any],
+) -> tuple[float, dict[str, float], int, list[str]]:
+    geo_cfg = dict(config.get("geometry_stress", {}))
+    preferred_lookback = int(geo_cfg.get("preferred_lookback", 252))
+    fallback_lookback = int(geo_cfg.get("fallback_lookback", 126))
+    min_lookback = int(geo_cfg.get("min_lookback", 63))
+    component_weights = {
+        "avg_corr_stress": float(dict(geo_cfg.get("component_weights", {})).get("avg_corr_stress", 0.30)),
+        "eigen_stress": float(dict(geo_cfg.get("component_weights", {})).get("eigen_stress", 0.30)),
+        "effective_rank_stress": float(dict(geo_cfg.get("component_weights", {})).get("effective_rank_stress", 0.25)),
+        "log_det_stress": float(dict(geo_cfg.get("component_weights", {})).get("log_det_stress", 0.15)),
+    }
+
+    history_lengths = [len([float(item) for item in values if item is not None]) for values in observation.history.values() if values]
+    max_length = max(history_lengths) if history_lengths else 0
+    series_rows: list[dict[str, float]] = []
+    warnings: list[str] = []
+
+    for index in range(max_length):
+        if index < 21:
+            continue
+        sector_history = _build_sector_history_window(observation, end_index=index, window_length=21)
+        sector_metrics, sector_warnings = compute_sector_geometry_metrics(sector_history, lookback_days=21)
+        if sector_warnings:
+            continue
+        if not all(
+            key in sector_metrics and sector_metrics.get(key) is not None
+            for key in ("avg_pairwise_corr_21d", "first_eigenvalue_share_21d", "effective_rank_21d", "log_det_corr_21d")
+        ):
+            continue
+        series_rows.append(
+            {
+                "avg_pairwise_corr_21d": float(sector_metrics["avg_pairwise_corr_21d"]),
+                "first_eigenvalue_share_21d": float(sector_metrics["first_eigenvalue_share_21d"]),
+                "effective_rank_21d": float(sector_metrics["effective_rank_21d"]),
+                "log_det_corr_21d": float(sector_metrics["log_det_corr_21d"]),
+            }
+        )
+
+    if len(series_rows) >= preferred_lookback:
+        lookback = preferred_lookback
+    elif len(series_rows) >= fallback_lookback:
+        lookback = fallback_lookback
+    elif len(series_rows) >= min_lookback:
+        lookback = min_lookback
+    else:
+        warnings.append("Insufficient geometry history for v3.1 meta-blend; geometry stress set to neutral 0.50.")
+        components = {
+            "avg_corr_stress": 0.5,
+            "eigen_stress": 0.5,
+            "effective_rank_stress": 0.5,
+            "log_det_stress": 0.5,
+        }
+        return 0.5, components, len(series_rows), warnings
+
+    window = series_rows[-lookback:]
+    latest = window[-1]
+    avg_corr_stress = _percentile_rank([item["avg_pairwise_corr_21d"] for item in window], latest["avg_pairwise_corr_21d"])
+    eigen_stress = _percentile_rank(
+        [item["first_eigenvalue_share_21d"] for item in window],
+        latest["first_eigenvalue_share_21d"],
+    )
+    effective_rank_stress = _percentile_rank(
+        [-item["effective_rank_21d"] for item in window],
+        -latest["effective_rank_21d"],
+    )
+    log_det_stress = _percentile_rank(
+        [-item["log_det_corr_21d"] for item in window],
+        -latest["log_det_corr_21d"],
+    )
+    components = {
+        "avg_corr_stress": round(float(avg_corr_stress), 6),
+        "eigen_stress": round(float(eigen_stress), 6),
+        "effective_rank_stress": round(float(effective_rank_stress), 6),
+        "log_det_stress": round(float(log_det_stress), 6),
+    }
+    score = (
+        component_weights["avg_corr_stress"] * components["avg_corr_stress"]
+        + component_weights["eigen_stress"] * components["eigen_stress"]
+        + component_weights["effective_rank_stress"] * components["effective_rank_stress"]
+        + component_weights["log_det_stress"] * components["log_det_stress"]
+    )
+    geometry_stress_score = min(1.0, max(0.0, float(score)))
+    return geometry_stress_score, components, lookback, warnings
+
+
+def _global_regime_from_risk_score(score: float, thresholds: dict[str, float]) -> str:
+    stable_max = float(thresholds.get("stable_low_vol_max", 0.25))
+    chop_max = float(thresholds.get("mid_vol_chop_max", 0.50))
+    expansion_max = float(thresholds.get("vol_expansion_max", 0.75))
+    value = min(1.0, max(0.0, float(score)))
+    if value < stable_max:
+        return "STABLE_LOW_VOL_TREND"
+    if value < chop_max:
+        return "MID_VOL_CHOP"
+    if value < expansion_max:
+        return "VOL_EXPANSION_TRANSITION"
+    return "HIGH_VOL_RISK_OFF"
+
+
+def _global_state_distribution_from_score(score: float) -> dict[str, float]:
+    anchors = {
+        "STABLE_LOW_VOL_TREND": 0.00,
+        "MID_VOL_CHOP": 0.33,
+        "VOL_EXPANSION_TRANSITION": 0.67,
+        "HIGH_VOL_RISK_OFF": 1.00,
+    }
+    smoothing = 0.22
+    raw = {
+        key: math.exp(-abs(float(score) - anchor) / smoothing)
+        for key, anchor in anchors.items()
+    }
+    total = sum(raw.values()) or 1.0
+    return {key: round(float(value / total), 6) for key, value in raw.items()}
+
+
+def _compute_v3_1_meta_blend_record(
+    *,
+    observation: ObservationRecord,
+    feature_record: FeatureRecord,
+    app_paths: AppPaths,
+    force_retrain: bool,
+) -> HMMBeliefRecord:
+    core_config = load_hmm_config(app_paths=app_paths, variant_id="v1")
+    core_record = compute_hmm_belief_record(
+        observation,
+        feature_record,
+        app_paths=app_paths,
+        config=core_config,
+        variant_id="v1",
+        force_retrain=force_retrain,
+    )
+    if not core_record.is_trained:
+        core_record.model_version = "hmm_gaussian_v3_1"
+        core_record.variant_id = "v3_1"
+        core_record.variant_label = "HMM v3.1 Meta-Blend"
+        core_record.training_status = "not_trained_enough"
+        core_record.warnings = list(core_record.warnings) + [
+            "HMM v3.1 meta-blend requires a trained HMM v1 core and was unavailable for this run."
+        ]
+        return core_record
+
+    blend_config = _load_v3_1_meta_blend_config(app_paths=app_paths)
+    geometry_score, geometry_components, geometry_lookback, geometry_warnings = _geometry_stress_from_observation(
+        observation=observation,
+        config=blend_config,
+    )
+    meta_cfg = dict(blend_config.get("meta_blend", {}))
+    core_weight = float(meta_cfg.get("core_vol_weight", 0.75))
+    geometry_weight = float(meta_cfg.get("geometry_weight", 0.25))
+    total_weight = core_weight + geometry_weight
+    if total_weight <= 0.0:
+        core_weight = 0.75
+        geometry_weight = 0.25
+    else:
+        core_weight = core_weight / total_weight
+        geometry_weight = geometry_weight / total_weight
+
+    core_global_probabilities = {
+        HMM_TO_GLOBAL_REGIME.get(state, state): float(probability)
+        for state, probability in core_record.state_probabilities.items()
+    }
+    core_risk_score = (
+        core_global_probabilities.get("MID_VOL_CHOP", 0.0) * 0.33
+        + core_global_probabilities.get("VOL_EXPANSION_TRANSITION", 0.0) * 0.67
+        + core_global_probabilities.get("HIGH_VOL_RISK_OFF", 0.0) * 1.0
+    )
+    blend_score = min(1.0, max(0.0, (core_weight * core_risk_score) + (geometry_weight * geometry_score)))
+    thresholds = dict(meta_cfg.get("risk_thresholds", {}))
+    raw_final_global_state = _global_regime_from_risk_score(blend_score, thresholds)
+    core_global_state = HMM_TO_GLOBAL_REGIME.get(core_record.top_state, "STABLE_LOW_VOL_TREND")
+    severity_order = {
+        "STABLE_LOW_VOL_TREND": 0,
+        "MID_VOL_CHOP": 1,
+        "VOL_EXPANSION_TRANSITION": 2,
+        "HIGH_VOL_RISK_OFF": 3,
+    }
+    inverse_severity = {value: key for key, value in severity_order.items()}
+    core_severity = int(severity_order.get(core_global_state, 0))
+    final_severity = int(severity_order.get(raw_final_global_state, 0))
+    downgrade_cap_cfg = dict(meta_cfg.get("downgrade_cap", {}))
+    strict_exception = dict(downgrade_cap_cfg.get("strict_exception", {}))
+    strict_exception_allowed = (
+        float(geometry_score) < float(strict_exception.get("geometry_stress_below", 0.20))
+        and float(core_record.confidence) < float(strict_exception.get("core_confidence_below", 0.55))
+    )
+    cap_applied = False
+    if core_severity >= 2 and not strict_exception_allowed:
+        max_levels = max(1, int(downgrade_cap_cfg.get("max_levels", 1)))
+        min_allowed = max(0, core_severity - max_levels)
+        if final_severity < min_allowed:
+            final_severity = min_allowed
+            cap_applied = True
+    final_global_state = inverse_severity.get(final_severity, "STABLE_LOW_VOL_TREND")
+    adjusted_distribution_global = _global_state_distribution_from_score(blend_score)
+    if cap_applied:
+        adjusted_distribution_global[final_global_state] = max(
+            adjusted_distribution_global.get(final_global_state, 0.0),
+            0.45,
+        )
+        total = sum(adjusted_distribution_global.values()) or 1.0
+        adjusted_distribution_global = {
+            key: round(float(value / total), 6)
+            for key, value in adjusted_distribution_global.items()
+        }
+
+    adjusted_state_probabilities = {
+        "LOW_VOL_TREND": adjusted_distribution_global.get("STABLE_LOW_VOL_TREND", 0.0),
+        "MID_VOL_CHOP": adjusted_distribution_global.get("MID_VOL_CHOP", 0.0),
+        "VOL_EXPANSION": adjusted_distribution_global.get("VOL_EXPANSION_TRANSITION", 0.0),
+        "HIGH_VOL_STRESS": adjusted_distribution_global.get("HIGH_VOL_RISK_OFF", 0.0),
+    }
+    adjusted_top_state = max(adjusted_state_probabilities, key=adjusted_state_probabilities.get)
+
+    confidence_adjustment = (
+        0.05
+        if geometry_score >= 0.60
+        else -0.05
+        if geometry_score <= 0.35
+        else 0.0
+    )
+    adjusted_confidence = min(0.99, max(0.0, float(core_record.confidence) + confidence_adjustment))
+    all_warnings = list(dict.fromkeys(list(core_record.warnings) + list(geometry_warnings)))
+
+    transition_probabilities = dict(core_record.transition_probabilities)
+    expansion_key = "to_vol_expansion_or_high_vol_5d"
+    if expansion_key in transition_probabilities:
+        expansion_value = float(transition_probabilities[expansion_key])
+        transition_probabilities[expansion_key] = round(
+            min(1.0, max(0.0, 0.85 * expansion_value + 0.15 * geometry_score)),
+            6,
+        )
+
+    interpretation_notes = list(core_record.interpretation_notes)
+    interpretation_notes.append(
+        f"Meta-blend score combines v1 core risk ({core_risk_score:.2f}) and geometry stress ({geometry_score:.2f}) with weights core={core_weight:.2f}, geometry={geometry_weight:.2f}."
+    )
+    if cap_applied:
+        interpretation_notes.append("Downgrade cap applied: final state could not drop more than one regime level below the core state.")
+    interpretation_notes.append(
+        f"Geometry lookback used={geometry_lookback}; components avg_corr={geometry_components['avg_corr_stress']:.2f}, eigen={geometry_components['eigen_stress']:.2f}, eff_rank={geometry_components['effective_rank_stress']:.2f}, log_det={geometry_components['log_det_stress']:.2f}."
+    )
+
+    drivers = list(core_record.drivers)
+    drivers.append(f"HMM v3.1 meta-blend final state `{adjusted_top_state}` with confidence {adjusted_confidence:.2f}.")
+    drivers.append(f"Geometry stress score is {geometry_score:.2f}.")
+
+    inference_feature_vector = dict(core_record.inference_feature_vector)
+    inference_feature_vector.update(
+        {
+            "geometry_stress_score": round(float(geometry_score), 6),
+            "core_risk_score": round(float(core_risk_score), 6),
+            "meta_blend_score": round(float(blend_score), 6),
+            "geometry_lookback_used": float(geometry_lookback),
+            **{f"geometry_{key}": float(value) for key, value in geometry_components.items()},
+        }
+    )
+
+    sector_metrics = dict(core_record.sector_metrics)
+    sector_metrics.update(
+        {
+            "geometry_stress_score": round(float(geometry_score), 6),
+            **{f"geometry_{key}": float(value) for key, value in geometry_components.items()},
+        }
+    )
+
+    return HMMBeliefRecord(
+        schema_version="hmm_belief.v1",
+        model_name="HMMBeliefAgent",
+        model_version="hmm_gaussian_v3_1",
+        as_of=core_record.as_of,
+        is_trained=True,
+        training_status="trained",
+        state_probabilities={key: round(float(value), 6) for key, value in adjusted_state_probabilities.items()},
+        top_state=adjusted_top_state,
+        transition_matrix=[list(row) for row in core_record.transition_matrix],
+        expected_duration_days=dict(core_record.expected_duration_days),
+        current_state_expected_duration_days=float(core_record.current_state_expected_duration_days),
+        persistence_probabilities=dict(core_record.persistence_probabilities),
+        transition_probabilities=transition_probabilities,
+        confidence=round(float(adjusted_confidence), 6),
+        warnings=all_warnings,
+        drivers=drivers[:8],
+        interpretation_notes=interpretation_notes[:8],
+        state_label_mapping=dict(core_record.state_label_mapping),
+        emission_state_probabilities=dict(core_record.emission_state_probabilities),
+        emission_top_state=str(core_record.emission_top_state),
+        persistence_lift=dict(core_record.persistence_lift),
+        state_feature_summaries=dict(core_record.state_feature_summaries),
+        training_row_count=int(core_record.training_row_count),
+        configured_train_window=int(core_record.configured_train_window),
+        inference_feature_vector=inference_feature_vector,
+        variant_id="v3_1",
+        variant_label="HMM v3.1 Meta-Blend",
+        model_converged=bool(core_record.model_converged),
+        state_usage_counts=dict(core_record.state_usage_counts),
+        sector_metrics=sector_metrics,
+    )
 
 
 def _matrix_from_rows(rows: list[dict[str, float]], feature_list: list[str]) -> np.ndarray:
@@ -716,6 +1097,13 @@ def compute_hmm_belief_record(
     force_retrain: bool = False,
 ) -> HMMBeliefRecord:
     config = config or load_hmm_config(app_paths=app_paths, variant_id=variant_id)
+    if config.variant_id == "v3_1":
+        return _compute_v3_1_meta_blend_record(
+            observation=observation,
+            feature_record=feature_record,
+            app_paths=app_paths,
+            force_retrain=force_retrain,
+        )
     if GaussianHMM is None:
         return _warning_record(
             as_of=feature_record.as_of,

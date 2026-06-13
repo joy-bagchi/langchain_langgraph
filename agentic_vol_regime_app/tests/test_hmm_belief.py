@@ -462,6 +462,28 @@ def test_hmm_v3_falls_back_to_v1_when_sector_geometry_inputs_are_missing(monkeyp
     assert any("fell back to hmm v1" in warning.lower() for warning in record.warnings)
 
 
+def test_hmm_v3_1_meta_blend_uses_core_plus_geometry_stress(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hmm_belief, "GaussianHMM", FakeGaussianHMM)
+    observation = _observation(days=220)
+    feature_record = _feature_record(observation)
+    config = hmm_belief.load_hmm_config(app_paths=AppPaths(root=tmp_path), variant_id="v3_1")
+
+    record = compute_hmm_belief_record(
+        observation,
+        feature_record,
+        app_paths=AppPaths(root=tmp_path),
+        config=config,
+        variant_id="v3_1",
+    )
+
+    assert record.variant_id == "v3_1"
+    assert record.model_version == "hmm_gaussian_v3_1"
+    assert abs(sum(record.state_probabilities.values()) - 1.0) < 1e-6
+    assert "meta_blend_score" in record.inference_feature_vector
+    assert "geometry_stress_score" in record.sector_metrics
+    assert record.top_state in {"LOW_VOL_TREND", "MID_VOL_CHOP", "VOL_EXPANSION", "HIGH_VOL_STRESS"}
+
+
 def test_hmm_report_renders_section() -> None:
     feature_record = FeatureRecord(
         schema_version="features.v1",
