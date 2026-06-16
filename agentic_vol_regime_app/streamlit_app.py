@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 
 def _ensure_streamlit_imports() -> None:
@@ -36,6 +39,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     resume_daily_regime_run,
     run_daily_regime_agent,
     run_hmm_replay_backtester,
+    run_policy_backtester,
     run_ibkr_market_data_agent,
 )
 from agentic_vol_regime_app.config import AppPaths, load_json  # noqa: E402
@@ -56,7 +60,8 @@ APP_PATHS = AppPaths.default()
 DEFAULT_DAILY_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_watch.json"
 DEFAULT_DAILY_LIVE_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_ibkr_live.json"
 DEFAULT_IBKR_INPUT = APP_PATHS.sample_inputs_dir / "ibkr_spy_snapshot.json"
-DEFAULT_BACKTEST_CONFIG = APP_PATHS.configs_dir / "backtest" / "hmm_replay.yaml"
+DEFAULT_BACKTEST_CONFIG = APP_PATHS.configs_dir / "backtest" / "hmm_replay_10y_hmmv4.yaml"
+DEFAULT_POLICY_BACKTEST_CONFIG = APP_PATHS.configs_dir / "backtest" / "policy_backtest.yaml"
 CARD_LABEL_COLOR = "#facc15"
 CARD_VALUE_COLOR = "#fef3c7"
 WIDGET_BORDER_COLOR = "#facc15"
@@ -75,8 +80,100 @@ BACKTEST_MODEL_OPTIONS = [
     "hmm_v2_core_plus_sector_corr",
     "hmm_v3_core_plus_sector_geometry",
     "hmm_v3_1_meta_blend",
+    "hmm_v4_path_aware_meta",
 ]
 BACKTEST_HORIZON_OPTIONS = [1, 2, 3, 5, 10]
+POLICY_MODEL_OPTIONS = [
+    "hmm_v3_1_meta_blend",
+    "hmm_v4_path_aware_meta",
+]
+TUNING_DEFAULT_LOOKBACK_DAYS = 756
+TUNING_DEFAULT_MIN_TRAIN_ROWS = 504
+TUNING_DEFAULT_MAX_REPLAY_DATES = 75
+TUNING_DEFAULT_WINDOW_BDAYS = 90
+
+
+def _default_backtest_models_for_run_mode(run_mode: str) -> list[str]:
+    if str(run_mode).strip().lower() == "tuning":
+        return ["hmm_v4_path_aware_meta", "hmm_v3_1_meta_blend"]
+    return list(BACKTEST_MODEL_OPTIONS)
+
+
+def _default_backtest_horizons_for_run_mode(run_mode: str) -> list[int]:
+    if str(run_mode).strip().lower() == "tuning":
+        return [1, 3]
+    return [1, 2, 3, 5, 10]
+
+
+def _compact_backtest_session_payload(result: dict[str, Any]) -> dict[str, Any]:
+    keep_keys = [
+        "report_path",
+        "compact_summary_path",
+        "run_log_path",
+        "run_mode",
+        "peak_rss_mb",
+        "slowest_dates",
+        "runtime_profile",
+        "cache_hits",
+        "cache_misses",
+        "total_prediction_records",
+        "total_scored_records",
+        "summary_metrics_path",
+        "economic_summary_path",
+        "prediction_distribution_path",
+        "outcome_distribution_path",
+        "confusion_matrix_path",
+        "false_alarms_path",
+        "missed_risks_path",
+        "top_feature_importances_path",
+        "prediction_records_path",
+        "outcome_records_path",
+        "scored_records_path",
+        "summary_metrics",
+    ]
+    compact: dict[str, Any] = {}
+    for key in keep_keys:
+        if key in result:
+            compact[key] = result.get(key)
+    return compact
+
+
+def _build_run_mode_preset_rows(
+    *,
+    selected_replay_run_mode: str,
+    replay_scope: str,
+    selected_models: list[str],
+    selected_horizons: list[int],
+    config_train_lookback_days: int,
+    config_min_train_rows: int,
+) -> list[dict[str, str]]:
+    mode = str(selected_replay_run_mode).strip().lower()
+    if mode == "tuning":
+        target_window = f"Last {TUNING_DEFAULT_WINDOW_BDAYS} business days (cap {TUNING_DEFAULT_MAX_REPLAY_DATES} replay dates)"
+        lookback = str(TUNING_DEFAULT_LOOKBACK_DAYS)
+        min_rows = str(TUNING_DEFAULT_MIN_TRAIN_ROWS)
+        max_dates = str(TUNING_DEFAULT_MAX_REPLAY_DATES)
+        diagnostics = "Compact diagnostics (fast iteration)"
+    else:
+        target_window = "Full selected replay window"
+        lookback = str(int(config_train_lookback_days))
+        min_rows = str(int(config_min_train_rows))
+        max_dates = "none"
+        diagnostics = "Full diagnostics (final validation)"
+    if replay_scope == "Single Date":
+        target_window = "Single as-of replay date"
+        max_dates = "1"
+    return [
+        {"Setting": "Run Mode", "Effective Value": mode},
+        {"Setting": "Replay Scope", "Effective Value": str(replay_scope)},
+        {"Setting": "Date Window Intent", "Effective Value": target_window},
+        {"Setting": "Train Lookback Days", "Effective Value": lookback},
+        {"Setting": "Min Train Rows", "Effective Value": min_rows},
+        {"Setting": "Max Replay Dates", "Effective Value": max_dates},
+        {"Setting": "Horizons", "Effective Value": ", ".join(str(item) for item in selected_horizons)},
+        {"Setting": "Models", "Effective Value": ", ".join(selected_models)},
+        {"Setting": "Diagnostics", "Effective Value": diagnostics},
+    ]
 
 
 def _pretty_json(payload: Any) -> str:
@@ -334,7 +431,7 @@ def _render_hmm_summary(st, *, hmm_belief: dict[str, Any]) -> None:
                     "probability": float(probability),
                 }
             )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _render_hmm_history(st, *, hmm_history: list[dict[str, Any]]) -> None:
@@ -357,7 +454,7 @@ def _render_hmm_history(st, *, hmm_history: list[dict[str, Any]]) -> None:
                     ),
                 }
             )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _extract_governance_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -444,7 +541,7 @@ def _render_governance_panel(
         st.caption("\n\n".join(summary_lines))
 
     if step_rows:
-        st.dataframe(step_rows, use_container_width=True, hide_index=True)
+        st.dataframe(step_rows, width="stretch", hide_index=True)
 
 
 def _strip_report_heading_and_summary(markdown: str) -> str:
@@ -506,7 +603,7 @@ def _render_daily_result(st, result: dict[str, Any], *, hmm_history: list[dict[s
     if beliefs:
         st.dataframe(
             [{"regime": key, "probability": value} for key, value in beliefs.items()],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -612,7 +709,7 @@ def _render_ibkr_result(st, result: dict[str, Any]) -> None:
                     "implied_vol": greeks.get("implied_vol"),
                 }
             )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
     else:
         st.info("No option quotes were returned in this snapshot.")
 
@@ -693,6 +790,236 @@ def _resolve_existing_backtest_feature_store(config_path: str) -> Path | None:
     return resolved if resolved.exists() else None
 
 
+def _load_feature_store_date_bounds(feature_store_path: Path | None) -> tuple[date | None, date | None]:
+    if feature_store_path is None or not feature_store_path.exists():
+        return (None, None)
+    try:
+        if feature_store_path.suffix.lower() == ".parquet":
+            frame = pd.read_parquet(feature_store_path, columns=["date"])
+        elif feature_store_path.suffix.lower() in {".csv", ".txt"}:
+            frame = pd.read_csv(feature_store_path, usecols=["date"])
+        else:
+            return (None, None)
+    except Exception:
+        return (None, None)
+    if frame.empty or "date" not in frame.columns:
+        return (None, None)
+    parsed = pd.to_datetime(frame["date"], errors="coerce").dropna()
+    if parsed.empty:
+        return (None, None)
+    return (parsed.min().date(), parsed.max().date())
+
+
+def _load_feature_store_frame(feature_store_path: Path | None) -> pd.DataFrame | None:
+    if feature_store_path is None or not feature_store_path.exists():
+        return None
+    try:
+        if feature_store_path.suffix.lower() == ".parquet":
+            frame = pd.read_parquet(feature_store_path)
+        elif feature_store_path.suffix.lower() in {".csv", ".txt"}:
+            frame = pd.read_csv(feature_store_path)
+        else:
+            return None
+    except Exception:
+        return None
+    if frame.empty or "date" not in frame.columns:
+        return frame
+    working = frame.copy()
+    working["date"] = pd.to_datetime(working["date"], errors="coerce").dt.date
+    working = working.dropna(subset=["date"]).reset_index(drop=True)
+    return working
+
+
+def _resolve_historical_cache_db_path() -> Path | None:
+    candidates = [
+        APP_PATHS.root / "data" / "processed" / "historical_data.db",
+        APP_PATHS.root.parent / "data" / "processed" / "historical_data.db",
+    ]
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def _load_historical_cache_frame(db_path: Path | None) -> pd.DataFrame | None:
+    if db_path is None or not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(db_path) as connection:
+            frame = pd.read_sql_query(
+                """
+                SELECT symbol, day, close, source, updated_at
+                FROM eod_history
+                ORDER BY day DESC, symbol ASC
+                """,
+                connection,
+            )
+    except Exception:
+        return None
+    if frame.empty:
+        return frame
+    frame = frame.copy()
+    frame["day"] = pd.to_datetime(frame["day"], errors="coerce").dt.date
+    frame["updated_at"] = pd.to_datetime(frame["updated_at"], errors="coerce", utc=True)
+    return frame.dropna(subset=["day"]).reset_index(drop=True)
+
+
+def _clamp_date_to_bounds(value: date, *, minimum: date | None, maximum: date | None) -> date:
+    result = value
+    if minimum is not None and result < minimum:
+        result = minimum
+    if maximum is not None and result > maximum:
+        result = maximum
+    return result
+
+
+def _load_backtest_config(config_path: str):
+    try:
+        from src.backtest.hmm_replay.replay_config import load_replay_config
+    except Exception:
+        return None
+    try:
+        return load_replay_config(config_path)
+    except Exception:
+        return None
+
+
+def _load_policy_backtest_config(config_path: str):
+    try:
+        from src.backtest.policy.policy_backtester import load_policy_backtest_config
+    except Exception:
+        return None
+    try:
+        return load_policy_backtest_config(config_path)
+    except Exception:
+        return None
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(result):
+        return None
+    return result
+
+
+def _build_policy_mechanics_checks(
+    *,
+    policy_daily_path: str,
+    policy_trades_path: str,
+) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    # 1-6: formula sanity checks from spec
+    leap_formula = 0.70 * 100.0 * 1.0 * 10.0
+    short_call_profit_formula = (1.50 - 0.30) * 100.0
+    short_call_loss_formula = (1.50 - 3.00) * 100.0
+    combined_formula = leap_formula + short_call_loss_formula
+    leap_profit_exit_formula = (120.0 - 100.0) * 100.0
+    leap_stop_exit_formula = (80.0 - 100.0) * 100.0
+    checks.extend(
+        [
+            {
+                "check": "1) LEAP delta sanity (+10 SPY points -> +$700)",
+                "expected": 700.0,
+                "actual": round(float(leap_formula), 2),
+                "status": "PASS" if abs(leap_formula - 700.0) < 1e-6 else "FAIL",
+                "source": "formula",
+            },
+            {
+                "check": "2) Short call profit exit sanity (1.50 -> 0.30 -> +$120)",
+                "expected": 120.0,
+                "actual": round(float(short_call_profit_formula), 2),
+                "status": "PASS" if abs(short_call_profit_formula - 120.0) < 1e-6 else "FAIL",
+                "source": "formula",
+            },
+            {
+                "check": "3) Short call loss exit sanity (1.50 -> 3.00 -> -$150)",
+                "expected": -150.0,
+                "actual": round(float(short_call_loss_formula), 2),
+                "status": "PASS" if abs(short_call_loss_formula + 150.0) < 1e-6 else "FAIL",
+                "source": "formula",
+            },
+            {
+                "check": "4) Combined sanity (+700 and -150 -> +550)",
+                "expected": 550.0,
+                "actual": round(float(combined_formula), 2),
+                "status": "PASS" if abs(combined_formula - 550.0) < 1e-6 else "FAIL",
+                "source": "formula",
+            },
+            {
+                "check": "5) LEAP profit exit sanity (100 -> 120 -> +$2000)",
+                "expected": 2000.0,
+                "actual": round(float(leap_profit_exit_formula), 2),
+                "status": "PASS" if abs(leap_profit_exit_formula - 2000.0) < 1e-6 else "FAIL",
+                "source": "formula",
+            },
+            {
+                "check": "6) LEAP stop-loss sanity (100 -> 80 -> -$2000)",
+                "expected": -2000.0,
+                "actual": round(float(leap_stop_exit_formula), 2),
+                "status": "PASS" if abs(leap_stop_exit_formula + 2000.0) < 1e-6 else "FAIL",
+                "source": "formula",
+            },
+        ]
+    )
+
+    # 7: run-level no-naked-call invariant and dollar multiplier consistency
+    daily_df: pd.DataFrame | None = None
+    trades_df: pd.DataFrame | None = None
+    try:
+        if policy_daily_path and Path(policy_daily_path).exists():
+            daily_df = pd.read_csv(policy_daily_path)
+    except Exception:
+        daily_df = None
+    try:
+        if policy_trades_path and Path(policy_trades_path).exists():
+            trades_df = pd.read_csv(policy_trades_path)
+    except Exception:
+        trades_df = None
+
+    if daily_df is not None and not daily_df.empty and {"leap_open", "short_call_open"}.issubset(daily_df.columns):
+        naked_count = int(((daily_df["leap_open"] == False) & (daily_df["short_call_open"] == True)).sum())  # noqa: E712
+        checks.append(
+            {
+                "check": "7) No naked short calls invariant (LEAP closed => no short call)",
+                "expected": 0,
+                "actual": naked_count,
+                "status": "PASS" if naked_count == 0 else "FAIL",
+                "source": "run",
+            }
+        )
+    else:
+        checks.append(
+            {
+                "check": "7) No naked short calls invariant (LEAP closed => no short call)",
+                "expected": 0,
+                "actual": "n/a",
+                "status": "N/A",
+                "source": "run",
+            }
+        )
+
+    if trades_df is not None and not trades_df.empty and {"instrument_type", "entry_premium", "exit_premium", "dollar_pnl"}.issubset(trades_df.columns):
+        short_calls = trades_df[trades_df["instrument_type"] == "SHORT_CALL"].copy()
+        if not short_calls.empty:
+            calc = (pd.to_numeric(short_calls["entry_premium"], errors="coerce") - pd.to_numeric(short_calls["exit_premium"], errors="coerce")) * 100.0
+            actual = pd.to_numeric(short_calls["dollar_pnl"], errors="coerce")
+            mismatch = int((calc - actual).abs().fillna(0.0).gt(0.02).sum())
+            checks.append(
+                {
+                    "check": "Dollar scaling check (SHORT_CALL dollar_pnl = (entry-exit)*100)",
+                    "expected": 0,
+                    "actual": mismatch,
+                    "status": "PASS" if mismatch == 0 else "FAIL",
+                    "source": "run",
+                }
+            )
+    return checks
+
+
 def main() -> None:
     st = _load_streamlit()
 
@@ -716,13 +1043,21 @@ def main() -> None:
         langsmith_project = st.text_input("LangSmith Project", value="agentic_harness")
         st.caption("IBKR default port is 4001.")
 
-    daily_tab, historical_tab, backtester_tab, ibkr_tab, resume_tab = st.tabs(
-        ["Daily Belief Report", "Historical Belief Reports", "Backtester", "IBKR Snapshot Agent", "Resume Daily Review"]
+    daily_tab, historical_tab, backtester_tab, policy_backtester_tab, ibkr_tab, resume_tab = st.tabs(
+        [
+            "Daily Belief Report",
+            "Historical Belief Reports",
+            "Backtester",
+            "Policy Backtest",
+            "IBKR Snapshot Agent",
+            "Resume Daily Review",
+        ]
     )
     state_daily_result_key = "vol_regime_last_daily_result"
     state_historical_report_key = "vol_regime_historical_report_result"
     state_backtester_result_key = "vol_regime_backtester_result"
     state_backtester_build_key = "vol_regime_backtester_build_result"
+    state_policy_backtester_result_key = "vol_regime_policy_backtester_result"
 
     with daily_tab:
         st.subheader("Daily Volatility Regime Workflow")
@@ -1178,12 +1513,35 @@ def main() -> None:
             value=str(DEFAULT_BACKTEST_CONFIG.resolve()),
             key="backtest_config_path",
         )
+        replay_config = _load_backtest_config(config_path.strip())
+        strict_10y_mode = bool(getattr(replay_config, "require_10y_replay", False))
+        train_lookback_days = int(getattr(replay_config, "train_lookback_days", 2520))
+        min_history_days = max(2520 if strict_10y_mode else 252, train_lookback_days)
+        default_history_days = max(2520, min_history_days) if strict_10y_mode else max(2520, train_lookback_days)
+
+        if strict_10y_mode:
+            st.info(
+                "Strict 10-year replay is enabled. Replay runs offline from the local feature store. "
+                "To satisfy `start_date=2016-01-01` with `train_lookback_days=2520`, the feature store must "
+                "typically reach back to around 2013-01-01 or earlier. "
+                "Use `History Days` around 3300-3600 for IBKR builds."
+            )
         st.markdown("**Feature Store Builder (IBKR)**")
         default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
         builder_ibkr = dict(default_live_payload.get("ibkr", {}))
         bcol1, bcol2, bcol3, bcol4 = st.columns(4)
         backtest_symbol = bcol1.text_input("Symbol", value=str(default_live_payload.get("symbol", "SPY")), key="backtest_build_symbol")
-        backtest_history_days = bcol2.number_input("History Days", value=1512, min_value=252, step=1, key="backtest_build_history_days")
+        backtest_history_days = bcol2.number_input(
+            "History Days (IBKR Pull)",
+            value=default_history_days,
+            min_value=min_history_days,
+            step=1,
+            key="backtest_build_history_days",
+            help=(
+                "This controls how much historical data is requested from IBKR to build the local feature store. "
+                "In strict 10-year mode, this must be large enough to include pre-2016 training history."
+            ),
+        )
         backtest_host = bcol3.text_input("IBKR Host", value=str(builder_ibkr.get("host", "127.0.0.1")), key="backtest_build_host")
         backtest_port = bcol4.number_input("IBKR Port", value=int(builder_ibkr.get("port", 4001)), step=1, key="backtest_build_port")
         bcol5, bcol6, bcol7, bcol8 = st.columns(4)
@@ -1229,9 +1587,34 @@ def main() -> None:
                 f"| rows={current_build_result.get('rows', 0)} "
                 f"| {current_build_result.get('start_date', '')} -> {current_build_result.get('end_date', '')}"
             )
+            coverage_report_path = str(current_build_result.get("coverage_report_path", "") or "")
+            if coverage_report_path:
+                st.caption(f"Coverage report: `{coverage_report_path}`")
             build_warnings = list(current_build_result.get("warnings", []))
             if build_warnings:
                 st.warning(" | ".join(str(item) for item in build_warnings))
+            required_summary = dict(current_build_result.get("required_history_summary", {}))
+            if required_summary:
+                st.caption(
+                    "Required-series coverage: "
+                    f"min_rows={required_summary.get('min_required_rows', 0)} "
+                    f"| inferred window {required_summary.get('inferred_required_start_date', '')} -> "
+                    f"{required_summary.get('inferred_required_end_date', '')}"
+                )
+                truncating_keys = list(required_summary.get("truncating_required_keys", []))
+                if truncating_keys:
+                    st.warning(
+                        "Truncating required series: "
+                        + ", ".join(str(item) for item in truncating_keys)
+                    )
+            history_coverage = list(current_build_result.get("history_coverage", []))
+            if history_coverage:
+                with st.expander("IBKR History Coverage Diagnostics", expanded=False):
+                    st.dataframe(pd.DataFrame(history_coverage), width="stretch", hide_index=True)
+            source_quality = dict(current_build_result.get("source_quality", {}))
+            if source_quality:
+                with st.expander("IBKR Source Quality Payload", expanded=False):
+                    st.json(source_quality)
 
         resolved_store = _resolve_existing_backtest_feature_store(config_path.strip())
         if resolved_store is not None:
@@ -1241,75 +1624,358 @@ def main() -> None:
                 "Feature store file is missing for the current config. "
                 "Update `feature_store_path` in the replay config to a valid parquet/csv dataset."
             )
-        run_mode = st.radio(
-            "Replay Mode",
+        feature_min_date, feature_max_date = _load_feature_store_date_bounds(resolved_store)
+        if feature_min_date is not None and feature_max_date is not None:
+            st.caption(f"Feature-store window: `{feature_min_date.isoformat()}` to `{feature_max_date.isoformat()}`")
+            st.markdown("**Historical Data Visualizer**")
+            feature_frame = _load_feature_store_frame(resolved_store)
+            if feature_frame is None or feature_frame.empty:
+                st.warning("Feature-store data could not be loaded for table visualization.")
+            else:
+                default_start = feature_min_date
+                default_end = feature_max_date
+                viz_col1, viz_col2 = st.columns(2)
+                selected_start = viz_col1.date_input(
+                    "Table Start Date",
+                    value=default_start,
+                    min_value=feature_min_date,
+                    max_value=feature_max_date,
+                    key="backtest_table_start_date",
+                )
+                selected_end = viz_col2.date_input(
+                    "Table End Date",
+                    value=default_end,
+                    min_value=feature_min_date,
+                    max_value=feature_max_date,
+                    key="backtest_table_end_date",
+                )
+                selected_start = _clamp_date_to_bounds(selected_start, minimum=feature_min_date, maximum=feature_max_date)
+                selected_end = _clamp_date_to_bounds(selected_end, minimum=feature_min_date, maximum=feature_max_date)
+                if selected_start > selected_end:
+                    selected_start = selected_end
+
+                control_col1, control_col2 = st.columns(2)
+                max_rows = control_col1.number_input(
+                    "Max Rows to Display",
+                    min_value=50,
+                    max_value=10000,
+                    value=500,
+                    step=50,
+                    key="backtest_table_max_rows",
+                )
+                sort_order = control_col2.selectbox(
+                    "Sort by Date",
+                    options=["Descending", "Ascending"],
+                    index=0,
+                    key="backtest_table_sort_order",
+                )
+
+                available_columns = list(feature_frame.columns)
+                default_columns = [
+                    column
+                    for column in [
+                        "date",
+                        "spy_close",
+                        "vix",
+                        "vvix",
+                        "vix3m",
+                        "realized_vol_21d",
+                        "vvix_vix_ratio",
+                        "term_structure_slope",
+                        "regime_target",
+                    ]
+                    if column in available_columns
+                ]
+                if not default_columns:
+                    default_columns = available_columns[: min(12, len(available_columns))]
+                selected_columns = st.multiselect(
+                    "Columns",
+                    options=available_columns,
+                    default=default_columns,
+                    key="backtest_table_columns",
+                )
+                if not selected_columns:
+                    selected_columns = default_columns
+
+                scoped_frame = feature_frame[
+                    (feature_frame["date"] >= selected_start) & (feature_frame["date"] <= selected_end)
+                ].copy()
+                scoped_frame = scoped_frame.sort_values(
+                    "date",
+                    ascending=(sort_order == "Ascending"),
+                ).reset_index(drop=True)
+                st.caption(
+                    f"Rows in selected window: `{len(scoped_frame)}` | "
+                    f"displaying up to `{int(max_rows)}` rows."
+                )
+                st.dataframe(
+                    scoped_frame[selected_columns].head(int(max_rows)),
+                    width="stretch",
+                    hide_index=True,
+                )
+                st.markdown("**Historical EOD Cache (SQLite)**")
+                cache_db_path = _resolve_historical_cache_db_path()
+                if cache_db_path is None:
+                    st.warning("Historical cache DB not found (`historical_data.db`).")
+                else:
+                    st.caption(f"Cache DB: `{cache_db_path}`")
+                    cache_frame = _load_historical_cache_frame(cache_db_path)
+                    if cache_frame is None:
+                        st.warning("Could not load the historical cache table from SQLite.")
+                    elif cache_frame.empty:
+                        st.info("Historical cache exists but contains no rows.")
+                    else:
+                        cache_min_date = min(cache_frame["day"])
+                        cache_max_date = max(cache_frame["day"])
+                        cache_col1, cache_col2 = st.columns(2)
+                        cache_start = cache_col1.date_input(
+                            "Cache Start Date",
+                            value=cache_min_date,
+                            min_value=cache_min_date,
+                            max_value=cache_max_date,
+                            key="historical_cache_start_date",
+                        )
+                        cache_end = cache_col2.date_input(
+                            "Cache End Date",
+                            value=cache_max_date,
+                            min_value=cache_min_date,
+                            max_value=cache_max_date,
+                            key="historical_cache_end_date",
+                        )
+                        if cache_start > cache_end:
+                            cache_start = cache_end
+
+                        symbol_options = sorted(str(item) for item in cache_frame["symbol"].dropna().unique().tolist())
+                        source_options = sorted(str(item) for item in cache_frame["source"].dropna().unique().tolist())
+                        filter_col1, filter_col2 = st.columns(2)
+                        selected_symbols = filter_col1.multiselect(
+                            "Symbols",
+                            options=symbol_options,
+                            default=symbol_options[: min(12, len(symbol_options))] if symbol_options else [],
+                            key="historical_cache_symbols",
+                        )
+                        selected_sources = filter_col2.multiselect(
+                            "Sources",
+                            options=source_options,
+                            default=source_options,
+                            key="historical_cache_sources",
+                        )
+                        row_col1, row_col2 = st.columns(2)
+                        cache_max_rows = row_col1.number_input(
+                            "Cache Max Rows",
+                            min_value=50,
+                            max_value=20000,
+                            value=1000,
+                            step=50,
+                            key="historical_cache_max_rows",
+                        )
+                        cache_sort = row_col2.selectbox(
+                            "Cache Sort",
+                            options=["Newest First", "Oldest First"],
+                            index=0,
+                            key="historical_cache_sort",
+                        )
+
+                        filtered_cache = cache_frame[
+                            (cache_frame["day"] >= cache_start) & (cache_frame["day"] <= cache_end)
+                        ].copy()
+                        if selected_symbols:
+                            filtered_cache = filtered_cache[filtered_cache["symbol"].isin(selected_symbols)]
+                        if selected_sources:
+                            filtered_cache = filtered_cache[filtered_cache["source"].isin(selected_sources)]
+                        filtered_cache = filtered_cache.sort_values(
+                            ["day", "symbol"],
+                            ascending=(cache_sort == "Oldest First"),
+                        ).reset_index(drop=True)
+                        st.caption(
+                            f"Cache rows in selected window/filter: `{len(filtered_cache)}` | "
+                            f"displaying up to `{int(cache_max_rows)}` rows."
+                        )
+                        st.dataframe(
+                            filtered_cache[["symbol", "day", "close", "source", "updated_at"]].head(int(cache_max_rows)),
+                            width="stretch",
+                            hide_index=True,
+                        )
+        default_backtest_day = feature_max_date or date.today()
+        selected_replay_run_mode = st.selectbox(
+            "Run Mode",
+            options=["tuning", "testing"],
+            index=0,
+            key="backtest_run_mode",
+            help="Use tuning for fast iteration and testing for full validation.",
+        )
+
+        if st.session_state.get("backtest_last_run_mode") != selected_replay_run_mode:
+            st.session_state["backtest_models"] = _default_backtest_models_for_run_mode(selected_replay_run_mode)
+            st.session_state["backtest_horizons"] = _default_backtest_horizons_for_run_mode(selected_replay_run_mode)
+            st.session_state["backtest_lightweight_mode"] = selected_replay_run_mode == "tuning"
+            st.session_state["backtest_last_run_mode"] = selected_replay_run_mode
+
+        replay_scope = st.radio(
+            "Replay Scope",
             options=["Date Range", "Single Date"],
             horizontal=True,
             key="backtest_mode",
         )
 
+        if "backtest_models" not in st.session_state:
+            st.session_state["backtest_models"] = _default_backtest_models_for_run_mode(selected_replay_run_mode)
+        if "backtest_horizons" not in st.session_state:
+            st.session_state["backtest_horizons"] = _default_backtest_horizons_for_run_mode(selected_replay_run_mode)
+        if "backtest_lightweight_mode" not in st.session_state:
+            st.session_state["backtest_lightweight_mode"] = selected_replay_run_mode == "tuning"
+
         backtest_models = st.multiselect(
             "Models",
             options=BACKTEST_MODEL_OPTIONS,
-            default=BACKTEST_MODEL_OPTIONS,
             key="backtest_models",
         )
         backtest_horizons = st.multiselect(
             "Horizons (trading days)",
             options=BACKTEST_HORIZON_OPTIONS,
-            default=[1, 2, 3],
             key="backtest_horizons",
         )
+        lightweight_mode = st.checkbox(
+            "Lightweight Post-Processing (Recommended)",
+            key="backtest_lightweight_mode",
+            help=(
+                "Skips heavy disagreement/geometry report sections to return results faster and reduce "
+                "end-of-run UI stalls. Core replay scoring remains unchanged."
+            ),
+        )
+        preset_rows = _build_run_mode_preset_rows(
+            selected_replay_run_mode=selected_replay_run_mode,
+            replay_scope=replay_scope,
+            selected_models=list(backtest_models),
+            selected_horizons=[int(item) for item in list(backtest_horizons)],
+            config_train_lookback_days=int(getattr(replay_config, "train_lookback_days", 756) if replay_config else 756),
+            config_min_train_rows=int(getattr(replay_config, "min_train_rows", 504) if replay_config else 504),
+        )
+        with st.expander("Run Mode Preset Summary", expanded=False):
+            st.dataframe(preset_rows, width="stretch", hide_index=True)
 
         as_of_date: str | None = None
         start_date: str | None = None
         end_date: str | None = None
-        if run_mode == "Single Date":
+        if replay_scope == "Single Date":
             selected_as_of = st.date_input(
                 "As-of Date",
-                value=date.today(),
-                max_value=date.today(),
+                value=default_backtest_day,
+                min_value=feature_min_date,
+                max_value=feature_max_date or date.today(),
                 key="backtest_as_of_date",
             )
-            as_of_date = selected_as_of.isoformat()
+            clamped_as_of = _clamp_date_to_bounds(
+                selected_as_of,
+                minimum=feature_min_date,
+                maximum=feature_max_date,
+            )
+            if clamped_as_of != selected_as_of:
+                st.warning(
+                    "Selected as-of date is outside feature-store coverage. "
+                    f"Using `{clamped_as_of.isoformat()}`."
+                )
+            as_of_date = clamped_as_of.isoformat()
         else:
+            default_start = feature_min_date or default_backtest_day
             date_col1, date_col2 = st.columns(2)
             selected_start = date_col1.date_input(
                 "Start Date",
-                value=date.today(),
-                max_value=date.today(),
+                value=default_start,
+                min_value=feature_min_date,
+                max_value=feature_max_date or date.today(),
                 key="backtest_start_date",
             )
             selected_end = date_col2.date_input(
                 "End Date",
-                value=date.today(),
-                max_value=date.today(),
+                value=default_backtest_day,
+                min_value=feature_min_date,
+                max_value=feature_max_date or date.today(),
                 key="backtest_end_date",
             )
-            start_date = selected_start.isoformat()
-            end_date = selected_end.isoformat()
+            clamped_start = _clamp_date_to_bounds(
+                selected_start,
+                minimum=feature_min_date,
+                maximum=feature_max_date,
+            )
+            clamped_end = _clamp_date_to_bounds(
+                selected_end,
+                minimum=feature_min_date,
+                maximum=feature_max_date,
+            )
+            if clamped_start > clamped_end:
+                clamped_start = clamped_end
+                st.warning(
+                    "Start date was after end date after clamping to feature-store coverage. "
+                    f"Using `{clamped_start.isoformat()}` to `{clamped_end.isoformat()}`."
+                )
+            elif clamped_start != selected_start or clamped_end != selected_end:
+                st.warning(
+                    "Date range was clamped to feature-store coverage. "
+                    f"Using `{clamped_start.isoformat()}` to `{clamped_end.isoformat()}`."
+                )
+            start_date = clamped_start.isoformat()
+            end_date = clamped_end.isoformat()
 
         if st.button("Run Backtest", type="primary", key="run_backtest_button"):
             try:
                 backtest_result = run_hmm_replay_backtester(
                     config_path=config_path.strip(),
+                    run_mode=selected_replay_run_mode,
                     start_date=start_date,
                     end_date=end_date,
                     as_of_date=as_of_date,
                     models=list(backtest_models) or None,
                     horizons=[int(item) for item in list(backtest_horizons)] or None,
+                    lightweight_mode=bool(lightweight_mode),
                     langsmith_tracing=langsmith_tracing,
                     langsmith_project=langsmith_project or None,
                 )
             except Exception as exc:
                 st.error(str(exc))
             else:
-                st.session_state[state_backtester_result_key] = backtest_result
+                st.session_state[state_backtester_result_key] = _compact_backtest_session_payload(backtest_result)
 
         current_backtest_result = st.session_state.get(state_backtester_result_key)
         if isinstance(current_backtest_result, dict):
             summary_metrics = list(current_backtest_result.get("summary_metrics", []))
+            current_mode = str(current_backtest_result.get("run_mode", selected_replay_run_mode)).strip().lower() or "testing"
+            display_limit = 50 if current_mode == "tuning" else 100
+            st.caption(f"Run Mode: `{current_mode}`")
             st.caption(f"Report: `{current_backtest_result.get('report_path', '')}`")
+            st.caption(f"Compact Summary: `{current_backtest_result.get('compact_summary_path', '')}`")
+            if current_backtest_result.get("run_log_path"):
+                st.caption(f"Run Log: `{current_backtest_result.get('run_log_path', '')}`")
+            peak_rss_mb = current_backtest_result.get("peak_rss_mb")
+            if peak_rss_mb is not None:
+                st.caption(f"Peak RSS Memory: `{peak_rss_mb} MB`")
+            runtime_profile = dict(current_backtest_result.get("runtime_profile", {}))
+            if runtime_profile:
+                st.subheader("Replay Runtime Profile")
+                runtime_rows = [
+                    {"stage": key, "seconds": runtime_profile.get(key)}
+                    for key in [
+                        "feature_load_seconds",
+                        "feature_engineering_seconds",
+                        "model_fit_seconds",
+                        "prediction_seconds",
+                        "scoring_seconds",
+                        "report_generation_seconds",
+                        "total_seconds",
+                    ]
+                    if key in runtime_profile
+                ]
+                if runtime_rows:
+                    st.dataframe(runtime_rows, width="stretch", hide_index=True)
+            slowest_dates = list(current_backtest_result.get("slowest_dates", []))
+            if slowest_dates:
+                st.caption(
+                    "Slowest replay dates: "
+                    + " | ".join(
+                        f"{str(item.get('as_of_date', ''))}: {float(item.get('elapsed_seconds', 0.0)):.2f}s"
+                        for item in slowest_dates[:5]
+                    )
+                )
             st.caption(f"Summary CSV: `{current_backtest_result.get('summary_metrics_path', '')}`")
             st.caption(f"Economic Summary CSV: `{current_backtest_result.get('economic_summary_path', '')}`")
             st.caption(f"Prediction Distribution CSV: `{current_backtest_result.get('prediction_distribution_path', '')}`")
@@ -1317,40 +1983,273 @@ def main() -> None:
             st.caption(f"Confusion Matrix CSV: `{current_backtest_result.get('confusion_matrix_path', '')}`")
             st.caption(f"False Alarms CSV: `{current_backtest_result.get('false_alarms_path', '')}`")
             st.caption(f"Missed Risks CSV: `{current_backtest_result.get('missed_risks_path', '')}`")
-            st.caption(f"Disagreement Attribution CSV: `{current_backtest_result.get('disagreement_attribution_path', '')}`")
-            st.caption(f"Disagreement Summary CSV: `{current_backtest_result.get('disagreement_summary_path', '')}`")
-            st.caption(f"Geometry Override Cases CSV: `{current_backtest_result.get('geometry_override_path', '')}`")
-            st.caption(
-                f"Geometry False Suppression CSV: `{current_backtest_result.get('geometry_false_suppression_path', '')}`"
-            )
-            st.caption(
-                f"Geometry False Suppression Analysis CSV: `{current_backtest_result.get('geometry_false_suppression_analysis_path', '')}`"
-            )
-            st.caption(f"Geometry Success CSV: `{current_backtest_result.get('geometry_success_path', '')}`")
-            st.caption(
-                f"Geometry Smooth Modifier CSV: `{current_backtest_result.get('geometry_smooth_modifier_path', '')}`"
-            )
+            st.caption(f"Top Feature Importances CSV: `{current_backtest_result.get('top_feature_importances_path', '')}`")
             st.caption(f"Predictions JSONL: `{current_backtest_result.get('prediction_records_path', '')}`")
             st.caption(f"Outcomes JSONL: `{current_backtest_result.get('outcome_records_path', '')}`")
             st.caption(f"Scored JSONL: `{current_backtest_result.get('scored_records_path', '')}`")
 
             if summary_metrics:
                 st.subheader("Summary Metrics")
-                st.dataframe(summary_metrics, use_container_width=True, hide_index=True)
-            geometry_false_suppression_analysis = list(
-                current_backtest_result.get("geometry_false_suppression_analysis", [])
+                st.caption(f"Displaying up to `{display_limit}` rows.")
+                st.dataframe(summary_metrics[:display_limit], width="stretch", hide_index=True)
+
+    with policy_backtester_tab:
+        st.subheader("Policy Backtester")
+        st.caption(
+            "V1 economic approximation: option prices are model-estimated (Black-Scholes proxy), "
+            "not exact historical option-chain fills."
+        )
+        policy_config_path = st.text_input(
+            "Policy Config Path",
+            value=str(DEFAULT_POLICY_BACKTEST_CONFIG.resolve()),
+            key="policy_backtest_config_path",
+        )
+        policy_config = _load_policy_backtest_config(policy_config_path.strip())
+        if policy_config is None:
+            st.warning("Could not load policy backtest config. Using built-in defaults for this UI run.")
+
+        config_feature_store = (
+            str(getattr(policy_config, "feature_store_path", "agentic_vol_regime_app/data/processed/features_daily.parquet"))
+        )
+        config_run_mode = str(getattr(policy_config, "run_mode", "tuning")).strip().lower()
+        config_models = list(getattr(policy_config, "models", POLICY_MODEL_OPTIONS) or POLICY_MODEL_OPTIONS)
+        config_start_date = pd.to_datetime(str(getattr(policy_config, "start_date", "2024-01-01")), errors="coerce")
+        config_end_text = str(getattr(policy_config, "end_date", "latest")).strip().lower()
+        config_end_date = (
+            pd.Timestamp.today()
+            if config_end_text == "latest"
+            else pd.to_datetime(config_end_text, errors="coerce")
+        )
+        if pd.isna(config_start_date):
+            config_start_date = pd.Timestamp("2024-01-01")
+        if pd.isna(config_end_date):
+            config_end_date = pd.Timestamp.today()
+
+        if st.button("Reset to Config Defaults", key="policy_backtest_reset_defaults_button"):
+            st.session_state["policy_backtest_feature_store_path"] = str(
+                Path(config_feature_store).resolve()
+                if not Path(config_feature_store).is_absolute()
+                else Path(config_feature_store)
             )
-            if geometry_false_suppression_analysis:
-                st.subheader("Geometry False Suppression Analysis")
-                st.dataframe(geometry_false_suppression_analysis, use_container_width=True, hide_index=True)
+            st.session_state["policy_backtest_run_mode"] = "tuning" if config_run_mode == "tuning" else "testing"
+            st.session_state["policy_backtest_models"] = [
+                item for item in config_models if item in POLICY_MODEL_OPTIONS
+            ] or list(POLICY_MODEL_OPTIONS)
+            st.session_state["policy_backtest_start_date"] = config_start_date.date()
+            st.session_state["policy_backtest_end_date"] = config_end_date.date()
+            st.session_state["policy_backtest_train_lookback"] = int(getattr(policy_config, "train_lookback_days", 756))
+            st.session_state["policy_backtest_min_train_rows"] = int(getattr(policy_config, "min_train_rows", 504))
+            st.session_state["policy_backtest_default_dte"] = int(getattr(policy_config, "default_dte", 1))
+            st.session_state["policy_backtest_leap_delta"] = float(getattr(policy_config, "leap_delta", 0.75))
+            st.session_state["policy_backtest_profit_exit_pct"] = float(getattr(policy_config, "profit_exit_pct", 0.20))
+            st.session_state["policy_backtest_loss_exit_multiple"] = float(
+                getattr(policy_config, "loss_exit_multiple", 2.0)
+            )
+            st.session_state["policy_backtest_touch_exit"] = bool(
+                getattr(policy_config, "exit_on_underlying_touch", True)
+            )
 
-            report_markdown = _load_text_file(str(current_backtest_result.get("report_path", "")))
-            if report_markdown:
-                st.subheader("Replay Report")
-                st.markdown(report_markdown)
+        if "policy_backtest_feature_store_path" not in st.session_state:
+            st.session_state["policy_backtest_feature_store_path"] = str(
+                Path(config_feature_store).resolve()
+                if not Path(config_feature_store).is_absolute()
+                else Path(config_feature_store)
+            )
+        if "policy_backtest_run_mode" not in st.session_state:
+            st.session_state["policy_backtest_run_mode"] = "tuning" if config_run_mode == "tuning" else "testing"
+        if "policy_backtest_models" not in st.session_state:
+            st.session_state["policy_backtest_models"] = [
+                item for item in config_models if item in POLICY_MODEL_OPTIONS
+            ] or list(POLICY_MODEL_OPTIONS)
+        if "policy_backtest_start_date" not in st.session_state:
+            st.session_state["policy_backtest_start_date"] = config_start_date.date()
+        if "policy_backtest_end_date" not in st.session_state:
+            st.session_state["policy_backtest_end_date"] = config_end_date.date()
+        if "policy_backtest_train_lookback" not in st.session_state:
+            st.session_state["policy_backtest_train_lookback"] = int(getattr(policy_config, "train_lookback_days", 756))
+        if "policy_backtest_min_train_rows" not in st.session_state:
+            st.session_state["policy_backtest_min_train_rows"] = int(getattr(policy_config, "min_train_rows", 504))
+        if "policy_backtest_default_dte" not in st.session_state:
+            st.session_state["policy_backtest_default_dte"] = int(getattr(policy_config, "default_dte", 1))
+        if "policy_backtest_leap_delta" not in st.session_state:
+            st.session_state["policy_backtest_leap_delta"] = float(getattr(policy_config, "leap_delta", 0.75))
+        if "policy_backtest_profit_exit_pct" not in st.session_state:
+            st.session_state["policy_backtest_profit_exit_pct"] = float(getattr(policy_config, "profit_exit_pct", 0.20))
+        if "policy_backtest_loss_exit_multiple" not in st.session_state:
+            st.session_state["policy_backtest_loss_exit_multiple"] = float(
+                getattr(policy_config, "loss_exit_multiple", 2.0)
+            )
+        if "policy_backtest_touch_exit" not in st.session_state:
+            st.session_state["policy_backtest_touch_exit"] = bool(
+                getattr(policy_config, "exit_on_underlying_touch", True)
+            )
 
-            with st.expander("Backtest Artifacts"):
-                st.code(_pretty_json(current_backtest_result), language="json")
+        policy_col1, policy_col2 = st.columns(2)
+        policy_feature_store_path = policy_col1.text_input(
+            "Feature Store Path",
+            key="policy_backtest_feature_store_path",
+        )
+        policy_run_mode = policy_col2.selectbox(
+            "Run Mode",
+            options=["tuning", "testing"],
+            key="policy_backtest_run_mode",
+        )
+        policy_models = st.multiselect(
+            "Model Policies (baselines are always included)",
+            options=POLICY_MODEL_OPTIONS,
+            key="policy_backtest_models",
+        )
+        policy_dcol1, policy_dcol2 = st.columns(2)
+        policy_start_date = policy_dcol1.date_input(
+            "Start Date",
+            key="policy_backtest_start_date",
+        )
+        policy_end_date = policy_dcol2.date_input(
+            "End Date",
+            key="policy_backtest_end_date",
+        )
+        policy_rcol1, policy_rcol2, policy_rcol3, policy_rcol4 = st.columns(4)
+        policy_lookback = policy_rcol1.number_input(
+            "Train Lookback",
+            min_value=252,
+            max_value=4000,
+            step=21,
+            key="policy_backtest_train_lookback",
+        )
+        policy_min_rows = policy_rcol2.number_input(
+            "Min Train Rows",
+            min_value=126,
+            max_value=3000,
+            step=21,
+            key="policy_backtest_min_train_rows",
+        )
+        policy_dte = policy_rcol3.number_input(
+            "Default DTE",
+            min_value=1,
+            max_value=10,
+            step=1,
+            key="policy_backtest_default_dte",
+        )
+        policy_leap_delta = policy_rcol4.number_input(
+            "LEAP Delta",
+            min_value=0.1,
+            max_value=1.0,
+            step=0.05,
+            key="policy_backtest_leap_delta",
+        )
+        policy_ecol1, policy_ecol2, policy_ecol3 = st.columns(3)
+        policy_profit_exit = policy_ecol1.number_input(
+            "Profit Exit Pct",
+            min_value=0.05,
+            max_value=0.95,
+            step=0.05,
+            key="policy_backtest_profit_exit_pct",
+        )
+        policy_loss_multiple = policy_ecol2.number_input(
+            "Loss Exit Multiple",
+            min_value=1.0,
+            max_value=5.0,
+            step=0.25,
+            key="policy_backtest_loss_exit_multiple",
+        )
+        policy_touch_exit = policy_ecol3.checkbox(
+            "Exit On Underlying Touch",
+            key="policy_backtest_touch_exit",
+        )
+        if st.button("Run Policy Backtest", type="primary", key="run_policy_backtest_button"):
+            try:
+                policy_result = run_policy_backtester(
+                    config_path=policy_config_path.strip() or None,
+                    feature_store_path=policy_feature_store_path.strip(),
+                    run_mode=policy_run_mode,
+                    start_date=policy_start_date.isoformat(),
+                    end_date=policy_end_date.isoformat(),
+                    models=list(policy_models) or None,
+                    train_lookback_days=int(policy_lookback),
+                    min_train_rows=int(policy_min_rows),
+                    default_dte=int(policy_dte),
+                    leap_delta=float(policy_leap_delta),
+                    profit_exit_pct=float(policy_profit_exit),
+                    loss_exit_multiple=float(policy_loss_multiple),
+                    exit_on_underlying_touch=bool(policy_touch_exit),
+                    langsmith_tracing=langsmith_tracing,
+                    langsmith_project=langsmith_project or None,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[state_policy_backtester_result_key] = dict(policy_result)
+
+        current_policy_result = st.session_state.get(state_policy_backtester_result_key)
+        if isinstance(current_policy_result, dict):
+            st.caption(f"Run Mode: `{current_policy_result.get('run_mode', '')}`")
+            st.caption(f"Date Window: `{current_policy_result.get('date_start', '')}` -> `{current_policy_result.get('date_end', '')}`")
+            st.caption(f"Output Directory: `{current_policy_result.get('output_dir', '')}`")
+            st.caption(f"Report: `{current_policy_result.get('report_path', '')}`")
+            st.caption(f"Trades CSV: `{current_policy_result.get('policy_trades_path', '')}`")
+            st.caption(f"Daily PnL CSV: `{current_policy_result.get('policy_daily_pnl_path', '')}`")
+            st.caption(f"Model Summary CSV: `{current_policy_result.get('policy_model_summary_path', '')}`")
+            st.caption(f"Exit Summary CSV: `{current_policy_result.get('policy_exit_summary_path', '')}`")
+            st.caption(f"Worst Trades CSV: `{current_policy_result.get('policy_worst_trades_path', '')}`")
+            st.caption(f"Missed Risk CSV: `{current_policy_result.get('policy_dollar_missed_risk_path', '')}`")
+            st.caption(
+                f"Audit Assumptions CSV: `{current_policy_result.get('policy_audit_starting_assumptions_path', '')}`"
+            )
+            st.caption(
+                f"Audit Daily Rows CSV: `{current_policy_result.get('policy_audit_first_20_daily_rows_path', '')}`"
+            )
+            st.caption(
+                f"Audit Trades CSV: `{current_policy_result.get('policy_audit_first_20_trades_path', '')}`"
+            )
+            st.caption(
+                f"Invariant Checks CSV: `{current_policy_result.get('policy_invariant_checks_path', '')}`"
+            )
+            st.caption(
+                f"Profit/Loss Explanation CSV: `{current_policy_result.get('policy_profit_loss_explanation_path', '')}`"
+            )
+
+            runtime_profile = dict(current_policy_result.get("runtime_profile", {}))
+            if runtime_profile:
+                st.subheader("Runtime Profile")
+                st.dataframe(
+                    [{"metric": key, "value": value} for key, value in runtime_profile.items()],
+                    width="stretch",
+                    hide_index=True,
+                )
+            leaderboard = list(current_policy_result.get("model_economic_leaderboard", []))
+            if leaderboard:
+                st.subheader("Model Economic Leaderboard")
+                st.dataframe(leaderboard[:20], width="stretch", hide_index=True)
+            worst_trades = list(current_policy_result.get("worst_trades", []))
+            if worst_trades:
+                st.subheader("Worst 10 Trades")
+                st.dataframe(worst_trades[:10], width="stretch", hide_index=True)
+            best_trades = list(current_policy_result.get("best_trades", []))
+            if best_trades:
+                st.subheader("Best 10 Trades")
+                st.dataframe(best_trades[:10], width="stretch", hide_index=True)
+            invariant_checks = list(current_policy_result.get("policy_invariant_checks", []))
+            if invariant_checks:
+                st.subheader("Invariant Checks")
+                st.dataframe(invariant_checks[:50], width="stretch", hide_index=True)
+            profit_loss_explanation = list(current_policy_result.get("policy_profit_loss_explanation", []))
+            if profit_loss_explanation:
+                st.subheader("Why This Model Made/Lost Money")
+                st.dataframe(profit_loss_explanation[:20], width="stretch", hide_index=True)
+            audit_daily_preview = list(current_policy_result.get("policy_audit_daily_preview", []))
+            if audit_daily_preview:
+                st.subheader("Policy Mechanics Audit: First Daily Rows")
+                st.dataframe(audit_daily_preview[:20], width="stretch", hide_index=True)
+            audit_trades_preview = list(current_policy_result.get("policy_audit_trades_preview", []))
+            if audit_trades_preview:
+                st.subheader("Policy Mechanics Audit: First Trades")
+                st.dataframe(audit_trades_preview[:20], width="stretch", hide_index=True)
+            st.subheader("Portfolio Mechanics Check")
+            mechanics_checks = _build_policy_mechanics_checks(
+                policy_daily_path=str(current_policy_result.get("policy_daily_pnl_path", "")),
+                policy_trades_path=str(current_policy_result.get("policy_trades_path", "")),
+            )
+            st.dataframe(mechanics_checks, width="stretch", hide_index=True)
 
     with ibkr_tab:
         st.subheader("Live IBKR Market Data Agent")

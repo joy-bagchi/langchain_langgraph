@@ -9,6 +9,7 @@ models:
   - hmm_v2_core_plus_sector_corr
   - hmm_v3_core_plus_sector_geometry
   - hmm_v3_1_meta_blend
+  - hmm_v4_path_aware_meta
 retrain_each_date: true
 covariance_type: diag
 n_components: 4

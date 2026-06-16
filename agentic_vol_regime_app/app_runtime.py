@@ -21,7 +21,12 @@ from agentic_harness.runtime import resume_workflow, run_agent_workflow, start_w
 from agentic_harness.stores import FilesystemMemoryStore
 
 from agentic_vol_regime_app.config import AppPaths
-from agentic_vol_regime_app.backtest_feature_store import build_backtest_feature_store_from_ibkr
+from agentic_vol_regime_app.backtest_feature_store import (
+    STRICT_REPLAY_MIN_REQUIRED_TRADING_DAYS,
+    STRICT_10Y_COVERAGE_START,
+    STRICT_10Y_TRAIN_LOOKBACK_DAYS,
+    build_backtest_feature_store_from_ibkr,
+)
 from agentic_vol_regime_app.executors import build_executor_registry
 from agentic_vol_regime_app.pomdp.hmm_belief import load_hmm_config
 from agentic_vol_regime_app.reports.daily_report import resolve_daily_report_path
@@ -748,11 +753,13 @@ def run_ibkr_market_data_agent(
 def run_hmm_replay_backtester(
     *,
     config_path: str | Path,
+    run_mode: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     as_of_date: str | None = None,
     models: list[str] | None = None,
     horizons: list[int] | None = None,
+    lightweight_mode: bool = False,
     langsmith_tracing: bool | None = None,
     langsmith_api_key: str | None = None,
     langsmith_endpoint: str | None = None,
@@ -777,22 +784,146 @@ def run_hmm_replay_backtester(
         run_type="chain",
         inputs={
             "config_path": str(resolved_config_path),
+            "run_mode": str(run_mode or getattr(config, "run_mode", "testing")).strip().lower(),
             "start_date": start_date,
             "end_date": end_date,
             "as_of_date": as_of_date,
             "models": list(models or []),
             "horizons": list(horizons or []),
+            "lightweight_mode": bool(lightweight_mode),
         },
         tags=["agentic_vol_regime_app", "hmm_replay_backtester"],
         metadata={"application": "agentic_vol_regime_app"},
     ) as app_span:
         result = run_hmm_replay(
             config=config,
+            run_mode=run_mode,
             start_date=start_date,
             end_date=end_date,
             as_of_date=as_of_date,
             models=models,
             horizons=horizons,
+            lightweight_mode=lightweight_mode,
+        )
+        if hasattr(app_span, "end"):
+            app_span.end(outputs=_trace_safe_payload(result))
+    return result
+
+
+def run_policy_backtester(
+    *,
+    config_path: str | Path | None = None,
+    feature_store_path: str | Path | None = None,
+    run_mode: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    models: list[str] | None = None,
+    train_lookback_days: int | None = None,
+    min_train_rows: int | None = None,
+    default_dte: int | None = None,
+    strike_increment: float | None = None,
+    leap_delta: float | None = None,
+    profit_exit_pct: float | None = None,
+    loss_exit_multiple: float | None = None,
+    exit_on_underlying_touch: bool | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+) -> dict[str, Any]:
+    from src.backtest.policy.policy_backtester import (
+        PolicyBacktestConfig,
+        load_policy_backtest_config,
+        run_policy_backtest,
+    )
+
+    base_config = (
+        load_policy_backtest_config(Path(config_path).resolve())
+        if config_path is not None
+        else PolicyBacktestConfig()
+    )
+    resolved_feature_store_path = str(feature_store_path or base_config.feature_store_path)
+    resolved_run_mode = str(run_mode or base_config.run_mode)
+    resolved_train_lookback_days = int(
+        base_config.train_lookback_days if train_lookback_days is None else train_lookback_days
+    )
+    resolved_min_train_rows = int(base_config.min_train_rows if min_train_rows is None else min_train_rows)
+    resolved_default_dte = int(base_config.default_dte if default_dte is None else default_dte)
+    resolved_strike_increment = float(base_config.strike_increment if strike_increment is None else strike_increment)
+    resolved_leap_delta = float(base_config.leap_delta if leap_delta is None else leap_delta)
+    resolved_profit_exit_pct = float(base_config.profit_exit_pct if profit_exit_pct is None else profit_exit_pct)
+    resolved_loss_exit_multiple = float(
+        base_config.loss_exit_multiple if loss_exit_multiple is None else loss_exit_multiple
+    )
+    resolved_exit_on_touch = bool(
+        base_config.exit_on_underlying_touch if exit_on_underlying_touch is None else exit_on_underlying_touch
+    )
+    resolved_models = list(models if models is not None else (base_config.models or []))
+    resolved_start_date = start_date or base_config.start_date
+    resolved_end_date = end_date or base_config.end_date
+
+    services = build_platform_services(
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
+    with services.observability.trace_span(
+        "agentic_vol_regime_app:run_policy_backtester",
+        run_type="chain",
+        inputs={
+            "config_path": str(config_path) if config_path is not None else "",
+            "feature_store_path": str(resolved_feature_store_path),
+            "run_mode": str(resolved_run_mode),
+            "start_date": resolved_start_date,
+            "end_date": resolved_end_date,
+            "models": list(resolved_models),
+            "train_lookback_days": int(resolved_train_lookback_days),
+            "min_train_rows": int(resolved_min_train_rows),
+            "default_dte": int(resolved_default_dte),
+            "strike_increment": float(resolved_strike_increment),
+            "leap_delta": float(resolved_leap_delta),
+            "profit_exit_pct": float(resolved_profit_exit_pct),
+            "loss_exit_multiple": float(resolved_loss_exit_multiple),
+            "exit_on_underlying_touch": bool(resolved_exit_on_touch),
+        },
+        tags=["agentic_vol_regime_app", "policy_backtester"],
+        metadata={"application": "agentic_vol_regime_app"},
+    ) as app_span:
+        result = run_policy_backtest(
+            config=PolicyBacktestConfig(
+                feature_store_path=str(resolved_feature_store_path),
+                output_dir=str(base_config.output_dir),
+                run_mode=str(resolved_run_mode),
+                start_date=str(base_config.start_date),
+                end_date=str(base_config.end_date),
+                models=list(base_config.models or []),
+                train_lookback_days=int(resolved_train_lookback_days),
+                min_train_rows=int(resolved_min_train_rows),
+                default_dte=int(resolved_default_dte),
+                strike_increment=float(resolved_strike_increment),
+                leap_enabled=bool(base_config.leap_enabled),
+                leap_contracts=int(base_config.leap_contracts),
+                leap_delta=float(resolved_leap_delta),
+                leap_multiplier=int(base_config.leap_multiplier),
+                risk_free_rate=float(base_config.risk_free_rate),
+                dividend_yield=float(base_config.dividend_yield),
+                profit_exit_pct=float(resolved_profit_exit_pct),
+                loss_exit_multiple=float(resolved_loss_exit_multiple),
+                exit_on_underlying_touch=bool(resolved_exit_on_touch),
+                safer_reference_mode=str(base_config.safer_reference_mode),
+                leap_entry_premium=float(base_config.leap_entry_premium),
+                leap_profit_take_multiple=float(base_config.leap_profit_take_multiple),
+                leap_stop_loss_multiple=float(base_config.leap_stop_loss_multiple),
+                allow_leap_reentry=bool(base_config.allow_leap_reentry),
+                allow_naked_short_calls=bool(base_config.allow_naked_short_calls),
+            ),
+            start_date=resolved_start_date,
+            end_date=resolved_end_date,
+            models=resolved_models,
+            run_mode=resolved_run_mode,
         )
         if hasattr(app_span, "end"):
             app_span.end(outputs=_trace_safe_payload(result))
@@ -823,6 +954,14 @@ def build_backtest_feature_store(
 
     resolved_config = Path(config_path).resolve()
     replay_config = load_replay_config(resolved_config)
+    required_history_days = max(int(history_days), int(replay_config.train_lookback_days))
+    if replay_config.require_10y_replay:
+        required_history_days = max(required_history_days, STRICT_10Y_TRAIN_LOOKBACK_DAYS)
+        if int(history_days) < STRICT_10Y_TRAIN_LOOKBACK_DAYS:
+            raise RuntimeError(
+                "Strict 10-year replay requires at least 2520 trading days of IBKR history for the feature-store build. "
+                f"Received history_days={int(history_days)}."
+            )
     output_path = replay_config.feature_store_path
     services = build_platform_services(
         langsmith_tracing=langsmith_tracing,
@@ -837,7 +976,7 @@ def build_backtest_feature_store(
         inputs={
             "config_path": str(resolved_config),
             "output_path": output_path,
-            "history_days": int(history_days),
+            "history_days": required_history_days,
             "as_of_date": as_of_date,
             "symbol": symbol,
             "host": host,
@@ -852,7 +991,7 @@ def build_backtest_feature_store(
             app_paths=AppPaths.default(),
             output_path=output_path,
             symbol=symbol,
-            history_days=int(history_days),
+            history_days=required_history_days,
             as_of_date=as_of_date,
             host=host,
             port=int(port),
@@ -862,6 +1001,9 @@ def build_backtest_feature_store(
             option_exchange=option_exchange,
             index_exchange=index_exchange,
             currency=currency,
+            minimum_required_sector_start_date=(
+                STRICT_10Y_COVERAGE_START.isoformat() if replay_config.require_10y_replay else None
+            ),
         )
         result = {
             "feature_store_path": built.feature_store_path,
@@ -870,7 +1012,41 @@ def build_backtest_feature_store(
             "end_date": built.end_date,
             "source_as_of": built.source_as_of,
             "warnings": list(built.warnings),
+            "history_coverage": list(built.history_coverage),
+            "required_history_summary": dict(built.required_history_summary),
+            "source_quality": dict(built.source_quality),
+            "coverage_report_path": built.coverage_report_path,
         }
+        if replay_config.require_10y_replay:
+            built_start = datetime.fromisoformat(built.start_date).date()
+            if built_start > STRICT_10Y_COVERAGE_START:
+                required_summary = dict(built.required_history_summary)
+                min_required_rows = int(required_summary.get("min_required_rows", 0) or 0)
+                truncating_required = ", ".join(
+                    str(item) for item in list(required_summary.get("truncating_required_keys", []))
+                ) or "unknown"
+                inferred_required_start = str(required_summary.get("inferred_required_start_date", ""))
+                inferred_required_end = str(required_summary.get("inferred_required_end_date", ""))
+                source_quality = dict(built.source_quality)
+                missing_history = ", ".join(str(item) for item in list(source_quality.get("missing_history", []))) or "none"
+                missing_symbols = ", ".join(str(item) for item in list(source_quality.get("missing_symbols", []))) or "none"
+                if min_required_rows < STRICT_REPLAY_MIN_REQUIRED_TRADING_DAYS:
+                    raise RuntimeError(
+                        "Strict 10-year replay requires sufficient history depth. "
+                        f"Feature store starts at {built_start.isoformat()} and min_required_rows={min_required_rows}, "
+                        f"which is below relaxed threshold={STRICT_REPLAY_MIN_REQUIRED_TRADING_DAYS}. "
+                        f"Required-series inferred window: {inferred_required_start} -> {inferred_required_end}. "
+                        f"Truncating required series: {truncating_required}. "
+                        f"IBKR missing_history: {missing_history}. "
+                        f"IBKR missing_symbols: {missing_symbols}. "
+                        "The run will not fall back to a shallower history window."
+                    )
+                result["warnings"].append(
+                    "Applied relaxed strict-replay depth policy: "
+                    f"feature_store_start={built_start.isoformat()}, "
+                    f"min_required_rows={min_required_rows}, "
+                    f"minimum_required_rows={STRICT_REPLAY_MIN_REQUIRED_TRADING_DAYS}."
+                )
         if hasattr(app_span, "end"):
             app_span.end(outputs=_trace_safe_payload(result))
     return result

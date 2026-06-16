@@ -13,6 +13,7 @@ DEFAULT_MODELS = [
     "hmm_v2_core_plus_sector_corr",
     "hmm_v3_core_plus_sector_geometry",
     "hmm_v3_1_meta_blend",
+    "hmm_v4_path_aware_meta",
 ]
 
 
@@ -20,6 +21,7 @@ DEFAULT_MODELS = [
 class ReplayConfig:
     start_date: str
     end_date: str
+    run_mode: str = "testing"
     train_lookback_days: int = 756
     min_train_rows: int = 504
     horizons: list[int] = field(default_factory=lambda: [1, 2, 3])
@@ -32,6 +34,9 @@ class ReplayConfig:
     artifact_dir: str = "data/backtests/hmm_replay/"
     feature_store_path: str = "agentic_vol_regime_app/data/processed/features_daily.parquet"
     freeze_policy_outputs: bool = True
+    allow_partial_backtest: bool = True
+    allow_silent_date_fallback: bool = True
+    require_10y_replay: bool = False
 
 
 def _to_int_list(values: list[Any]) -> list[int]:
@@ -43,6 +48,7 @@ def load_replay_config(path: str | Path) -> ReplayConfig:
     return ReplayConfig(
         start_date=str(payload.get("start_date", "")),
         end_date=str(payload.get("end_date", "")),
+        run_mode=str(payload.get("run_mode", "testing")).strip().lower() or "testing",
         train_lookback_days=int(payload.get("train_lookback_days", 756)),
         min_train_rows=int(payload.get("min_train_rows", 504)),
         horizons=_to_int_list(payload.get("horizons", [1, 2, 3])),
@@ -57,4 +63,7 @@ def load_replay_config(path: str | Path) -> ReplayConfig:
             payload.get("feature_store_path", "agentic_vol_regime_app/data/processed/features_daily.parquet")
         ),
         freeze_policy_outputs=bool(payload.get("freeze_policy_outputs", True)),
+        allow_partial_backtest=bool(payload.get("allow_partial_backtest", True)),
+        allow_silent_date_fallback=bool(payload.get("allow_silent_date_fallback", True)),
+        require_10y_replay=bool(payload.get("require_10y_replay", False)),
     )

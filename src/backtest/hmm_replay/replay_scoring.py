@@ -162,29 +162,32 @@ def score_prediction(prediction: dict[str, Any], outcome: dict[str, Any], *, hor
 
 
 def summarize_scores(scored_records: list[dict[str, Any]]) -> pd.DataFrame:
+    empty_summary = pd.DataFrame(
+        columns=[
+            "model_name",
+            "horizon",
+            "accuracy",
+            "adjacent_tolerant_accuracy",
+            "severe_miss_rate",
+            "brier_vol_expansion",
+            "brier_vix_spike",
+            "risk_bucket_accuracy",
+            "false_alarm_rate",
+            "missed_risk_rate",
+            "vix_directional_accuracy",
+            "vvix_directional_accuracy",
+            "rv_directional_accuracy",
+            "combined_vol_directional_accuracy",
+            "avg_lead_quality",
+            "notes",
+        ]
+    )
     if not scored_records:
-        return pd.DataFrame(
-            columns=[
-                "model_name",
-                "horizon",
-                "accuracy",
-                "adjacent_tolerant_accuracy",
-                "severe_miss_rate",
-                "brier_vol_expansion",
-                "brier_vix_spike",
-                "risk_bucket_accuracy",
-                "false_alarm_rate",
-                "missed_risk_rate",
-                "vix_directional_accuracy",
-                "vvix_directional_accuracy",
-                "rv_directional_accuracy",
-                "combined_vol_directional_accuracy",
-                "avg_lead_quality",
-                "notes",
-            ]
-        )
+        return empty_summary
     frame = pd.DataFrame(scored_records)
     frame = frame[frame["score_available"] == True]  # noqa: E712
+    if frame.empty:
+        return empty_summary
     grouped = frame.groupby(["model_name", "horizon"], as_index=False).agg(
         accuracy=("state_match", "mean"),
         adjacent_tolerant_accuracy=("adjacent_correct", "mean"),
@@ -209,6 +212,8 @@ def build_prediction_distribution(scored_records: list[dict[str, Any]]) -> pd.Da
     if frame.empty:
         return pd.DataFrame(columns=["model_name", "horizon", "predicted_state", "count", "percent"])
     scoped = frame[frame["score_available"] == True]  # noqa: E712
+    if scoped.empty or any(column not in scoped.columns for column in ("model_name", "horizon", "predicted_state")):
+        return pd.DataFrame(columns=["model_name", "horizon", "predicted_state", "count", "percent"])
     grouped = (
         scoped.groupby(["model_name", "horizon", "predicted_state"], as_index=False)
         .size()
@@ -224,6 +229,8 @@ def build_outcome_distribution(scored_records: list[dict[str, Any]]) -> pd.DataF
     if frame.empty:
         return pd.DataFrame(columns=["horizon", "realized_state", "count", "percent"])
     scoped = frame[frame["score_available"] == True].drop_duplicates(subset=["as_of_date", "horizon"])  # noqa: E712
+    if scoped.empty or any(column not in scoped.columns for column in ("horizon", "realized_state")):
+        return pd.DataFrame(columns=["horizon", "realized_state", "count", "percent"])
     grouped = (
         scoped.groupby(["horizon", "realized_state"], as_index=False)
         .size()
@@ -241,6 +248,12 @@ def build_confusion_matrix_by_horizon(scored_records: list[dict[str, Any]]) -> p
             columns=["model_name", "horizon", "predicted_state", "realized_state", "count", "row_percent"]
         )
     scoped = frame[frame["score_available"] == True]  # noqa: E712
+    if scoped.empty or any(
+        column not in scoped.columns for column in ("model_name", "horizon", "predicted_state", "realized_state")
+    ):
+        return pd.DataFrame(
+            columns=["model_name", "horizon", "predicted_state", "realized_state", "count", "row_percent"]
+        )
     grouped = (
         scoped.groupby(["model_name", "horizon", "predicted_state", "realized_state"], as_index=False)
         .size()
@@ -257,27 +270,27 @@ def build_false_alarm_and_missed_risk_reports(
     predictions: list[dict[str, Any]],
     outcomes: list[dict[str, Any]],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    empty = pd.DataFrame(
+        columns=[
+            "as_of_date",
+            "model_name",
+            "horizon",
+            "predicted_state",
+            "realized_state",
+            "vix_change_pct",
+            "vvix_change_pct",
+            "rv21_change",
+            "spy_return_pct",
+            "vix",
+            "vvix_vix_ratio",
+            "term_structure_slope",
+            "avg_pairwise_corr_21d",
+            "first_eigenvalue_share_21d",
+            "effective_rank_21d",
+            "log_det_corr_21d",
+        ]
+    )
     if not scored_records:
-        empty = pd.DataFrame(
-            columns=[
-                "as_of_date",
-                "model_name",
-                "horizon",
-                "predicted_state",
-                "realized_state",
-                "vix_change_pct",
-                "vvix_change_pct",
-                "rv21_change",
-                "spy_return_pct",
-                "vix",
-                "vvix_vix_ratio",
-                "term_structure_slope",
-                "avg_pairwise_corr_21d",
-                "first_eigenvalue_share_21d",
-                "effective_rank_21d",
-                "log_det_corr_21d",
-            ]
-        )
         return empty, empty
     pred_map = {(row["as_of_date"], row["model_name"]): row for row in predictions}
     out_map = {row["as_of_date"]: row for row in outcomes}
@@ -317,6 +330,8 @@ def build_false_alarm_and_missed_risk_reports(
             }
         )
     frame = pd.DataFrame(rows)
+    if frame.empty or any(column not in frame.columns for column in ("false_alarm", "missed_risk", "vix_direction", "rv_direction")):
+        return empty, empty
     false_alarms = frame[
         (frame["false_alarm"] == True)  # noqa: E712
         & (frame["vix_direction"].isin(["DOWN", "FLAT"]))
@@ -536,8 +551,10 @@ def build_disagreement_summary(disagreement_df: pd.DataFrame, *, horizons: list[
             upgrade = scoped_model["disagreement_type"] == "v3_upgrade"
             realized_high = scoped_model[f"realized_risk_bucket_{suffix}"] == "HIGHER_VOL_RISK"
             realized_low = scoped_model[f"realized_risk_bucket_{suffix}"] == "LOW_RISK"
-            vix_down_flat = scoped_model[f"vix_change_pct_{suffix}"].fillna(0.0).abs() < 0.01
-            vix_down_flat = vix_down_flat | (scoped_model[f"vix_change_pct_{suffix}"].fillna(0.0) < 0.0)
+            vix_change = pd.to_numeric(scoped_model[f"vix_change_pct_{suffix}"], errors="coerce")
+            vix_change_filled = vix_change.fillna(0.0)
+            vix_down_flat = vix_change_filled.abs() < 0.01
+            vix_down_flat = vix_down_flat | (vix_change_filled < 0.0)
             opposite_bucket = scoped_model["disagreement_type"] == "v3_opposite_bucket"
             if "is_opposite_bucket" in scoped_model.columns:
                 opposite_bucket = scoped_model["is_opposite_bucket"] == True  # noqa: E712

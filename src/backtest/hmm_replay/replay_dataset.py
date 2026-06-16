@@ -14,6 +14,57 @@ REQUIRED_BASE_COLUMNS = {
     "realized_vol_5d",
     "realized_vol_21d",
 }
+REGIME_STATE_ORDER = (
+    "STABLE_LOW_VOL_TREND",
+    "MID_VOL_CHOP",
+    "VOL_EXPANSION_TRANSITION",
+    "HIGH_VOL_RISK_OFF",
+)
+
+
+def _coerce_float(value: object) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return numeric
+
+
+def _infer_regime_target_label(row: pd.Series) -> str:
+    vix = _coerce_float(row.get("vix"))
+    vvix_vix_ratio = _coerce_float(row.get("vvix_vix_ratio"))
+    vix_vix3m_ratio = _coerce_float(row.get("vix_vix3m_ratio"))
+    realized_vol_21d = _coerce_float(row.get("realized_vol_21d"))
+    spy_return_1d = _coerce_float(row.get("spy_return_1d"))
+    term_structure_slope = _coerce_float(row.get("term_structure_slope"))
+
+    expansion_signals = 0
+    if pd.notna(vix) and vix >= 20.0:
+        expansion_signals += 1
+    if pd.notna(vix_vix3m_ratio) and vix_vix3m_ratio >= 0.98:
+        expansion_signals += 1
+    if pd.notna(realized_vol_21d) and realized_vol_21d >= 22.0:
+        expansion_signals += 1
+    if pd.notna(vvix_vix_ratio) and vvix_vix_ratio >= 5.8:
+        expansion_signals += 1
+
+    high_stress_signals = 0
+    if pd.notna(vix) and vix >= 28.0:
+        high_stress_signals += 1
+    if pd.notna(vix_vix3m_ratio) and vix_vix3m_ratio >= 1.02:
+        high_stress_signals += 1
+    if pd.notna(realized_vol_21d) and realized_vol_21d >= 35.0:
+        high_stress_signals += 1
+    if pd.notna(term_structure_slope) and term_structure_slope < -0.5:
+        high_stress_signals += 1
+
+    if high_stress_signals >= 2:
+        return "HIGH_VOL_RISK_OFF"
+    if expansion_signals >= 2:
+        return "VOL_EXPANSION_TRANSITION"
+    if pd.notna(spy_return_1d) and abs(spy_return_1d) < 0.004:
+        return "MID_VOL_CHOP"
+    return "STABLE_LOW_VOL_TREND"
 
 
 def _resolve_feature_store_path(path: str | Path) -> tuple[Path, list[Path]]:
@@ -62,6 +113,18 @@ def load_feature_store(path: str | Path) -> pd.DataFrame:
         raise RuntimeError("Feature store must include a 'date' column.")
     frame = frame.copy()
     frame["date"] = pd.to_datetime(frame["date"]).dt.date
+    if "regime_target" not in frame.columns:
+        frame["regime_target"] = frame.apply(_infer_regime_target_label, axis=1)
+    else:
+        mapped = frame["regime_target"].astype(str).str.strip().str.upper()
+        aliases = {
+            "STABLE_LOW_VOL": "STABLE_LOW_VOL_TREND",
+            "STABLE_LOW_VOL_TREND": "STABLE_LOW_VOL_TREND",
+            "MID_VOL_CHOP": "MID_VOL_CHOP",
+            "VOL_EXPANSION_TRANSITION": "VOL_EXPANSION_TRANSITION",
+            "HIGH_VOL_RISK_OFF": "HIGH_VOL_RISK_OFF",
+        }
+        frame["regime_target"] = mapped.map(aliases).fillna("STABLE_LOW_VOL_TREND")
     missing = sorted(REQUIRED_BASE_COLUMNS - set(frame.columns))
     if missing:
         raise RuntimeError(f"Feature store missing required columns: {', '.join(missing)}")

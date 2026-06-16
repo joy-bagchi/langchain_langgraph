@@ -148,6 +148,8 @@ def test_disagreement_attribution_slice2() -> None:
         ),
         geometry_success_cases=success,
         geometry_smooth_modifier=pd.DataFrame(),
+        path_aware_meta_learner=pd.DataFrame(),
+        path_feature_diagnostics=pd.DataFrame(),
     )
     assert "## Disagreement Attribution" in report
 

@@ -394,11 +394,24 @@ def test_sector_return_matrix_warns_when_symbols_are_missing() -> None:
     for symbol in SECTOR_ETF_UNIVERSE[:2]:
         history.pop(f"{symbol}_close", None)
 
-    matrix, warnings = build_sector_return_matrix(history, lookback_days=21)
+    matrix, warnings, _used_symbols, _missing_symbols = build_sector_return_matrix(history, lookback_days=21)
 
     assert matrix is None
     assert warnings
     assert "Missing sector history" in warnings[0]
+
+
+def test_sector_geometry_uses_pre_xlre_universe_when_xlre_is_missing() -> None:
+    history = _observation(days=80).history
+    history.pop("XLRE_close", None)
+    metrics, warnings = compute_sector_geometry_metrics(history, lookback_days=21)
+
+    assert "avg_pairwise_corr_21d" in metrics
+    assert metrics["sector_count_used"] >= 9.0
+    assert metrics["xlre_available"] == 0.0
+    assert metrics["geometry_universe_version"] == 9.0
+    assert warnings
+    assert any("Missing sector history for: XLRE" in warning for warning in warnings)
 
 
 def test_hmm_v2_uses_sector_correlation_features(monkeypatch, tmp_path: Path) -> None:

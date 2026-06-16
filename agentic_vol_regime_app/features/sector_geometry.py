@@ -20,6 +20,8 @@ SECTOR_ETF_UNIVERSE = (
     "XLU",
     "XLRE",
 )
+PRE_XLRE_SECTOR_UNIVERSE = tuple(symbol for symbol in SECTOR_ETF_UNIVERSE if symbol != "XLRE")
+MIN_REQUIRED_SECTOR_COUNT = 9
 
 
 def _daily_returns(window: list[float]) -> list[float] | None:
@@ -40,12 +42,13 @@ def build_sector_return_matrix(
     *,
     lookback_days: int,
     sector_symbols: tuple[str, ...] = SECTOR_ETF_UNIVERSE,
-) -> tuple[np.ndarray | None, list[str]]:
+) -> tuple[np.ndarray | None, list[str], list[str], list[str]]:
     """Build aligned trailing sector-return rows from close history."""
     if lookback_days < 2:
         return None, ["lookback_days must be at least 2 for sector-correlation features."]
 
     series_list: list[list[float]] = []
+    used_symbols: list[str] = []
     missing_symbols: list[str] = []
     for symbol in sector_symbols:
         raw_values = [float(value) for value in history.get(f"{symbol}_close", []) if value is not None]
@@ -57,12 +60,18 @@ def build_sector_return_matrix(
             missing_symbols.append(symbol)
             continue
         series_list.append(returns)
+        used_symbols.append(symbol)
 
-    if missing_symbols:
-        return None, [f"Missing sector history for: {', '.join(missing_symbols)}"]
-    if len(series_list) < 2:
-        return None, ["Need at least two sector return series for sector-correlation features."]
-    return np.asarray(series_list, dtype=float), []
+    if len(series_list) < max(2, int(MIN_REQUIRED_SECTOR_COUNT)):
+        warnings = []
+        if missing_symbols:
+            warnings.append(f"Missing sector history for: {', '.join(missing_symbols)}")
+        warnings.append(
+            f"Need at least {MIN_REQUIRED_SECTOR_COUNT} sector return series for sector-correlation features."
+        )
+        return None, warnings, used_symbols, missing_symbols
+    warnings = [f"Missing sector history for: {', '.join(missing_symbols)}"] if missing_symbols else []
+    return np.asarray(series_list, dtype=float), warnings, used_symbols, missing_symbols
 
 
 def compute_sector_geometry_metrics(
@@ -73,7 +82,7 @@ def compute_sector_geometry_metrics(
     sector_symbols: tuple[str, ...] = SECTOR_ETF_UNIVERSE,
 ) -> tuple[dict[str, float], list[str]]:
     """Compute compressed sector-correlation metrics for HMM v2/v3 style models."""
-    return_matrix, warnings = build_sector_return_matrix(
+    return_matrix, warnings, used_symbols, _missing_symbols = build_sector_return_matrix(
         history,
         lookback_days=lookback_days,
         sector_symbols=sector_symbols,
@@ -107,9 +116,13 @@ def compute_sector_geometry_metrics(
     if sign <= 0:
         return {}, ["Regularized sector correlation matrix was not positive definite."]
 
-    return {
+    metrics = {
         "avg_pairwise_corr_21d": round(avg_pairwise_corr, 6),
         "first_eigenvalue_share_21d": round(largest_share, 6),
         "effective_rank_21d": round(effective_rank, 6),
         "log_det_corr_21d": round(float(log_det), 6),
-    }, []
+        "sector_count_used": float(len(used_symbols)),
+        "xlre_available": 1.0 if "XLRE" in used_symbols else 0.0,
+        "geometry_universe_version": 10.0 if "XLRE" in used_symbols else 9.0,
+    }
+    return metrics, warnings

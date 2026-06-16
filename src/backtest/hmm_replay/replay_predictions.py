@@ -8,9 +8,15 @@ from uuid import uuid4
 
 import numpy as np
 import pandas as pd
+from src.runtime.sklearn_runtime import configure_sklearn_runtime
+
+configure_sklearn_runtime()
+
 from sklearn.preprocessing import StandardScaler
 
+from src.agents.hmm_v4_path_aware_meta_agent import generate_hmm_v4_prediction
 from src.agents.geometry_stress_agent import compute_geometry_stress
+from src.backtest.hmm_replay.path_aware_dataset import PathAwarePrecomputedCache
 from src.backtest.hmm_replay.replay_dataset import ensure_columns
 from src.regime.meta_blend import blend_with_geometry_modifier, core_vol_risk_score
 
@@ -112,7 +118,28 @@ MODEL_FEATURES: dict[str, list[str]] = {
         "effective_rank_21d",
         "log_det_corr_21d",
     ],
+    "hmm_v4_path_aware_meta": [
+        "spy_return_1d",
+        "realized_vol_5d",
+        "realized_vol_21d",
+        "vix",
+        "vix_z_22d",
+        "vvix",
+        "vvix_vix_ratio",
+        "vvix_vix_z_22d",
+        "vix9d_vix_ratio",
+        "vix_vix3m_ratio",
+        "term_structure_slope",
+        "drawdown_21d",
+        "trend_persistence_21d",
+        "avg_pairwise_corr_21d",
+        "first_eigenvalue_share_21d",
+        "effective_rank_21d",
+        "log_det_corr_21d",
+        "regime_target",
+    ],
 }
+OPTIONAL_MODEL_FEATURES = {"vix9d_vix_ratio"}
 
 
 def _load_meta_blend_weights() -> tuple[float, float]:
@@ -131,6 +158,18 @@ def _load_meta_blend_weights() -> tuple[float, float]:
         return (core_weight, geometry_weight)
     except Exception:
         return (0.75, 0.25)
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if np.isnan(result) or np.isinf(result):
+        return None
+    return result
 
 
 @dataclass(slots=True)
@@ -232,7 +271,19 @@ def _hmm_prediction(
 ) -> tuple[dict[str, float], dict[str, float], dict[str, Any], list[list[float]], dict[str, float]]:
     if GaussianHMM is None:
         raise RuntimeError("hmmlearn is required for HMM replay predictions.")
-    feature_cols = MODEL_FEATURES[model_name]
+    feature_cols = list(MODEL_FEATURES[model_name])
+    dropped_optional_features: list[str] = []
+    for feature_name in list(feature_cols):
+        if feature_name not in OPTIONAL_MODEL_FEATURES:
+            continue
+        if feature_name not in train_df.columns:
+            feature_cols.remove(feature_name)
+            dropped_optional_features.append(feature_name)
+            continue
+        coverage = float(pd.to_numeric(train_df[feature_name], errors="coerce").notna().mean())
+        if coverage < 0.80:
+            feature_cols.remove(feature_name)
+            dropped_optional_features.append(feature_name)
     ensure_columns(train_df, feature_cols, context=f"{model_name} replay")
     clean = train_df.dropna(subset=feature_cols).reset_index(drop=True)
     if clean.empty:
@@ -293,6 +344,7 @@ def _hmm_prediction(
         "converged": bool(getattr(getattr(model, "monitor_", None), "converged", True)),
         "state_usage_counts": state_usage_counts,
         "state_means": state_means,
+        "dropped_optional_features": dropped_optional_features,
     }
     return (
         state_probs,
@@ -391,9 +443,13 @@ def generate_prediction_record(
     n_components: int,
     random_state: int,
     covariance_type: str,
+    precomputed_path_aware_cache: PathAwarePrecomputedCache | None = None,
 ) -> dict[str, Any]:
     as_of = pd.to_datetime(context.as_of_date).date()
-    _validate_training(train_df, as_of_date=as_of, min_train_rows=min_train_rows)
+    if model_name != "hmm_v4_path_aware_meta":
+        _validate_training(train_df, as_of_date=as_of, min_train_rows=min_train_rows)
+    elif train_df.empty or train_df["date"].max() > as_of:
+        _validate_training(train_df, as_of_date=as_of, min_train_rows=1)
     if model_name not in MODEL_FEATURES:
         raise RuntimeError(f"Unsupported replay model: {model_name}")
 
@@ -402,6 +458,46 @@ def generate_prediction_record(
         state_probs, transition_probs, diagnostics = _heuristic_prediction(train_df)
         transition_matrix: list[list[float]] = []
         expected_duration: dict[str, float] = {}
+    elif model_name == "hmm_v4_path_aware_meta":
+        fallback_record = generate_prediction_record(
+            context=context,
+            model_name="hmm_v3_1_meta_blend",
+            train_df=train_df,
+            min_train_rows=min_train_rows,
+            n_components=n_components,
+            random_state=random_state,
+            covariance_type=covariance_type,
+        )
+        v5_record = generate_hmm_v4_prediction(
+            as_of_date=context.as_of_date,
+            train_df=train_df,
+            fallback_prediction=fallback_record,
+            precomputed_cache=precomputed_path_aware_cache,
+        )
+        record = {
+            "run_id": context.run_id,
+            "as_of_date": context.as_of_date,
+            "model_name": model_name,
+            "top_state": v5_record["top_state"],
+            "state_probabilities": dict(v5_record["state_probabilities"]),
+            "transition_probabilities": dict(v5_record["transition_probabilities"]),
+            "policy_output": dict(v5_record["policy_output"]),
+            "feature_snapshot": {
+                column: (_safe_float(train_df.iloc[-1].get(column)) if column in train_df.columns else None)
+                for column in MODEL_FEATURES["hmm_v3_1_meta_blend"]
+            },
+            "model_diagnostics": {
+                **dict(v5_record.get("model_diagnostics", {})),
+                "predicted_risk_bucket": v5_record.get("predicted_risk_bucket"),
+                "model_trust_weights": v5_record.get("model_trust_weights"),
+                "path_features": v5_record.get("path_features"),
+                "top_feature_importances": v5_record.get("top_feature_importances"),
+            },
+            "transition_matrix": list(fallback_record.get("transition_matrix", [])),
+            "expected_duration_days": dict(fallback_record.get("expected_duration_days", {})),
+            "warnings": list(v5_record.get("warnings", [])),
+        }
+        return record
     elif model_name == "hmm_v3_1_meta_blend":
         (
             state_probs,

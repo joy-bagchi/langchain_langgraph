@@ -160,6 +160,8 @@ def test_report_renders_new_sections() -> None:
         geometry_false_suppression_analysis=pd.DataFrame(),
         geometry_success_cases=pd.DataFrame(),
         geometry_smooth_modifier=pd.DataFrame(),
+        path_aware_meta_learner=pd.DataFrame(),
+        path_feature_diagnostics=pd.DataFrame(),
     )
     assert "## Prediction Distribution" in markdown
     assert "## Outcome Distribution" in markdown
@@ -167,3 +169,5 @@ def test_report_renders_new_sections() -> None:
     assert "## Economic Score Summary" in markdown
     assert "## Model Usefulness Summary" in markdown
     assert "## Geometry Smooth Modifier" in markdown
+    assert "## Path-Aware Meta Learner" in markdown
+    assert "## Path Feature Diagnostics" in markdown

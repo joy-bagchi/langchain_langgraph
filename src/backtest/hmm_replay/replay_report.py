@@ -5,10 +5,17 @@ from typing import Any
 import pandas as pd
 
 
-def _md_table(frame: pd.DataFrame) -> str:
+MAX_REPORT_ROWS = 200
+
+
+def _md_table(frame: pd.DataFrame, *, max_rows: int = MAX_REPORT_ROWS) -> str:
     if frame.empty:
         return "_No rows_"
-    return frame.to_markdown(index=False)
+    scoped = frame.head(int(max_rows)).copy()
+    rendered = scoped.to_markdown(index=False)
+    if len(frame) > len(scoped):
+        rendered += f"\n\n_Showing first {len(scoped)} of {len(frame)} rows._"
+    return rendered
 
 
 def _model_usefulness_lines(economic_summary: pd.DataFrame) -> str:
@@ -91,16 +98,26 @@ def build_replay_report_markdown(
     geometry_false_suppression_analysis: pd.DataFrame,
     geometry_success_cases: pd.DataFrame,
     geometry_smooth_modifier: pd.DataFrame,
+    path_aware_meta_learner: pd.DataFrame,
+    path_feature_diagnostics: pd.DataFrame,
 ) -> str:
     top_disagreements = disagreement_attribution.copy()
     if not top_disagreements.empty:
         if "is_opposite_bucket" in top_disagreements.columns:
-            top_disagreements["is_opposite_bucket"] = top_disagreements["is_opposite_bucket"].astype(int)
+            top_disagreements["is_opposite_bucket"] = pd.to_numeric(
+                top_disagreements["is_opposite_bucket"], errors="coerce"
+            ).fillna(0).astype(int)
         else:
             top_disagreements["is_opposite_bucket"] = 0
-        top_disagreements["abs_severity_delta"] = top_disagreements["severity_delta"].abs()
-        top_disagreements["abs_vix_change_pct_3d"] = top_disagreements["vix_change_pct_3d"].abs()
-        top_disagreements["abs_rv21_change_3d"] = top_disagreements["rv21_change_3d"].abs()
+        top_disagreements["abs_severity_delta"] = pd.to_numeric(
+            top_disagreements.get("severity_delta"), errors="coerce"
+        ).abs().fillna(0.0)
+        top_disagreements["abs_vix_change_pct_3d"] = pd.to_numeric(
+            top_disagreements.get("vix_change_pct_3d"), errors="coerce"
+        ).abs().fillna(0.0)
+        top_disagreements["abs_rv21_change_3d"] = pd.to_numeric(
+            top_disagreements.get("rv21_change_3d"), errors="coerce"
+        ).abs().fillna(0.0)
         top_disagreements = top_disagreements.sort_values(
             ["is_opposite_bucket", "abs_severity_delta", "abs_vix_change_pct_3d", "abs_rv21_change_3d"],
             ascending=[False, False, False, False],
@@ -153,23 +170,23 @@ def build_replay_report_markdown(
     return (
         "# HMM Replay Backtest Report\n\n"
         "## Overall Model Comparison\n\n"
-        + _md_table(summary_metrics)
+        + _md_table(summary_metrics, max_rows=MAX_REPORT_ROWS)
         + "\n\n## Prediction Distribution\n\n"
-        + _md_table(prediction_distribution)
+        + _md_table(prediction_distribution, max_rows=MAX_REPORT_ROWS)
         + "\n\n## Outcome Distribution\n\n"
-        + _md_table(outcome_distribution)
+        + _md_table(outcome_distribution, max_rows=MAX_REPORT_ROWS)
         + "\n\n## Confusion Matrix by Horizon\n\n"
-        + _md_table(confusion_matrix)
+        + _md_table(confusion_matrix, max_rows=MAX_REPORT_ROWS)
         + "\n\n## Economic Score Summary\n\n"
-        + _md_table(economic_summary)
+        + _md_table(economic_summary, max_rows=MAX_REPORT_ROWS)
         + "\n\n## False Alarms\n\n"
-        + _md_table(false_alarms.head(50))
+        + _md_table(false_alarms.head(50), max_rows=50)
         + "\n\n## Missed Risks\n\n"
-        + _md_table(missed_risks.head(50))
+        + _md_table(missed_risks.head(50), max_rows=50)
         + "\n\n## Recent As-of Date Comparison\n\n"
-        + _md_table(recent_rows)
+        + _md_table(recent_rows, max_rows=MAX_REPORT_ROWS)
         + "\n\n## Model Disagreement Cases\n\n"
-        + _md_table(disagreements)
+        + _md_table(disagreements, max_rows=MAX_REPORT_ROWS)
         + "\n\n## HMM v3 Special Section\n\n"
         "Track whether geometry features improved false vol-expansion avoidance and mid-vol chop detection.\n\n"
         "## Model Usefulness Summary\n\n"
@@ -189,26 +206,31 @@ def build_replay_report_markdown(
                 ]
             ]
             if not disagreement_summary.empty
-            else disagreement_summary
+            else disagreement_summary,
+            max_rows=MAX_REPORT_ROWS,
         )
         + "\n\n### Geometry Override Summary\n\n"
-        + _md_table(geometry_override_summary)
+        + _md_table(geometry_override_summary, max_rows=MAX_REPORT_ROWS)
         + "\n\n### Top 20 Most Important Disagreements\n\n"
-        + _md_table(top_disagreements)
+        + _md_table(top_disagreements, max_rows=20)
         + "\n\n### Plain-English Interpretation\n\n"
         + _disagreement_interpretation(disagreement_summary)
         + "\n\n### Geometry Override Cases\n\n"
-        + _md_table(geometry_override_cases.head(50))
+        + _md_table(geometry_override_cases.head(50), max_rows=50)
         + "\n\n### Geometry False Suppression Cases\n\n"
-        + _md_table(geometry_false_suppression_cases.head(50))
+        + _md_table(geometry_false_suppression_cases.head(50), max_rows=50)
         + "\n\n### Geometry False Suppression Analysis\n\n"
-        + _md_table(geometry_false_suppression_analysis)
+        + _md_table(geometry_false_suppression_analysis, max_rows=MAX_REPORT_ROWS)
         + "\n\n### Geometry Success Cases\n\n"
-        + _md_table(geometry_success_cases.head(50))
+        + _md_table(geometry_success_cases.head(50), max_rows=50)
         + "\n\n## Geometry Smooth Modifier\n\n"
-        + _md_table(geometry_smooth_modifier.head(100))
+        + _md_table(geometry_smooth_modifier.head(100), max_rows=100)
+        + "\n\n## Path-Aware Meta Learner\n\n"
+        + _md_table(path_aware_meta_learner.head(100), max_rows=100)
+        + "\n\n## Path Feature Diagnostics\n\n"
+        + _md_table(path_feature_diagnostics, max_rows=MAX_REPORT_ROWS)
         + "\n\n## Diagnostics\n\n"
-        + _md_table(diagnostics)
+        + _md_table(diagnostics, max_rows=MAX_REPORT_ROWS)
         + "\n"
     )
 

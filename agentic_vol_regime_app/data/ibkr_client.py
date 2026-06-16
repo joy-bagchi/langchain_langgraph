@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
+import time as _time
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Protocol
@@ -37,11 +38,12 @@ from agentic_vol_regime_app.contracts import (
 )
 
 
-DEFAULT_VOL_REGIME_SYMBOLS = ("SPY", "VIX", "VVIX", "VIX9D", "VIX3M", "VIX6M", "VIX9M")
+DEFAULT_VOL_REGIME_SYMBOLS = ("SPY", "VIX", "VVIX", "VIX9D", "VIX3M", "VIX6M")
 DEFAULT_SECTOR_ETF_SYMBOLS = ("XLK", "XLF", "XLE", "XLY", "XLP", "XLI", "XLB", "XLV", "XLU", "XLRE")
 INDEX_STYLE_SYMBOLS = {"VIX", "VVIX", "VIX9D", "VIX3M", "VIX6M", "VIX9M"}
 _IBKR_UNSET_DOUBLE = 1.7976931348623157e308
 _IBKR_UNSET_INT = 2147483647
+_CHUNKED_HISTORY_THRESHOLD_DAYS = 1260
 
 
 def _utc_now() -> str:
@@ -280,6 +282,7 @@ class IBKRLiveClient:
 
             for symbol in request.regime_symbols:
                 normalized_symbol = symbol.upper()
+                is_sector_etf = normalized_symbol in DEFAULT_SECTOR_ETF_SYMBOLS
                 if normalized_symbol == option_request.symbol.upper():
                     contract = stock_contract
                     quote_payload = underlying_quote
@@ -296,8 +299,8 @@ class IBKRLiveClient:
                             contract = self._qualify_stock_contract(
                                 ib,
                                 symbol=normalized_symbol,
-                                exchange=option_request.exchange,
-                                currency=request.currency,
+                                exchange="SMART" if is_sector_etf else option_request.exchange,
+                                currency="USD" if is_sector_etf else request.currency,
                             )
                         except Exception:
                             contract = None
@@ -317,11 +320,14 @@ class IBKRLiveClient:
                     else normalized_symbol
                 )
                 if request.history_days > 0:
+                    use_rth_for_history = is_sector_etf or (normalized_symbol == option_request.symbol.upper())
                     history_values, history_warnings = self._request_daily_history(
                         ib,
                         contract,
                         history_days=request.history_days,
                         history_label=history_key,
+                        use_rth=use_rth_for_history,
+                        force_chunked=is_sector_etf and request.history_days > 252,
                     )
                     if history_values:
                         history_payload[history_key] = history_values
@@ -397,6 +403,7 @@ class IBKRLiveClient:
 
         for symbol in request.regime_symbols:
             normalized_symbol = symbol.upper()
+            is_sector_etf = normalized_symbol in DEFAULT_SECTOR_ETF_SYMBOLS
             if normalized_symbol == option_request.symbol.upper():
                 contract = stock_contract
             elif normalized_symbol in INDEX_STYLE_SYMBOLS:
@@ -411,8 +418,8 @@ class IBKRLiveClient:
                     contract = self._qualify_stock_contract(
                         ib,
                         symbol=normalized_symbol,
-                        exchange=option_request.exchange,
-                        currency=request.currency,
+                        exchange="SMART" if is_sector_etf else option_request.exchange,
+                        currency="USD" if is_sector_etf else request.currency,
                     )
                 except Exception:
                     contract = None
@@ -433,6 +440,8 @@ class IBKRLiveClient:
                 history_days=request.history_days,
                 history_label=history_key,
                 end_datetime=end_datetime,
+                use_rth=(is_sector_etf or normalized_symbol == option_request.symbol.upper()),
+                force_chunked=is_sector_etf and request.history_days > 252,
             )
             if history_values:
                 history_payload[history_key] = history_values
@@ -647,9 +656,12 @@ class IBKRLiveClient:
         history_days: int,
         history_label: str,
         end_datetime: str = "",
+        use_rth: bool = False,
+        force_chunked: bool = False,
     ) -> tuple[list[float], list[str]]:
         duration_str = _historical_duration_str(history_days)
         sec_type = str(getattr(contract, "secType", "")).upper()
+        should_use_chunked = bool(force_chunked) or (sec_type == "STK" and int(history_days) > _CHUNKED_HISTORY_THRESHOLD_DAYS)
         what_to_show_candidates = (
             ("TRADES", "ADJUSTED_LAST")
             if sec_type == "STK"
@@ -657,6 +669,18 @@ class IBKRLiveClient:
         )
         diagnostics: list[str] = []
         for what_to_show in what_to_show_candidates:
+            if should_use_chunked and sec_type == "STK":
+                stitched, chunk_warnings = IBKRLiveClient._request_daily_history_chunked(
+                    ib,
+                    contract,
+                    history_days=history_days,
+                    history_label=history_label,
+                    what_to_show=what_to_show,
+                    end_datetime=end_datetime,
+                    use_rth=bool(use_rth),
+                )
+                if stitched:
+                    return stitched[-history_days:], chunk_warnings
             try:
                 bars = ib.reqHistoricalData(
                     contract,
@@ -664,25 +688,159 @@ class IBKRLiveClient:
                     durationStr=duration_str,
                     barSizeSetting="1 day",
                     whatToShow=what_to_show,
-                    useRTH=False,
+                    useRTH=bool(use_rth),
                     formatDate=1,
                 )
             except Exception as exc:
                 diagnostics.append(
                     f"{history_label} history request failed for {what_to_show} with duration {duration_str}: {exc}"
                 )
+                error_text = str(exc).lower()
+                if sec_type == "STK" and any(token in error_text for token in ("timeout", "cancelled", "canceled")):
+                    stitched, chunk_warnings = IBKRLiveClient._request_daily_history_chunked(
+                        ib,
+                        contract,
+                        history_days=history_days,
+                        history_label=history_label,
+                        what_to_show=what_to_show,
+                        end_datetime=end_datetime,
+                        use_rth=bool(use_rth),
+                    )
+                    if stitched:
+                        diagnostics.extend(chunk_warnings)
+                        return stitched[-history_days:], diagnostics
                 continue
-            closes = [
-                number
-                for number in (_safe_float(getattr(bar, "close", None)) for bar in bars)
-                if number is not None
-            ]
-            if closes:
+            closes = IBKRLiveClient._bars_to_sorted_closes(bars)
+            if len(closes) >= int(history_days):
                 return closes[-history_days:], []
+            if closes and not force_chunked:
+                return closes[-history_days:], []
+            if sec_type == "STK":
+                stitched, chunk_warnings = IBKRLiveClient._request_daily_history_chunked(
+                    ib,
+                    contract,
+                    history_days=history_days,
+                    history_label=history_label,
+                    what_to_show=what_to_show,
+                    end_datetime=end_datetime,
+                    use_rth=bool(use_rth),
+                )
+                if stitched:
+                    return stitched[-history_days:], chunk_warnings
             diagnostics.append(
                 f"{history_label} history request returned no usable bars for {what_to_show} with duration {duration_str}."
             )
         return [], diagnostics
+
+    @staticmethod
+    def _normalize_bar_date(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        text = str(value).strip()
+        if not text:
+            return None
+        if " " in text and "-" in text:
+            text = text.split(" ")[0]
+        for fmt in ("%Y%m%d", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+                return parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _bars_to_sorted_closes(bars: list[Any]) -> list[float]:
+        by_date: dict[date, float] = {}
+        for bar in bars:
+            close_value = _safe_float(getattr(bar, "close", None))
+            bar_dt = IBKRLiveClient._normalize_bar_date(getattr(bar, "date", None))
+            if close_value is None or bar_dt is None:
+                continue
+            by_date[bar_dt.date()] = float(close_value)
+        if not by_date:
+            return []
+        return [float(by_date[item]) for item in sorted(by_date.keys())]
+
+    @staticmethod
+    def _request_daily_history_chunked(
+        ib: Any,
+        contract: Any,
+        *,
+        history_days: int,
+        history_label: str,
+        what_to_show: str,
+        end_datetime: str,
+        use_rth: bool,
+    ) -> tuple[list[float], list[str]]:
+        target_rows = max(int(history_days), 0)
+        if target_rows <= 0:
+            return [], []
+        diagnostics: list[str] = []
+        stitched_by_date: dict[date, float] = {}
+        if end_datetime:
+            current_end = end_datetime
+        else:
+            current_end = datetime.now(timezone.utc).strftime("%Y%m%d %H:%M:%S UTC")
+        max_chunks = 24
+        duration_candidates = ("1 Y", "6 M", "3 M")
+        retries_per_duration = 2
+        for _ in range(max_chunks):
+            bars: list[Any] = []
+            for duration_str in duration_candidates:
+                attempt = 0
+                while attempt <= retries_per_duration:
+                    try:
+                        bars = ib.reqHistoricalData(
+                            contract,
+                            endDateTime=current_end,
+                            durationStr=duration_str,
+                            barSizeSetting="1 day",
+                            whatToShow=what_to_show,
+                            useRTH=bool(use_rth),
+                            formatDate=1,
+                        )
+                        if bars:
+                            break
+                    except Exception as exc:
+                        diagnostics.append(
+                            f"{history_label} chunked history request failed for {what_to_show} "
+                            f"(duration={duration_str}, endDateTime={current_end}, attempt={attempt + 1}): {exc}"
+                        )
+                        _time.sleep(0.35 * (attempt + 1))
+                    attempt += 1
+                if bars:
+                    break
+            if not bars:
+                break
+            rows: list[tuple[date, float]] = []
+            for bar in bars:
+                close_value = _safe_float(getattr(bar, "close", None))
+                bar_dt = IBKRLiveClient._normalize_bar_date(getattr(bar, "date", None))
+                if close_value is None or bar_dt is None:
+                    continue
+                rows.append((bar_dt.date(), float(close_value)))
+            if not rows:
+                break
+            for day, value in rows:
+                stitched_by_date[day] = value
+            if len(stitched_by_date) >= target_rows:
+                break
+            earliest = min(day for day, _ in rows)
+            next_end_dt = datetime.combine(earliest - timedelta(days=1), time(23, 59, 59), tzinfo=timezone.utc)
+            current_end = next_end_dt.strftime("%Y%m%d %H:%M:%S UTC")
+            _time.sleep(0.15)
+        if not stitched_by_date:
+            return [], diagnostics
+        ordered_days = sorted(stitched_by_date.keys())
+        closes = [float(stitched_by_date[item]) for item in ordered_days]
+        if len(closes) < target_rows:
+            diagnostics.append(
+                f"{history_label} chunked history returned {len(closes)} rows, below requested {target_rows} rows."
+            )
+        return closes[-target_rows:], diagnostics
 
     @staticmethod
     def _request_intraday_last(ib: Any, contract: Any) -> float | None:

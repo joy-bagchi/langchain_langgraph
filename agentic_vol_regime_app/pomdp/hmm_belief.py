@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from src.runtime.sklearn_runtime import configure_sklearn_runtime
+
+configure_sklearn_runtime()
+
 from sklearn.preprocessing import StandardScaler
 
 try:  # pragma: no cover - optional runtime dependency
