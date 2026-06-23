@@ -1,0 +1,24 @@
+2026-06-13 17:09:45,302Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | start=2026-06-12 | end=2026-06-12 | as_of=2026-06-12 | models=heuristic,hmm_v1_core,hmm_v2_core_plus_sector_corr,hmm_v3_core_plus_sector_geometry,hmm_v3_1_meta_blend,hmm_v4_path_aware_meta | horizons=1,2,3,5,10
+2026-06-13 17:09:45,306Z [INFO] Eligible replay dates: 1 | first=2026-06-12 | last=2026-06-12 | min_train_rows=1260
+2026-06-13 17:09:50,892Z [INFO] Progress 1/1 dates | as_of=2026-06-12 | predictions=6 | scores=30 | elapsed=5.6s
+2026-06-13 17:09:51,004Z [ERROR] Replay failed | as_of=2026-06-12 | model=hmm_v4_path_aware_meta | elapsed=5.6s
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 329, in run_hmm_replay
+    false_alarms_df, missed_risks_df = build_false_alarm_and_missed_risk_reports(
+                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        scored_records=scored_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        predictions=prediction_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        outcomes=outcome_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_scoring.py", line 334, in build_false_alarm_and_missed_risk_reports
+    (frame["false_alarm"] == True)  # noqa: E712
+     ~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\frame.py", line 4113, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\indexes\range.py", line 417, in get_loc
+    raise KeyError(key)
+KeyError: 'false_alarm'

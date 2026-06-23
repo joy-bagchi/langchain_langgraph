@@ -1,0 +1,6 @@
+model_name,starting_cash,leap_enabled,leap_entry_premium,leap_delta,leap_multiplier,short_call_multiplier,allow_naked_short_calls,initial_spy,start_date,end_date
+no_overwrite_baseline,0.0,True,100.0,0.75,100,100,False,441.05,2024-01-01,2026-06-15
+always_overwrite_baseline,0.0,True,100.0,0.75,100,100,False,441.05,2024-01-01,2026-06-15
+heuristic_policy,0.0,True,100.0,0.75,100,100,False,441.05,2024-01-01,2026-06-15
+hmm_v3_1_meta_blend,0.0,True,100.0,0.75,100,100,False,441.05,2024-01-01,2026-06-15
+hmm_v4_path_aware_meta,0.0,True,100.0,0.75,100,100,False,441.05,2024-01-01,2026-06-15

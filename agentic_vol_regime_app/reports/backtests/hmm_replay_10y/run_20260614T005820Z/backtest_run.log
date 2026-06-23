@@ -1,0 +1,66 @@
+2026-06-13 17:58:20,277Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | start=2016-03-29 | end=2026-06-12 | as_of=None | models=heuristic,hmm_v1_core,hmm_v2_core_plus_sector_corr,hmm_v3_core_plus_sector_geometry,hmm_v3_1_meta_blend,hmm_v4_path_aware_meta | horizons=1,2,3
+2026-06-13 17:58:20,301Z [INFO] Eligible replay dates: 1405 | first=2021-01-25 | last=2026-06-12 | min_train_rows=1260
+2026-06-13 17:59:00,504Z [INFO] Progress 25/1405 dates | as_of=2021-02-26 | predictions=150 | scores=450 | elapsed=40.2s
+2026-06-13 17:59:42,910Z [INFO] Progress 50/1405 dates | as_of=2021-04-02 | predictions=300 | scores=900 | elapsed=82.6s
+2026-06-13 18:01:20,353Z [INFO] Progress 75/1405 dates | as_of=2021-05-07 | predictions=450 | scores=1350 | elapsed=180.1s
+2026-06-13 18:03:11,315Z [INFO] Progress 100/1405 dates | as_of=2021-06-11 | predictions=600 | scores=1800 | elapsed=291.0s
+2026-06-13 18:04:02,780Z [INFO] Progress 125/1405 dates | as_of=2021-07-16 | predictions=750 | scores=2250 | elapsed=342.5s
+2026-06-13 18:04:46,314Z [INFO] Progress 150/1405 dates | as_of=2021-08-20 | predictions=900 | scores=2700 | elapsed=386.0s
+2026-06-13 18:05:31,033Z [INFO] Progress 175/1405 dates | as_of=2021-09-24 | predictions=1050 | scores=3150 | elapsed=430.8s
+2026-06-13 18:06:18,285Z [INFO] Progress 200/1405 dates | as_of=2021-10-29 | predictions=1200 | scores=3600 | elapsed=478.0s
+2026-06-13 18:07:05,499Z [INFO] Progress 225/1405 dates | as_of=2021-12-03 | predictions=1350 | scores=4050 | elapsed=525.2s
+2026-06-13 18:08:54,037Z [INFO] Progress 250/1405 dates | as_of=2022-01-07 | predictions=1500 | scores=4500 | elapsed=633.8s
+2026-06-13 18:10:46,725Z [INFO] Progress 275/1405 dates | as_of=2022-02-11 | predictions=1650 | scores=4950 | elapsed=746.4s
+2026-06-13 18:11:35,229Z [INFO] Progress 300/1405 dates | as_of=2022-03-18 | predictions=1800 | scores=5400 | elapsed=795.0s
+2026-06-13 18:12:23,188Z [INFO] Progress 325/1405 dates | as_of=2022-04-22 | predictions=1950 | scores=5850 | elapsed=842.9s
+2026-06-13 18:13:15,376Z [INFO] Progress 350/1405 dates | as_of=2022-05-27 | predictions=2100 | scores=6300 | elapsed=895.1s
+2026-06-13 18:14:13,921Z [INFO] Progress 375/1405 dates | as_of=2022-07-01 | predictions=2250 | scores=6750 | elapsed=953.6s
+2026-06-13 18:15:07,701Z [INFO] Progress 400/1405 dates | as_of=2022-08-05 | predictions=2400 | scores=7200 | elapsed=1007.4s
+2026-06-13 18:16:01,891Z [INFO] Progress 425/1405 dates | as_of=2022-09-09 | predictions=2550 | scores=7650 | elapsed=1061.6s
+2026-06-13 18:17:02,087Z [INFO] Progress 450/1405 dates | as_of=2022-10-14 | predictions=2700 | scores=8100 | elapsed=1121.8s
+2026-06-13 18:17:58,440Z [INFO] Progress 475/1405 dates | as_of=2022-11-18 | predictions=2850 | scores=8550 | elapsed=1178.2s
+2026-06-13 18:18:55,808Z [INFO] Progress 500/1405 dates | as_of=2022-12-23 | predictions=3000 | scores=9000 | elapsed=1235.5s
+2026-06-13 18:19:55,687Z [INFO] Progress 525/1405 dates | as_of=2023-01-27 | predictions=3150 | scores=9450 | elapsed=1295.4s
+2026-06-13 18:20:57,948Z [INFO] Progress 550/1405 dates | as_of=2023-03-03 | predictions=3300 | scores=9900 | elapsed=1357.7s
+2026-06-13 18:22:01,887Z [INFO] Progress 575/1405 dates | as_of=2023-04-07 | predictions=3450 | scores=10350 | elapsed=1421.6s
+2026-06-13 18:24:25,825Z [INFO] Progress 600/1405 dates | as_of=2023-05-12 | predictions=3600 | scores=10800 | elapsed=1565.5s
+2026-06-13 18:26:22,267Z [INFO] Progress 625/1405 dates | as_of=2023-06-16 | predictions=3750 | scores=11250 | elapsed=1682.0s
+2026-06-13 18:27:24,381Z [INFO] Progress 650/1405 dates | as_of=2023-07-21 | predictions=3900 | scores=11700 | elapsed=1744.1s
+2026-06-13 18:28:28,669Z [INFO] Progress 675/1405 dates | as_of=2023-08-25 | predictions=4050 | scores=12150 | elapsed=1808.4s
+2026-06-13 18:29:34,081Z [INFO] Progress 700/1405 dates | as_of=2023-09-29 | predictions=4200 | scores=12600 | elapsed=1873.8s
+2026-06-13 18:30:36,593Z [INFO] Progress 725/1405 dates | as_of=2023-11-03 | predictions=4350 | scores=13050 | elapsed=1936.3s
+2026-06-13 18:31:49,525Z [INFO] Progress 750/1405 dates | as_of=2023-12-08 | predictions=4500 | scores=13500 | elapsed=2009.2s
+2026-06-13 18:33:07,200Z [INFO] Progress 775/1405 dates | as_of=2024-01-12 | predictions=4650 | scores=13950 | elapsed=2086.9s
+2026-06-13 18:34:31,408Z [INFO] Progress 800/1405 dates | as_of=2024-02-16 | predictions=4800 | scores=14400 | elapsed=2171.1s
+2026-06-13 18:35:51,598Z [INFO] Progress 825/1405 dates | as_of=2024-03-22 | predictions=4950 | scores=14850 | elapsed=2251.3s
+2026-06-13 18:37:03,065Z [INFO] Progress 850/1405 dates | as_of=2024-04-26 | predictions=5100 | scores=15300 | elapsed=2322.8s
+2026-06-13 18:38:12,959Z [INFO] Progress 875/1405 dates | as_of=2024-05-31 | predictions=5250 | scores=15750 | elapsed=2392.7s
+2026-06-13 18:39:24,008Z [INFO] Progress 900/1405 dates | as_of=2024-07-05 | predictions=5400 | scores=16200 | elapsed=2463.7s
+2026-06-13 18:40:40,182Z [INFO] Progress 925/1405 dates | as_of=2024-08-09 | predictions=5550 | scores=16650 | elapsed=2539.9s
+2026-06-13 18:42:06,099Z [INFO] Progress 950/1405 dates | as_of=2024-09-13 | predictions=5700 | scores=17100 | elapsed=2625.8s
+2026-06-13 18:43:27,610Z [INFO] Progress 975/1405 dates | as_of=2024-10-18 | predictions=5850 | scores=17550 | elapsed=2707.3s
+2026-06-13 18:44:57,388Z [INFO] Progress 1000/1405 dates | as_of=2024-11-22 | predictions=6000 | scores=18000 | elapsed=2797.1s
+2026-06-13 18:46:28,753Z [INFO] Progress 1025/1405 dates | as_of=2024-12-27 | predictions=6150 | scores=18450 | elapsed=2888.5s
+2026-06-13 18:47:57,644Z [INFO] Progress 1050/1405 dates | as_of=2025-01-31 | predictions=6300 | scores=18900 | elapsed=2977.4s
+2026-06-13 18:49:30,157Z [INFO] Progress 1075/1405 dates | as_of=2025-03-07 | predictions=6450 | scores=19350 | elapsed=3069.9s
+2026-06-13 18:51:08,909Z [INFO] Progress 1100/1405 dates | as_of=2025-04-11 | predictions=6600 | scores=19800 | elapsed=3168.6s
+2026-06-13 18:52:45,575Z [INFO] Progress 1125/1405 dates | as_of=2025-05-16 | predictions=6750 | scores=20250 | elapsed=3265.3s
+2026-06-13 18:54:19,483Z [INFO] Progress 1150/1405 dates | as_of=2025-06-20 | predictions=6900 | scores=20700 | elapsed=3359.2s
+2026-06-13 18:55:53,077Z [INFO] Progress 1175/1405 dates | as_of=2025-07-25 | predictions=7050 | scores=21150 | elapsed=3452.8s
+2026-06-13 18:57:13,744Z [INFO] Progress 1200/1405 dates | as_of=2025-08-29 | predictions=7200 | scores=21600 | elapsed=3533.5s
+2026-06-13 18:58:35,604Z [INFO] Progress 1225/1405 dates | as_of=2025-10-03 | predictions=7350 | scores=22050 | elapsed=3615.3s
+2026-06-13 19:00:03,495Z [INFO] Progress 1250/1405 dates | as_of=2025-11-07 | predictions=7500 | scores=22500 | elapsed=3703.2s
+2026-06-13 19:01:42,358Z [INFO] Progress 1275/1405 dates | as_of=2025-12-12 | predictions=7650 | scores=22950 | elapsed=3802.1s
+2026-06-13 19:03:20,888Z [INFO] Progress 1300/1405 dates | as_of=2026-01-16 | predictions=7800 | scores=23400 | elapsed=3900.6s
+2026-06-13 19:05:02,218Z [INFO] Progress 1325/1405 dates | as_of=2026-02-20 | predictions=7950 | scores=23850 | elapsed=4001.9s
+2026-06-13 19:10:26,597Z [INFO] Progress 1350/1405 dates | as_of=2026-03-27 | predictions=8100 | scores=24300 | elapsed=4326.3s
+2026-06-13 19:11:56,066Z [INFO] Progress 1375/1405 dates | as_of=2026-05-01 | predictions=8250 | scores=24750 | elapsed=4415.8s
+2026-06-13 19:13:35,415Z [INFO] Progress 1400/1405 dates | as_of=2026-06-05 | predictions=8400 | scores=25200 | elapsed=4515.1s
+2026-06-13 19:13:53,227Z [INFO] Progress 1405/1405 dates | as_of=2026-06-12 | predictions=8430 | scores=25290 | elapsed=4532.9s
+2026-06-13 19:13:53,729Z [ERROR] Replay failed | as_of=2026-06-12 | model=hmm_v4_path_aware_meta | elapsed=4533.5s
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 377, in run_hmm_replay
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: 10-year HMMv4 replay failed because fallback usage stayed above the allowed limit. fallback_rate=1.0000, limit=0.1000.

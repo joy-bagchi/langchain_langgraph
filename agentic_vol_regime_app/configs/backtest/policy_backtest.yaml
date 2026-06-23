@@ -1,0 +1,33 @@
+feature_store_path: agentic_vol_regime_app/data/processed/features_daily.parquet
+output_dir: reports/backtests/policy_backtest/
+run_mode: tuning
+start_date: 2024-01-01
+end_date: latest
+
+models:
+  - hmm_v3_1_meta_blend
+  - hmm_v4_path_aware_meta
+
+train_lookback_days: 756
+min_train_rows: 504
+
+default_dte: 1
+strike_increment: 1.0
+
+leap_enabled: true
+leap_contracts: 1
+leap_delta: 0.75
+leap_multiplier: 100
+leap_entry_premium: 100.0
+leap_profit_take_multiple: 1.20
+leap_stop_loss_multiple: 0.80
+allow_leap_reentry: true
+allow_naked_short_calls: false
+
+risk_free_rate: 0.0
+dividend_yield: 0.0
+
+profit_exit_pct: 0.20
+loss_exit_multiple: 2.0
+exit_on_underlying_touch: true
+safer_reference_mode: no_overwrite

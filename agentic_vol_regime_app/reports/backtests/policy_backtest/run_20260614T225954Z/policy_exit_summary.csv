@@ -1,0 +1,13 @@
+model_name,exit_reason,trade_count,total_trade_pnl
+always_overwrite_baseline,expiration,23,-1680.2886307018698
+always_overwrite_baseline,underlying_touch,11,6181.384798974945
+always_overwrite_baseline,profit_exit,3,-2960.5907551614646
+heuristic_policy,expiration,21,-844.0964613715
+heuristic_policy,underlying_touch,10,4522.262368572262
+heuristic_policy,profit_exit,2,-1268.7212382894402
+hmm_v3_1_meta_blend,expiration,23,-1679.3422043102682
+hmm_v3_1_meta_blend,underlying_touch,11,3241.5292234134217
+hmm_v3_1_meta_blend,profit_exit,3,-2341.8407551614646
+hmm_v4_path_aware_meta,expiration,23,-1680.2886307018698
+hmm_v4_path_aware_meta,underlying_touch,11,6181.384798974945
+hmm_v4_path_aware_meta,profit_exit,3,-2960.5907551614646

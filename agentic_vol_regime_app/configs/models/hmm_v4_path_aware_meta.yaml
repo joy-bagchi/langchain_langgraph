@@ -1,0 +1,12 @@
+model_name: hmm_v4_path_aware_meta
+model_type: supervised_meta_learner
+enabled: true
+base_estimator: gradient_boosting
+target: realized_risk_bucket
+horizon: 3
+min_training_rows: 250
+walk_forward_train_lookback_days: 756
+feature_windows: [1, 3, 5, 10, 21, 63]
+geometry_stress_lookback: 252
+random_state: 42
+fallback_model: hmm_v3_1_meta_blend

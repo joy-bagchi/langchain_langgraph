@@ -1,0 +1,8 @@
+2026-06-14 14:44:37,559Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | run_mode=tuning | start=2016-03-29 | end=2026-06-12 | as_of=None | models=hmm_v4_path_aware_meta,hmm_v3_1_meta_blend | horizons=1,3 | lightweight_mode=true
+2026-06-14 14:44:37,664Z [INFO] Eligible replay dates: 75 | first=2026-03-02 | last=2026-06-12 | min_train_rows=504 | train_lookback_days=756
+2026-06-14 14:44:42,577Z [INFO] Precomputed path-aware cache | rows=2664 | features_families=6
+2026-06-14 14:44:47,182Z [INFO] Progress 25/75 dates | as_of=2026-04-03 | predictions=50 | scores=100 | elapsed=9.6s | rss_mb=303.1 | obj_count=235660 | cache_hits=25 | cache_misses=25
+2026-06-14 14:44:51,346Z [INFO] Progress 50/75 dates | as_of=2026-05-08 | predictions=100 | scores=200 | elapsed=13.8s | rss_mb=304.6 | obj_count=236765 | cache_hits=50 | cache_misses=50
+2026-06-14 14:44:55,590Z [INFO] Progress 75/75 dates | as_of=2026-06-12 | predictions=150 | scores=300 | elapsed=18.0s | rss_mb=304.6 | obj_count=237863 | cache_hits=75 | cache_misses=75
+2026-06-14 14:44:55,805Z [INFO] Replay resource summary | peak_rss_mb=304.6 | slowest_dates=2026-06-01:0.31s, 2026-05-12:0.29s, 2026-05-06:0.25s, 2026-03-02:0.24s, 2026-05-04:0.23s, 2026-05-01:0.23s, 2026-03-06:0.23s, 2026-04-03:0.21s, 2026-06-10:0.21s, 2026-05-05:0.21s
+2026-06-14 14:44:55,806Z [INFO] Replay completed | dates=75 | predictions=150 | scores=300 | elapsed=18.2s

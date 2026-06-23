@@ -1,0 +1,6 @@
+2026-06-13 22:11:32,482Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | start=2026-06-12 | end=2026-06-12 | as_of=2026-06-12 | models=heuristic,hmm_v1_core,hmm_v2_core_plus_sector_corr,hmm_v3_core_plus_sector_geometry,hmm_v3_1_meta_blend,hmm_v4_path_aware_meta | horizons=1,2,3,5,10
+2026-06-13 22:11:32,487Z [INFO] Eligible replay dates: 1 | first=2026-06-12 | last=2026-06-12 | min_train_rows=1260
+2026-06-13 22:11:37,047Z [INFO] Precomputed path-aware cache | rows=2664 | features_families=6
+2026-06-13 22:11:39,317Z [INFO] Progress 1/1 dates | as_of=2026-06-12 | predictions=6 | scores=30 | elapsed=6.8s | rss_mb=196.5 | obj_count=132783
+2026-06-13 22:11:39,520Z [INFO] Replay resource summary | peak_rss_mb=196.5 | slowest_dates=2026-06-12:2.20s
+2026-06-13 22:11:39,520Z [INFO] Replay completed | dates=1 | predictions=6 | scores=30 | elapsed=7.0s

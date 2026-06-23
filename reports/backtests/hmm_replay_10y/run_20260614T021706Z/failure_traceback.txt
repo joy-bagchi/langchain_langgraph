@@ -1,0 +1,21 @@
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 466, in run_hmm_replay
+    build_replay_report_markdown(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        summary_metrics=summary_df,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<17 lines>...
+        path_feature_diagnostics=path_aware_feature_diagnostics_df,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ),
+    ^
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_report.py", line 104, in build_replay_report_markdown
+    top_disagreements["abs_vix_change_pct_3d"] = top_disagreements["vix_change_pct_3d"].abs()
+                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\generic.py", line 1722, in abs
+    res_mgr = self._mgr.apply(np.abs)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\internals\managers.py", line 361, in apply
+    applied = b.apply(f, **kwargs)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\internals\blocks.py", line 395, in apply
+    result = func(self.values, **kwargs)
+TypeError: bad operand type for abs(): 'NoneType'

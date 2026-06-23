@@ -1,0 +1,34 @@
+2026-06-13 17:10:03,460Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | start=2026-06-12 | end=2026-06-12 | as_of=2026-06-12 | models=heuristic,hmm_v1_core,hmm_v2_core_plus_sector_corr,hmm_v3_core_plus_sector_geometry,hmm_v3_1_meta_blend,hmm_v4_path_aware_meta | horizons=1,2,3,5,10
+2026-06-13 17:10:03,464Z [INFO] Eligible replay dates: 1 | first=2026-06-12 | last=2026-06-12 | min_train_rows=1260
+2026-06-13 17:10:08,890Z [INFO] Progress 1/1 dates | as_of=2026-06-12 | predictions=6 | scores=30 | elapsed=5.4s
+2026-06-13 17:10:08,991Z [ERROR] Replay failed | as_of=2026-06-12 | model=hmm_v4_path_aware_meta | elapsed=5.5s
+Traceback (most recent call last):
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\indexes\base.py", line 3812, in get_loc
+    return self._engine.get_loc(casted_key)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "pandas/_libs/index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7088, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas/_libs/hashtable_class_helper.pxi", line 7096, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'risk_bucket_correct'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 364, in run_hmm_replay
+    path_aware_diagnostics_df, path_aware_feature_diagnostics_df = _build_path_aware_summary(
+                                                                   ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        prediction_records=prediction_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        scored_records=scored_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 136, in _build_path_aware_summary
+    wins = merged[merged["risk_bucket_correct"] == True]  # noqa: E712
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\frame.py", line 4113, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\indexes\base.py", line 3819, in get_loc
+    raise KeyError(key) from err
+KeyError: 'risk_bucket_correct'

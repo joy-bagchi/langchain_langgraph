@@ -1,0 +1,4 @@
+2026-06-13 19:17:29,220Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | start=2026-06-12 | end=2026-06-12 | as_of=2026-06-12 | models=heuristic,hmm_v1_core,hmm_v2_core_plus_sector_corr,hmm_v3_core_plus_sector_geometry,hmm_v3_1_meta_blend,hmm_v4_path_aware_meta | horizons=1,2,3,5,10
+2026-06-13 19:17:29,224Z [INFO] Eligible replay dates: 1 | first=2026-06-12 | last=2026-06-12 | min_train_rows=1260
+2026-06-13 19:17:32,629Z [INFO] Progress 1/1 dates | as_of=2026-06-12 | predictions=6 | scores=30 | elapsed=3.4s
+2026-06-13 19:17:32,695Z [INFO] Replay completed | dates=1 | predictions=6 | scores=30 | elapsed=3.5s

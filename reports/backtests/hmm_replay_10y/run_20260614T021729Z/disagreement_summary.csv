@@ -1,0 +1,6 @@
+comparison_model,horizon,total_disagreements,v3_win_rate,v3_loss_rate,tie_rate,v3_bucket_win_rate,v3_bucket_loss_rate,downgrade_count,upgrade_count,downgrade_success_rate,upgrade_success_rate,false_suppression_rate,false_alarm_filter_success_rate
+heuristic,1,1,0.0,0.0,1.0,0.0,0.0,1,0,0.0,0.0,0.0,1.0
+heuristic,2,1,0.0,0.0,1.0,0.0,0.0,1,0,0.0,0.0,0.0,1.0
+heuristic,3,1,0.0,0.0,1.0,0.0,0.0,1,0,0.0,0.0,0.0,1.0
+heuristic,5,1,0.0,0.0,1.0,0.0,0.0,1,0,0.0,0.0,0.0,1.0
+heuristic,10,1,0.0,0.0,1.0,0.0,0.0,1,0,0.0,0.0,0.0,1.0

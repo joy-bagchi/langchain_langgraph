@@ -1,0 +1,4 @@
+model_name,horizon,predicted_state,count,percent
+hmm_v4_path_aware_meta,1,STABLE_LOW_VOL_TREND,1404,1.0
+hmm_v4_path_aware_meta,2,STABLE_LOW_VOL_TREND,1403,1.0
+hmm_v4_path_aware_meta,3,STABLE_LOW_VOL_TREND,1402,1.0
