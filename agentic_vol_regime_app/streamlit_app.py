@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     resume_daily_regime_run,
     run_daily_regime_agent,
     run_hmm_replay_backtester,
+    run_overwrite_candidate_scorer,
     run_policy_backtester,
     run_ibkr_market_data_agent,
 )
@@ -62,6 +64,7 @@ DEFAULT_DAILY_LIVE_INPUT = APP_PATHS.sample_inputs_dir / "daily_snapshot_ibkr_li
 DEFAULT_IBKR_INPUT = APP_PATHS.sample_inputs_dir / "ibkr_spy_snapshot.json"
 DEFAULT_BACKTEST_CONFIG = APP_PATHS.configs_dir / "backtest" / "hmm_replay_10y_hmmv4.yaml"
 DEFAULT_POLICY_BACKTEST_CONFIG = APP_PATHS.configs_dir / "backtest" / "policy_backtest.yaml"
+DEFAULT_OVERWRITE_CANDIDATE_CSV = APP_PATHS.root / "examples" / "overwrite_candidates_sample.csv"
 CARD_LABEL_COLOR = "#facc15"
 CARD_VALUE_COLOR = "#fef3c7"
 WIDGET_BORDER_COLOR = "#facc15"
@@ -896,6 +899,16 @@ def _load_policy_backtest_config(config_path: str):
         return None
 
 
+def _write_temp_streamlit_upload(*, suffix: str, payload: bytes) -> Path:
+    temp_root = (APP_PATHS.root / ".tmp").resolve()
+    temp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix="vol_regime_streamlit_", dir=str(temp_root)))
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    path = temp_dir / f"upload{suffix}"
+    path.write_bytes(payload)
+    return path
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         result = float(value)
@@ -1039,16 +1052,17 @@ def main() -> None:
             value=str((APP_PATHS.root / ".streamlit_workflow_memory").resolve()),
         )
         database_url = st.text_input("Database URL", value="")
-        langsmith_tracing = st.checkbox("Enable LangSmith Tracing", value=False)
+        langsmith_tracing = st.checkbox("Enable LangSmith Tracing", value=True)
         langsmith_project = st.text_input("LangSmith Project", value="agentic_harness")
         st.caption("IBKR default port is 4001.")
 
-    daily_tab, historical_tab, backtester_tab, policy_backtester_tab, ibkr_tab, resume_tab = st.tabs(
+    daily_tab, historical_tab, backtester_tab, policy_backtester_tab, overwrite_tab, ibkr_tab, resume_tab = st.tabs(
         [
             "Daily Belief Report",
             "Historical Belief Reports",
             "Backtester",
             "Policy Backtest",
+            "Overwrite Scorer",
             "IBKR Snapshot Agent",
             "Resume Daily Review",
         ]
@@ -1058,6 +1072,7 @@ def main() -> None:
     state_backtester_result_key = "vol_regime_backtester_result"
     state_backtester_build_key = "vol_regime_backtester_build_result"
     state_policy_backtester_result_key = "vol_regime_policy_backtester_result"
+    state_overwrite_result_key = "vol_regime_overwrite_scorer_result"
 
     with daily_tab:
         st.subheader("Daily Volatility Regime Workflow")
@@ -2250,6 +2265,232 @@ def main() -> None:
                 policy_trades_path=str(current_policy_result.get("policy_trades_path", "")),
             )
             st.dataframe(mechanics_checks, width="stretch", hide_index=True)
+
+    with overwrite_tab:
+        st.subheader("Overwrite Candidate Scorer")
+        st.caption(
+            "Portfolio-aware daily overwrite scorer from `OVERWRITE_SCORER.md`. "
+            "This is decision support only and does not place trades."
+        )
+
+        overwrite_default_csv = DEFAULT_OVERWRITE_CANDIDATE_CSV.resolve()
+        default_hmm_payload = {
+            "asof": str(date.today()),
+            "regime_probs": {
+                "low_vol_trend": 0.10,
+                "mid_vol_chop": 0.30,
+                "vol_expansion": 0.55,
+                "crash": 0.05,
+            },
+            "selected_regime": "vol_expansion",
+        }
+        default_output_dir = (APP_PATHS.root / "outputs" / "overwrite_scorer").resolve()
+
+        overwrite_col1, overwrite_col2, overwrite_col3, overwrite_col4 = st.columns(4)
+        overwrite_underlying = overwrite_col1.text_input("Underlying", value="SPY", key="overwrite_underlying")
+        overwrite_spot = overwrite_col2.number_input("Spot", min_value=0.01, value=740.25, step=0.25, key="overwrite_spot")
+        overwrite_vix = overwrite_col3.number_input("VIX", min_value=0.01, value=16.8, step=0.1, key="overwrite_vix")
+        overwrite_contracts = overwrite_col4.number_input(
+            "LEAP Contracts",
+            min_value=1,
+            value=5,
+            step=1,
+            key="overwrite_leap_contracts",
+        )
+
+        overwrite_col5, overwrite_col6, overwrite_col7, overwrite_col8 = st.columns(4)
+        overwrite_leap_delta = overwrite_col5.number_input(
+            "LEAP Delta",
+            min_value=0.01,
+            max_value=1.0,
+            value=0.80,
+            step=0.01,
+            key="overwrite_leap_delta",
+        )
+        overwrite_drag_penalty = overwrite_col6.number_input(
+            "Upside Drag Penalty",
+            min_value=0.0,
+            value=0.35,
+            step=0.05,
+            key="overwrite_drag_penalty",
+        )
+        overwrite_min_premium = overwrite_col7.number_input(
+            "Min Premium",
+            min_value=0.0,
+            value=1.40,
+            step=0.05,
+            key="overwrite_min_premium",
+        )
+        overwrite_max_spread = overwrite_col8.number_input(
+            "Max Spread Pct",
+            min_value=0.0,
+            value=0.25,
+            step=0.01,
+            key="overwrite_max_spread",
+        )
+        overwrite_allow_crash = st.checkbox(
+            "Allow crash-regime overwrite",
+            value=False,
+            key="overwrite_allow_crash",
+        )
+
+        candidate_source = st.radio(
+            "Candidate Source",
+            options=["Path", "Upload"],
+            horizontal=True,
+            key="overwrite_candidate_source",
+        )
+        if candidate_source == "Path":
+            overwrite_candidate_csv_path = st.text_input(
+                "Candidate CSV Path",
+                value=str(overwrite_default_csv),
+                key="overwrite_candidate_csv_path",
+            )
+            overwrite_candidate_upload = None
+        else:
+            overwrite_candidate_upload = st.file_uploader(
+                "Candidate CSV Upload",
+                type=["csv"],
+                key="overwrite_candidate_upload",
+            )
+            overwrite_candidate_csv_path = ""
+
+        hmm_source = st.radio(
+            "HMM Context",
+            options=["None", "Paste JSON", "Path", "Upload"],
+            horizontal=True,
+            key="overwrite_hmm_source",
+        )
+        overwrite_hmm_text = ""
+        overwrite_hmm_path = ""
+        overwrite_hmm_upload = None
+        if hmm_source == "Paste JSON":
+            overwrite_hmm_text = st.text_area(
+                "HMM JSON",
+                value=_pretty_json(default_hmm_payload),
+                height=220,
+                key="overwrite_hmm_text",
+            )
+        elif hmm_source == "Path":
+            overwrite_hmm_path = st.text_input(
+                "HMM JSON Path",
+                value="",
+                key="overwrite_hmm_path",
+            )
+        elif hmm_source == "Upload":
+            overwrite_hmm_upload = st.file_uploader(
+                "HMM JSON Upload",
+                type=["json"],
+                key="overwrite_hmm_upload",
+            )
+
+        overwrite_output_dir = st.text_input(
+            "Output Directory",
+            value=str(default_output_dir),
+            key="overwrite_output_dir",
+        )
+
+        if st.button("Run Overwrite Scorer", type="primary", key="run_overwrite_scorer_button"):
+            candidate_csv_path_value: Path | None = None
+            hmm_json_path_value: Path | None = None
+            try:
+                if candidate_source == "Path":
+                    candidate_csv_path_value = Path(overwrite_candidate_csv_path.strip()).resolve()
+                elif overwrite_candidate_upload is not None:
+                    candidate_csv_path_value = _write_temp_streamlit_upload(
+                        suffix=".csv",
+                        payload=overwrite_candidate_upload.getvalue(),
+                    )
+                if candidate_csv_path_value is None:
+                    raise ValueError("Provide a candidate CSV path or upload before running the scorer.")
+
+                if hmm_source == "Paste JSON":
+                    parsed_hmm = _parse_json_text(overwrite_hmm_text, fallback=default_hmm_payload)
+                    hmm_json_path_value = _write_temp_streamlit_upload(
+                        suffix=".json",
+                        payload=_pretty_json(parsed_hmm).encode("utf-8"),
+                    )
+                elif hmm_source == "Path" and overwrite_hmm_path.strip():
+                    hmm_json_path_value = Path(overwrite_hmm_path.strip()).resolve()
+                elif hmm_source == "Upload" and overwrite_hmm_upload is not None:
+                    hmm_json_path_value = _write_temp_streamlit_upload(
+                        suffix=".json",
+                        payload=overwrite_hmm_upload.getvalue(),
+                    )
+
+                overwrite_result = run_overwrite_candidate_scorer(
+                    underlying=overwrite_underlying.strip() or "SPY",
+                    spot=float(overwrite_spot),
+                    vix=float(overwrite_vix),
+                    leap_contracts=int(overwrite_contracts),
+                    leap_delta=float(overwrite_leap_delta),
+                    candidate_csv=str(candidate_csv_path_value),
+                    hmm_json=str(hmm_json_path_value) if hmm_json_path_value is not None else None,
+                    output_dir=overwrite_output_dir.strip() or str(default_output_dir),
+                    upside_drag_penalty=float(overwrite_drag_penalty),
+                    min_premium=float(overwrite_min_premium),
+                    max_spread_pct=float(overwrite_max_spread),
+                    allow_crash_overwrite=bool(overwrite_allow_crash),
+                    langsmith_tracing=langsmith_tracing,
+                    langsmith_project=langsmith_project or None,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[state_overwrite_result_key] = dict(overwrite_result)
+
+        current_overwrite_result = st.session_state.get(state_overwrite_result_key)
+        if isinstance(current_overwrite_result, dict):
+            st.subheader("Scorer Summary")
+            overwrite_s1, overwrite_s2, overwrite_s3, overwrite_s4 = st.columns(4)
+            _render_summary_card(
+                overwrite_s1,
+                label="Recommendation Mode",
+                value=str(current_overwrite_result.get("recommendation_mode", "n/a")),
+            )
+            _render_summary_card(
+                overwrite_s2,
+                label="Accepted",
+                value=str(current_overwrite_result.get("accepted_count", 0)),
+            )
+            _render_summary_card(
+                overwrite_s3,
+                label="Rejected",
+                value=str(current_overwrite_result.get("rejected_count", 0)),
+            )
+            _render_summary_card(
+                overwrite_s4,
+                label="Crash Gate",
+                value="Blocked" if bool(current_overwrite_result.get("block_new_overwrites")) else "Open",
+            )
+
+            st.caption(f"Candidate CSV: `{current_overwrite_result.get('candidate_csv', '')}`")
+            if current_overwrite_result.get("hmm_json"):
+                st.caption(f"HMM JSON: `{current_overwrite_result.get('hmm_json', '')}`")
+            st.caption(f"Output Directory: `{current_overwrite_result.get('output_dir', '')}`")
+            st.caption(f"Scored CSV: `{current_overwrite_result.get('scored_candidates_path', '')}`")
+            st.caption(f"Scenario CSV: `{current_overwrite_result.get('scenario_pnl_path', '')}`")
+            st.caption(f"Report: `{current_overwrite_result.get('report_path', '')}`")
+
+            overwrite_hmm_context = current_overwrite_result.get("hmm_context")
+            if isinstance(overwrite_hmm_context, dict):
+                with st.expander("HMM Context Used", expanded=False):
+                    st.code(_pretty_json(overwrite_hmm_context), language="json")
+
+            top_accepted = list(current_overwrite_result.get("top_accepted_candidates", []))
+            if top_accepted:
+                st.subheader("Top Accepted Candidates")
+                st.dataframe(pd.DataFrame(top_accepted), width="stretch", hide_index=True)
+
+            top_rejected = list(current_overwrite_result.get("top_rejected_candidates", []))
+            if top_rejected:
+                st.subheader("Top Rejected Candidates")
+                st.dataframe(pd.DataFrame(top_rejected), width="stretch", hide_index=True)
+
+            scenario_preview = list(current_overwrite_result.get("scenario_table_preview", []))
+            if scenario_preview:
+                st.subheader("Scenario PnL Preview")
+                st.dataframe(pd.DataFrame(scenario_preview), width="stretch", hide_index=True)
 
     with ibkr_tab:
         st.subheader("Live IBKR Market Data Agent")

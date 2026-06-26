@@ -4,6 +4,6 @@ from ._bootstrap import ensure_repo_imports
 
 ensure_repo_imports()
 
-from .app_runtime import fetch_ibkr_account_snapshot
+from .app_runtime import fetch_ibkr_account_snapshot, fetch_ibkr_option_chain
 
-__all__ = ["fetch_ibkr_account_snapshot"]
+__all__ = ["fetch_ibkr_account_snapshot", "fetch_ibkr_option_chain"]

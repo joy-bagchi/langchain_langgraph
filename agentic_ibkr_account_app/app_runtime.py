@@ -15,6 +15,8 @@ from agentic_ibkr_account_app.data.ibkr_account_client import (
     IBKRAccountConnectionConfig,
     IBKRAccountDataPipe,
     IBKRAccountSnapshotRequest,
+    _ensure_thread_event_loop,
+    _patch_ib_insync_get_loop,
 )
 
 
@@ -68,3 +70,43 @@ def fetch_ibkr_account_snapshot(
         if hasattr(app_span, "end"):
             app_span.end(outputs=result)
     return result
+
+
+def fetch_ibkr_option_chain(
+    *,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    _ensure_thread_event_loop()
+    _patch_ib_insync_get_loop()
+
+    from agentic_vol_regime_app.data.ibkr_client import (
+        IBKRConnectionConfig,
+        IBKRDataPipe,
+        IBKROptionChainRequest,
+    )
+
+    pipe = IBKRDataPipe(
+        connection=IBKRConnectionConfig(
+            host=str(input_payload.get("host", "127.0.0.1")),
+            port=int(input_payload.get("port", 4001)),
+            client_id=int(input_payload.get("client_id", 91)),
+            readonly=bool(input_payload.get("readonly", True)),
+            timeout_seconds=float(input_payload.get("timeout_seconds", 10.0)),
+            market_data_type=int(input_payload.get("market_data_type", 1)),
+        )
+    )
+    observation = pipe.fetch_market_snapshot(
+        IBKROptionChainRequest(
+            symbol=str(input_payload.get("symbol", "SPY")),
+            exchange=str(input_payload.get("exchange", "SMART")),
+            currency=str(input_payload.get("currency", "USD")),
+            option_exchange=str(input_payload.get("option_exchange", "SMART")),
+            rights=("C", "P"),
+            expiry_count=int(input_payload.get("expiry_count", 6)),
+            strike_count=int(input_payload.get("strike_count", 25)),
+            expirations=tuple(str(item) for item in input_payload.get("expirations", [])),
+            strikes=tuple(float(item) for item in input_payload.get("strikes", [])),
+            min_days_to_expiry=int(input_payload.get("min_days_to_expiry", 0)),
+        )
+    )
+    return observation.to_dict() if hasattr(observation, "to_dict") else dict(observation)

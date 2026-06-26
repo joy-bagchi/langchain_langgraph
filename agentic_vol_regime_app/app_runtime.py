@@ -930,6 +930,129 @@ def run_policy_backtester(
     return result
 
 
+def run_overwrite_candidate_scorer(
+    *,
+    underlying: str,
+    spot: float,
+    vix: float,
+    leap_contracts: int,
+    leap_delta: float,
+    candidate_csv: str | Path,
+    output_dir: str | Path,
+    hmm_json: str | Path | None = None,
+    upside_drag_penalty: float = 0.35,
+    min_premium: float = 1.40,
+    max_spread_pct: float = 0.25,
+    allow_crash_overwrite: bool = False,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+) -> dict[str, Any]:
+    from agentic_vol_regime_app.overwrite_candidate_scorer import (
+        ScorerConfig,
+        load_candidates,
+        load_hmm_context,
+        score_candidates,
+        write_outputs,
+    )
+
+    resolved_candidate_csv = Path(candidate_csv).resolve()
+    resolved_output_dir = Path(output_dir).resolve()
+    resolved_hmm_json = Path(hmm_json).resolve() if hmm_json is not None else None
+    config = ScorerConfig(
+        underlying=str(underlying).strip().upper(),
+        spot=float(spot),
+        vix=float(vix),
+        leap_contracts=int(leap_contracts),
+        leap_delta=float(leap_delta),
+        upside_drag_penalty=float(upside_drag_penalty),
+        min_premium=float(min_premium),
+        max_spread_pct=float(max_spread_pct),
+        allow_crash_overwrite=bool(allow_crash_overwrite),
+    )
+
+    services = build_platform_services(
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+    )
+    with services.observability.trace_span(
+        "agentic_vol_regime_app:run_overwrite_candidate_scorer",
+        run_type="chain",
+        inputs={
+            "underlying": config.underlying,
+            "spot": config.spot,
+            "vix": config.vix,
+            "leap_contracts": config.leap_contracts,
+            "leap_delta": config.leap_delta,
+            "candidate_csv": str(resolved_candidate_csv),
+            "hmm_json": str(resolved_hmm_json) if resolved_hmm_json is not None else "",
+            "output_dir": str(resolved_output_dir),
+            "upside_drag_penalty": config.upside_drag_penalty,
+            "min_premium": config.min_premium,
+            "max_spread_pct": config.max_spread_pct,
+            "allow_crash_overwrite": config.allow_crash_overwrite,
+        },
+        tags=["agentic_vol_regime_app", "overwrite_candidate_scorer"],
+        metadata={"application": "agentic_vol_regime_app"},
+    ) as app_span:
+        candidates = load_candidates(resolved_candidate_csv)
+        hmm_context = load_hmm_context(resolved_hmm_json)
+        scored_candidates, scenario_table, decision_policy = score_candidates(
+            candidates,
+            config=config,
+            hmm_context=hmm_context,
+        )
+        outputs = write_outputs(
+            output_dir=resolved_output_dir,
+            config=config,
+            hmm_context=hmm_context,
+            decision_policy=decision_policy,
+            scored_candidates=scored_candidates,
+            scenario_table=scenario_table,
+        )
+        accepted = scored_candidates[scored_candidates["decision"] == "ACCEPT"].copy()
+        rejected = scored_candidates[scored_candidates["decision"] == "REJECT"].copy()
+        result = {
+            "underlying": config.underlying,
+            "spot": config.spot,
+            "vix": config.vix,
+            "leap_contracts": config.leap_contracts,
+            "leap_delta": config.leap_delta,
+            "candidate_csv": str(resolved_candidate_csv),
+            "hmm_json": str(resolved_hmm_json) if resolved_hmm_json is not None else "",
+            "output_dir": str(resolved_output_dir),
+            "recommendation_mode": decision_policy.recommendation_mode,
+            "block_new_overwrites": decision_policy.block_new_overwrites,
+            "min_premium_effective": decision_policy.min_premium,
+            "min_distance_sigma_effective": decision_policy.min_distance_sigma,
+            "scored_candidates_path": outputs["scored_candidates_csv"],
+            "scenario_pnl_path": outputs["scenario_pnl_csv"],
+            "report_path": outputs["report_md"],
+            "accepted_count": int(len(accepted)),
+            "rejected_count": int(len(rejected)),
+            "top_accepted_candidates": accepted.head(10).to_dict(orient="records"),
+            "top_rejected_candidates": rejected.head(10).to_dict(orient="records"),
+            "scenario_table_preview": scenario_table.head(50).to_dict(orient="records"),
+            "hmm_context": (
+                {
+                    "asof": hmm_context.asof,
+                    "selected_regime": hmm_context.selected_regime,
+                    "regime_probs": dict(hmm_context.regime_probs),
+                }
+                if hmm_context is not None
+                else None
+            ),
+        }
+        if hasattr(app_span, "end"):
+            app_span.end(outputs=_trace_safe_payload(result))
+    return result
+
+
 def build_backtest_feature_store(
     *,
     config_path: str | Path,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,6 +30,35 @@ _IBKR_UNSET_INT = 2147483647
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_thread_event_loop() -> asyncio.AbstractEventLoop:
+    """Create a thread-local asyncio loop when the caller thread lacks one."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+    policy = asyncio.get_event_loop_policy()
+    try:
+        return policy.get_event_loop()
+    except RuntimeError:
+        loop = policy.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
+def _patch_ib_insync_get_loop() -> None:
+    """Patch ib_insync to create an event loop on Streamlit worker threads."""
+    try:
+        import ib_insync.util as ib_util
+    except ImportError:
+        return
+
+    def _safe_get_loop():
+        return _ensure_thread_event_loop()
+
+    ib_util.getLoop = _safe_get_loop
 
 
 def _safe_float(value: Any) -> float | None:
@@ -138,6 +168,9 @@ class IBKRAccountLiveClient:
         self.connection = connection
 
     def fetch_account_snapshot(self, request: IBKRAccountSnapshotRequest) -> dict[str, Any]:
+        _ensure_thread_event_loop()
+        _patch_ib_insync_get_loop()
+
         from ib_insync import IB
 
         ib = IB()

@@ -19,7 +19,7 @@ def _ensure_streamlit_imports() -> None:
 
 _ensure_streamlit_imports()
 
-from agentic_ibkr_account_app.app_runtime import fetch_ibkr_account_snapshot  # noqa: E402
+from agentic_ibkr_account_app.app_runtime import fetch_ibkr_account_snapshot, fetch_ibkr_option_chain  # noqa: E402
 
 
 def _load_streamlit():
@@ -115,6 +115,69 @@ def _frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame(rows)
+
+
+def _option_chain_symbols(snapshot: dict[str, Any]) -> list[str]:
+    positions = list(snapshot.get("positions", []))
+    symbols: list[str] = []
+    for row in positions:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        sec_type = str(row.get("sec_type", "")).strip().upper()
+        if symbol and sec_type in {"STK", "ETF", ""} and symbol not in symbols:
+            symbols.append(symbol)
+    if "SPY" not in symbols:
+        symbols.insert(0, "SPY")
+    return symbols or ["SPY"]
+
+
+def _build_option_chain_view(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    option_chain = dict(snapshot.get("option_chain", {}))
+    quotes = list(option_chain.get("option_quotes", []))
+    grouped: dict[str, dict[tuple[float, str], dict[str, Any]]] = {}
+    for quote in quotes:
+        expiry = str(quote.get("expiry", "")).strip()
+        strike = float(quote.get("strike", 0.0) or 0.0)
+        right = str(quote.get("right", "")).strip().upper()
+        grouped.setdefault(expiry, {})[(strike, right)] = quote
+
+    rendered: dict[str, list[dict[str, Any]]] = {}
+    for expiry, by_key in grouped.items():
+        strikes = sorted({strike for strike, _ in by_key.keys()})
+        rows: list[dict[str, Any]] = []
+        for strike in strikes:
+            call = by_key.get((strike, "C"), {})
+            put = by_key.get((strike, "P"), {})
+            call_greeks = dict(call.get("greeks", {}))
+            put_greeks = dict(put.get("greeks", {}))
+            rows.append(
+                {
+                    "Call Bid": call.get("bid"),
+                    "Call Ask": call.get("ask"),
+                    "Call Last": call.get("last"),
+                    "Call Delta": call_greeks.get("delta"),
+                    "Call Gamma": call_greeks.get("gamma"),
+                    "Call Theta": call_greeks.get("theta"),
+                    "Call IV%": (
+                        round(float(call_greeks.get("implied_vol", 0.0)) * 100.0, 2)
+                        if call_greeks.get("implied_vol") is not None
+                        else None
+                    ),
+                    "Strike": strike,
+                    "Put Bid": put.get("bid"),
+                    "Put Ask": put.get("ask"),
+                    "Put Last": put.get("last"),
+                    "Put Delta": put_greeks.get("delta"),
+                    "Put Gamma": put_greeks.get("gamma"),
+                    "Put Theta": put_greeks.get("theta"),
+                    "Put IV%": (
+                        round(float(put_greeks.get("implied_vol", 0.0)) * 100.0, 2)
+                        if put_greeks.get("implied_vol") is not None
+                        else None
+                    ),
+                }
+            )
+        rendered[expiry] = rows
+    return rendered
 
 
 def _render_dashboard(st, snapshot: dict[str, Any]) -> None:
@@ -240,8 +303,8 @@ def main() -> None:
         + f" | Managed Accounts: {', '.join(snapshot.get('managed_accounts', [])) or 'n/a'}"
     )
 
-    dashboard_tab, positions_tab, trades_tab, transactions_tab, orders_tab, raw_tab = st.tabs(
-        ["Dashboard", "Positions", "Trades", "Transactions", "Orders", "Raw"]
+    dashboard_tab, positions_tab, trades_tab, transactions_tab, orders_tab, option_chain_tab, raw_tab = st.tabs(
+        ["Dashboard", "Positions", "Trades", "Transactions", "Orders", "Option Chain", "Raw"]
     )
 
     with dashboard_tab:
@@ -278,6 +341,81 @@ def main() -> None:
             st.info("No order rows returned.")
         else:
             st.dataframe(orders_df, width="stretch", hide_index=True)
+
+    with option_chain_tab:
+        st.subheader("Option Chain")
+        available_symbols = _option_chain_symbols(snapshot)
+        oc_col1, oc_col2, oc_col3, oc_col4 = st.columns(4)
+        option_symbol = oc_col1.selectbox("Underlying", options=available_symbols, index=0, key="option_chain_symbol")
+        option_strike_count = oc_col2.number_input(
+            "Total Strikes",
+            min_value=5,
+            max_value=100,
+            value=50,
+            step=5,
+            key="option_chain_strike_count",
+        )
+        option_expiry_count = oc_col3.number_input(
+            "Expiry Count",
+            min_value=1,
+            max_value=12,
+            value=6,
+            step=1,
+            key="option_chain_expiry_count",
+        )
+        option_market_data_type = oc_col4.number_input(
+            "Market Data Type",
+            min_value=1,
+            max_value=4,
+            value=1,
+            step=1,
+            key="option_chain_market_data_type",
+        )
+
+        if st.button("Load Option Chain", type="primary", key="load_option_chain_button"):
+            chain_payload = {
+                "host": host.strip() or "127.0.0.1",
+                "port": int(port),
+                "client_id": int(client_id) + 1000,
+                "readonly": bool(readonly),
+                "symbol": str(option_symbol).strip().upper() or "SPY",
+                "exchange": "SMART",
+                "option_exchange": "SMART",
+                "currency": "USD",
+                "expiry_count": int(option_expiry_count),
+                "strike_count": int(option_strike_count),
+                "market_data_type": int(option_market_data_type),
+                "min_days_to_expiry": 0,
+            }
+            try:
+                st.session_state["agentic_ibkr_option_chain_snapshot"] = fetch_ibkr_option_chain(
+                    input_payload=chain_payload
+                )
+            except Exception as exc:
+                st.error(str(exc))
+
+        option_snapshot = st.session_state.get("agentic_ibkr_option_chain_snapshot")
+        if isinstance(option_snapshot, dict):
+            option_chain = dict(option_snapshot.get("option_chain", {}))
+            underlying_price = option_chain.get("underlying_price")
+            st.caption(
+                f"Underlying `{option_chain.get('underlying_symbol', '')}`"
+                + f" | Price `{_format_metric_value(underlying_price)}`"
+                + f" | Expiries loaded: {len(option_chain.get('expirations', []))}"
+                + f" | Total strikes requested: {int(option_strike_count)}"
+            )
+            expiry_views = _build_option_chain_view(option_snapshot)
+            if not expiry_views:
+                st.info("No option chain rows returned.")
+            else:
+                expiry_tabs = st.tabs(list(expiry_views.keys()))
+                for expiry, expiry_tab in zip(expiry_views.keys(), expiry_tabs):
+                    with expiry_tab:
+                        expiry_df = _frame(expiry_views[expiry])
+                        if expiry_df.empty:
+                            st.info("No rows returned for this expiry.")
+                        else:
+                            st.dataframe(expiry_df, width="stretch", hide_index=True)
 
     with raw_tab:
         st.subheader("Raw Snapshot")
