@@ -1,0 +1,6 @@
+model_name,leap_contribution,overwrite_contribution,number_of_short_calls_sold,number_of_profit_exits,number_of_loss_exits,number_of_touch_exits,average_short_call_pnl,worst_short_call_loss,worst_leap_drawdown
+always_overwrite_baseline,22552.93,-48918.76,619,67,10,179,-4.61,-4431.19,-8498.46
+heuristic_policy,24938.97,-19310.84,267,50,4,63,8.8,-4431.19,-6227.15
+hmm_v3_1_meta_blend,20511.54,-50094.02,627,65,11,180,-3.64,-4431.19,-3487.62
+hmm_v4_path_aware_meta,22552.93,-48918.76,619,67,10,179,-4.61,-4431.19,-8498.46
+no_overwrite_baseline,22552.93,0.0,0,0,0,0,0.0,0.0,-8498.46

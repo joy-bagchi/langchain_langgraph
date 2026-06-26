@@ -1,0 +1,13 @@
+2026-06-13 17:43:04,111Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | start=2016-03-29 | end=2026-06-12 | as_of=None | models=heuristic,hmm_v1_core,hmm_v2_core_plus_sector_corr,hmm_v3_core_plus_sector_geometry,hmm_v3_1_meta_blend,hmm_v4_path_aware_meta | horizons=1,2,3
+2026-06-13 17:43:04,126Z [INFO] Eligible replay dates: 1405 | first=2021-01-25 | last=2026-06-12 | min_train_rows=1260
+2026-06-13 17:45:03,448Z [INFO] Progress 25/1405 dates | as_of=2021-02-26 | predictions=150 | scores=450 | elapsed=119.3s
+2026-06-13 17:47:15,600Z [INFO] Progress 50/1405 dates | as_of=2021-04-02 | predictions=300 | scores=900 | elapsed=251.5s
+2026-06-13 17:48:06,773Z [INFO] Progress 75/1405 dates | as_of=2021-05-07 | predictions=450 | scores=1350 | elapsed=302.7s
+2026-06-13 17:48:49,009Z [INFO] Progress 100/1405 dates | as_of=2021-06-11 | predictions=600 | scores=1800 | elapsed=344.9s
+2026-06-13 17:49:31,422Z [INFO] Progress 125/1405 dates | as_of=2021-07-16 | predictions=750 | scores=2250 | elapsed=387.3s
+2026-06-13 17:50:15,303Z [INFO] Progress 150/1405 dates | as_of=2021-08-20 | predictions=900 | scores=2700 | elapsed=431.2s
+2026-06-13 17:50:59,593Z [INFO] Progress 175/1405 dates | as_of=2021-09-24 | predictions=1050 | scores=3150 | elapsed=475.5s
+2026-06-13 17:51:45,734Z [INFO] Progress 200/1405 dates | as_of=2021-10-29 | predictions=1200 | scores=3600 | elapsed=521.6s
+2026-06-13 17:52:33,960Z [INFO] Progress 225/1405 dates | as_of=2021-12-03 | predictions=1350 | scores=4050 | elapsed=569.8s
+2026-06-13 17:53:33,336Z [INFO] Progress 250/1405 dates | as_of=2022-01-07 | predictions=1500 | scores=4500 | elapsed=629.2s
+2026-06-13 17:54:22,074Z [INFO] Progress 275/1405 dates | as_of=2022-02-11 | predictions=1650 | scores=4950 | elapsed=678.0s

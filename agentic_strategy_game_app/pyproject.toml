@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-strategy-game-app"
+version = "0.1.0"
+description = "Agentic business strategy game app built on top of agentic_harness."
+requires-python = ">=3.10"
+dependencies = ["agentic-harness"]
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.45.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

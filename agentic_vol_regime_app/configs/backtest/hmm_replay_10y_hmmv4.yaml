@@ -1,0 +1,23 @@
+start_date: "2016-01-01"
+end_date: "latest"
+train_lookback_days: 2520
+min_train_rows: 1260
+horizons: [1, 2, 3, 5, 10]
+models:
+  - heuristic
+  - hmm_v1_core
+  - hmm_v2_core_plus_sector_corr
+  - hmm_v3_core_plus_sector_geometry
+  - hmm_v3_1_meta_blend
+  - hmm_v4_path_aware_meta
+retrain_each_date: true
+covariance_type: diag
+n_components: 4
+random_state: 42
+output_dir: reports/backtests/hmm_replay_10y/
+artifact_dir: data/backtests/hmm_replay_10y/
+feature_store_path: agentic_vol_regime_app/data/processed/features_daily.parquet
+freeze_policy_outputs: true
+allow_partial_backtest: false
+allow_silent_date_fallback: false
+require_10y_replay: true

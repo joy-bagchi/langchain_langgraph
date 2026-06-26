@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 377, in run_hmm_replay
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: 10-year HMMv4 replay failed because fallback usage stayed above the allowed limit. fallback_rate=1.0000, limit=0.1000.

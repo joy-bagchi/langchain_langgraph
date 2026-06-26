@@ -1,0 +1,17 @@
+agent_id: daily_regime_hmm_v3_1_meta_blend_orchestrator
+name: Daily Regime HMMv3.1 Meta-Blend Orchestrator
+role: volatility_regime_hmm_v3_1_meta_blend_orchestrator
+workflow_path: ../workflows/daily_belief_report.md
+llm_provider: none
+memory_service_type: semantic
+runtime_profile: durable_research
+memory_namespace: daily_regime_hmm_v3_1_memory
+allowed_tools:
+  - ibkr_data_pipeline
+domain: volatility_regime
+belief_engine: hmm_gaussian_v3_1
+guardrails:
+  post:
+    block_patterns:
+      - "(?i)execute live trade"
+      - "(?i)place live trade"

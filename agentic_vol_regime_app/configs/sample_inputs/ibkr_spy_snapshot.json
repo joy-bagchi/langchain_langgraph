@@ -1,0 +1,13 @@
+{
+  "symbol": "SPY",
+  "host": "127.0.0.1",
+  "port": 4001,
+  "client_id": 73,
+  "market_data_type": 1,
+  "exchange": "SMART",
+  "option_exchange": "SMART",
+  "currency": "USD",
+  "expiry_count": 2,
+  "strike_count": 8,
+  "min_days_to_expiry": 0
+}

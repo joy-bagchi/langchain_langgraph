@@ -1,0 +1,6 @@
+{"event": "memory_written", "namespace": "semantic_pgvector_test", "record_id": "2b687c48-a03c-4044-bc69-eb8032fd05e5", "timestamp": "2026-06-02T03:22:21.835286+00:00"}
+{"event": "memory_written", "namespace": "semantic_pgvector_test", "record_id": "0729d7ac-b127-4b29-92cf-771cae3fb0fd", "timestamp": "2026-06-02T03:22:21.929598+00:00"}
+{"event": "memory_written", "namespace": "semantic_pgvector_test", "record_id": "2b687c48-a03c-4044-bc69-eb8032fd05e5", "timestamp": "2026-06-02T03:22:31.540703+00:00"}
+{"event": "memory_written", "namespace": "semantic_pgvector_test", "record_id": "0729d7ac-b127-4b29-92cf-771cae3fb0fd", "timestamp": "2026-06-02T03:22:31.637994+00:00"}
+{"event": "memory_written", "namespace": "semantic_pgvector_test", "record_id": "2b687c48-a03c-4044-bc69-eb8032fd05e5", "timestamp": "2026-06-02T03:22:41.736009+00:00"}
+{"event": "memory_written", "namespace": "semantic_pgvector_test", "record_id": "0729d7ac-b127-4b29-92cf-771cae3fb0fd", "timestamp": "2026-06-02T03:22:41.826019+00:00"}

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-ibkr-account-app"
+version = "0.1.0"
+description = "IBKR account dashboard application built on agentic_harness."
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0", "agentic-harness"]
+
+[project.optional-dependencies]
+ibkr = ["ib-insync>=0.9.86"]
+ui = ["streamlit>=1.45.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

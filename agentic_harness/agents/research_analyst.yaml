@@ -1,0 +1,9 @@
+agent_id: research_analyst
+name: Research Analyst
+role: research_analyst
+workflow_path: ../examples/workflows/research_brief.md
+llm_provider: none
+memory_service_type: semantic
+runtime_profile: durable_research
+allowed_tools:
+  - web_search

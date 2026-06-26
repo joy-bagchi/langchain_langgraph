@@ -1,0 +1,562 @@
+POLICY_BACKTESTER_SLICE_1: Economic Backtester for LEAP + Short Call Overwrite
+
+Goal:
+Move backtester from “regime prediction metrics” to “portfolio decision impact metrics.”
+
+We are no longer only asking:
+- Did the model predict the correct regime?
+
+We are asking:
+- If I followed this model’s recommendation, how much money would I make or lose?
+- Did it protect the LEAP during danger?
+- Did it avoid bad overwrites during smooth sailing?
+- Did it recommend useful strike / DTE / exit targets?
+
+Portfolio:
+- Long SPY LEAP proxy
+- Short SPY call overwrite
+- Daily decision loop
+
+Core Strategy Decisions:
+1. LEAP delta exposure:
+   - full exposure
+   - partial reduction
+   - defensive reduction
+   - cash / no long delta
+
+2. Overwrite decision:
+   - no overwrite
+   - conservative overwrite
+   - normal overwrite
+   - aggressive overwrite
+
+3. If overwrite:
+   - target premium
+   - selected strike
+   - DTE
+   - profit exit target
+   - loss exit target
+   - roll-down rule
+   - roll-up / stop-loss rule
+
+User baseline heuristic:
+Use this as baseline policy.
+
+Expected move:
+daily_vol_pct = VIX / sqrt(252)
+upside_move_pct = daily_vol_pct / 2
+candidate_short_call_strike =
+  SPY_close * (1 + upside_move_pct)
+
+Example:
+SPY = 700
+VIX = 16
+daily_vol_pct ≈ 1.0%
+upside_move_pct ≈ 0.5%
+candidate strike ≈ 703.5
+choose nearest listed strike around 703 / 704
+
+Premium targets:
+- VIX 16-20: target premium approx 1.20 to 1.50
+- VIX 20-30: target premium approx 1.50 to 1.80
+- VIX > 30: target premium approx 2.00 to 3.00
+
+Important:
+The user does NOT necessarily move further OTM in high VIX.
+Higher VIX often means the same strike distance pays more premium.
+Policy should target compensation and expected move, not blindly target delta.
+
+Create:
+- src/backtest/policy/policy_backtester.py
+- src/backtest/policy/overwrite_policy.py
+- src/backtest/policy/leap_policy.py
+- src/backtest/policy/option_pricing_proxy.py
+- src/backtest/policy/economic_metrics.py
+- tests/test_policy_backtester.py
+- tests/test_overwrite_policy.py
+- tests/test_economic_metrics.py
+
+PolicyBacktesterV1 assumptions:
+Use simple daily EOD simulation first.
+
+Do not require historical option chains yet.
+
+Use option pricing proxy:
+- Black-Scholes approximation is acceptable for V1.
+- Inputs:
+  - SPY close
+  - strike
+  - DTE
+  - VIX-derived IV
+  - risk-free rate default 0
+  - dividend yield default 0
+- For short calls, calculate estimated entry premium and mark-to-market value each day.
+
+Entry:
+On each decision date:
+- model produces recommendation
+- if recommendation says overwrite:
+  - sell call at selected strike / DTE
+  - receive estimated premium
+- if recommendation says no overwrite:
+  - hold LEAP only
+
+Exit logic:
+For open short call, check each day until exit or expiration.
+
+Profit exit:
+- buy back when option value <= entry_premium * profit_exit_pct
+- default profit_exit_pct = 0.20
+  meaning 80% premium captured
+
+Loss exit:
+- buy back when option value >= entry_premium * loss_exit_multiple
+- default loss_exit_multiple = 2.0
+
+Underlying touch exit:
+- optional
+- if SPY_close >= short_call_strike, close short call
+- config flag:
+  exit_on_underlying_touch: true/false
+
+Downside roll rule:
+If SPY drops and short call has captured profit:
+- close short call
+- allow next day re-entry using latest model recommendation
+- this models user behavior:
+  “If SPY crashes, take profit on short call and roll down to new recommended strike.”
+
+Expiration:
+If option expires:
+- short call PnL = entry premium - intrinsic value at expiration
+- intrinsic = max(SPY_close - strike, 0)
+
+LEAP proxy:
+V1 can use simplified delta proxy.
+
+Config:
+leap_enabled: true
+leap_contracts: 1
+leap_delta: 0.75 default
+leap_multiplier: 100
+
+Daily LEAP PnL:
+leap_pnl_t =
+  leap_delta * 100 * (SPY_close_t - SPY_close_t_minus_1)
+
+LEAP exposure adjustment:
+Model recommendation should include:
+- leap_exposure_pct
+
+Examples:
+- smooth_sailing: 1.00
+- neutral: 0.75
+- caution: 0.50
+- brace_for_impact: 0.25
+- tsunami: 0.00
+
+If exposure changes:
+- record realized LEAP PnL up to that date
+- apply new exposure from next day
+
+Model recommendation schema:
+For each as_of_date and model:
+
+{
+  "model_name": "...",
+  "as_of_date": "...",
+  "predicted_regime": "...",
+  "brace_for_impact_score": 0.0-1.0,
+  "leap_exposure_pct": 0.0-1.0,
+  "overwrite_action": "none|conservative|normal|aggressive",
+  "target_premium_low": float,
+  "target_premium_high": float,
+  "target_premium_mid": float,
+  "recommended_dte": int,
+  "expected_upside_move_pct": float,
+  "candidate_strike": float,
+  "selected_strike": float,
+  "profit_exit_pct": float,
+  "loss_exit_multiple": float,
+  "exit_on_underlying_touch": bool
+}
+
+Baseline policies to implement:
+1. always_overwrite_baseline
+   - always sell 1DTE call using user expected-move/premium heuristic
+
+2. no_overwrite_baseline
+   - hold LEAP only
+
+3. heuristic_policy
+   - current user heuristic:
+     - VIX expected-move strike selection
+     - premium target by VIX bucket
+     - skip overwrite if model / heuristic says smooth sailing
+
+4. model_policy
+   - use each model’s regime and brace score to select:
+     - no overwrite / conservative / normal / aggressive
+     - target premium
+     - LEAP exposure
+
+Initial mapping:
+If brace_for_impact_score < 0.30:
+  leap_exposure_pct = 1.00
+  overwrite_action = none or conservative
+
+If 0.30 <= brace < 0.55:
+  leap_exposure_pct = 0.75
+  overwrite_action = normal
+
+If 0.55 <= brace < 0.75:
+  leap_exposure_pct = 0.50
+  overwrite_action = aggressive
+
+If brace >= 0.75:
+  leap_exposure_pct = 0.25
+  overwrite_action = aggressive
+
+If brace >= 0.90:
+  leap_exposure_pct = 0.00
+  overwrite_action = aggressive
+
+Overwrite premium mapping:
+conservative:
+  target lower end of premium range
+normal:
+  target middle of premium range
+aggressive:
+  target upper end of premium range
+
+Economic Metrics:
+Generate per model:
+
+Portfolio:
+- total_pnl
+- leap_pnl
+- overwrite_pnl
+- total_return_pct
+- max_drawdown
+- worst_day_pnl
+- worst_trade_pnl
+- average_daily_pnl
+- median_daily_pnl
+- volatility_of_daily_pnl
+- sharpe_like_score
+
+Overwrite:
+- number_of_overwrites
+- overwrite_win_rate
+- average_overwrite_pnl
+- median_overwrite_pnl
+- premium_collected
+- premium_retained_pct
+- average_premium_collected
+- average_premium_lost_on_loss_exit
+- number_profit_exits
+- number_loss_exits
+- number_underlying_touch_exits
+- number_expirations
+- average_holding_days
+
+Risk:
+- tail_loss_1pct
+- tail_loss_5pct
+- catastrophic_trade_count
+- average_loss_when_model_missed_risk
+- dollar_missed_risk_score
+
+LEAP:
+- leap_exposure_avg
+- leap_exposure_days_full
+- leap_exposure_days_reduced
+- avoided_leap_drawdown_estimate
+- missed_leap_upside_estimate
+
+Dollar missed risk:
+Instead of counting missed risk events only, compute:
+dollar_missed_risk =
+  PnL_model_trade - PnL_safer_reference_trade
+
+Reference safer trade:
+- either no overwrite
+- or more defensive strike
+- configurable
+
+Report:
+Add “Economic Policy Backtest” section.
+
+Tables:
+1. Model Economic Leaderboard
+2. LEAP PnL vs Overwrite PnL decomposition
+3. Worst 20 trades
+4. Best 20 trades
+5. Missed Risk Dollar Impact
+6. Exit Reason Summary
+7. Premium Retention Summary
+8. Model vs Baseline Comparison
+
+CSV outputs:
+- policy_trades.csv
+- policy_daily_pnl.csv
+- policy_model_summary.csv
+- policy_exit_summary.csv
+- policy_worst_trades.csv
+- policy_dollar_missed_risk.csv
+
+policy_trades.csv columns:
+- model_name
+- entry_date
+- exit_date
+- entry_spy
+- exit_spy
+- dte
+- strike
+- entry_premium
+- exit_option_value
+- option_pnl
+- leap_pnl_during_trade
+- total_trade_pnl
+- exit_reason
+- predicted_regime
+- brace_for_impact_score
+- leap_exposure_pct
+- overwrite_action
+- target_premium_mid
+- vix
+- vvix
+- geometry_stress_score
+- path_stress_score if available
+
+Streamlit:
+Add new tab:
+“Policy Backtest”
+
+Do not render huge tables.
+Show:
+- compact leaderboard
+- top 10 worst trades
+- top 10 best trades
+- summary charts if available
+- download links to CSVs
+
+Run modes:
+Tuning mode:
+- last 60-90 trading days
+- selected models only
+- expected runtime < 5 min
+
+Testing mode:
+- full replay window
+- all models
+- full economic artifacts
+
+Guardrails:
+- This is V1 economic approximation.
+- Do not claim exact historical options PnL without historical option chain.
+- Clearly label option prices as model-estimated.
+- Later V2 may use actual historical option chains if available.
+
+Acceptance criteria:
+1. Backtester can compare:
+   - no_overwrite_baseline
+   - always_overwrite_baseline
+   - heuristic_policy
+   - HMMv3.1 policy
+   - HMMv4 policy
+
+2. Report shows whether model improved total economic outcome.
+
+3. Report shows whether missed risk caused real dollar loss.
+
+4. Report shows whether avoiding overwrites helped LEAP capture upside.
+
+5. Streamlit remains responsive.
+
+6. Tuning mode completes quickly.
+
+Most important:
+The primary objective is not prediction accuracy.
+The primary objective is portfolio decision quality.
+
+Final success question:
+“If I followed this model’s recommendation, did I make more money with less unacceptable drawdown than my baseline heuristic?”
+
+POLICY_BACKTESTER_SLICE_1_FIX: Correct LEAP + Short Call Portfolio Mechanics
+
+Critical:
+All option dollar PnL must use multiplier = 100.
+
+Portfolio:
+- Long 1 SPY LEAP proxy
+- Short 1 SPY call overwrite when policy says to sell
+- Combined PnL = LEAP PnL + short call PnL
+
+LEAP baseline:
+- Entry premium target: $100.00
+- Contract cost: $10,000
+- Approx initial delta: 0.70
+- Typical DTE: 370-380 calendar days
+- Multiplier: 100
+
+LEAP exit rules:
+1. Profit target:
+   - close LEAP when LEAP premium >= entry_premium * 1.20
+   - example: $100 → $120
+   - dollar PnL = +$2,000 per contract
+
+2. Stop-loss:
+   - close LEAP when LEAP premium <= entry_premium * 0.80
+   - example: $100 → $80
+   - dollar PnL = -$2,000 per contract
+
+3. Short call income is separate.
+   - Do not use short call profits/losses to decide whether LEAP itself hit +20% or -20%.
+   - But total portfolio PnL should include both.
+
+V1 LEAP pricing proxy:
+Use delta proxy initially:
+daily_leap_pnl =
+  leap_delta * 100 * leap_exposure_pct * (SPY_close_t - SPY_close_t_minus_1)
+
+Track synthetic LEAP premium:
+leap_premium_t =
+  leap_entry_premium + cumulative_leap_pnl / 100
+
+If leap_premium_t >= 120:
+  close LEAP, record LEAP profit exit.
+
+If leap_premium_t <= 80:
+  close LEAP, record LEAP stop-loss.
+
+After LEAP is closed:
+- either remain in cash until next configured LEAP re-entry date
+- or immediately re-enter next day if config says allow_reentry=true
+For V1 default:
+allow_leap_reentry = true
+reenter at next trading day using premium=100, delta=0.70
+
+Short call overlay:
+Only active if LEAP is open unless config allow_naked_short_calls=true.
+Default:
+allow_naked_short_calls = false.
+
+If no LEAP is open:
+- do not sell short calls
+- fail loudly if short call is opened while allow_naked_short_calls=false.
+
+Short call decisions to model:
+1. Should we sell a short call?
+2. If yes, what strike / premium target?
+3. When should we cover short call at profit?
+4. When should we cover short call at loss?
+5. Should we roll short call down/up after exit?
+
+Short call entry:
+- 1DTE default unless model recommends otherwise.
+- Candidate strike based on expected upside move:
+  daily_vol_pct = VIX / sqrt(252)
+  upside_move_pct = daily_vol_pct / 2
+  candidate_strike = SPY_close * (1 + upside_move_pct)
+
+Then select nearest strike that best matches target premium.
+
+User premium heuristic:
+- VIX 16-20: target premium 1.20-1.50
+- VIX 20-30: target premium 1.50-1.80
+- VIX > 30: target premium 2.00-3.00
+
+Important:
+High VIX does not automatically imply selling farther OTM.
+The same strike distance may fetch more premium.
+Policy targets compensation and expected move, not blindly farther strike.
+
+Short call profit exit:
+- default: close when option value <= 20% of entry premium
+- meaning 80% premium captured.
+
+Short call loss exit:
+- default: close when option value >= 2.0x entry premium
+- also optionally close if SPY touches or exceeds strike.
+
+Short call roll-down:
+If SPY falls and short call reaches profit exit:
+- close short call
+- next trading day, recompute model recommendation
+- if policy still says overwrite, sell new call at new recommended strike.
+
+Short call roll-up / stop:
+If SPY rallies and short call hits loss exit:
+- close short call
+- next trading day, recompute recommendation
+- only re-enter if policy allows.
+
+Economic outputs:
+Every daily row must include:
+- date
+- spy_close
+- leap_open
+- leap_premium_estimate
+- leap_delta
+- leap_exposure_pct
+- leap_daily_pnl
+- leap_cumulative_pnl
+- short_call_open
+- short_call_strike
+- short_call_entry_premium
+- short_call_mtm_value
+- short_call_daily_pnl
+- short_call_cumulative_pnl
+- total_daily_pnl
+- total_cumulative_pnl
+
+Every trade row must include:
+- instrument_type: LEAP or SHORT_CALL
+- entry_date
+- exit_date
+- entry_premium
+- exit_premium
+- multiplier
+- dollar_pnl
+- exit_reason
+
+Leaderboard:
+Show separately:
+1. LEAP-only PnL
+2. Short-call overlay PnL
+3. Combined portfolio PnL
+4. Max drawdown
+5. Worst trade
+6. Worst day
+7. Premium retained
+8. LEAP exits: profit / stop
+9. Short call exits: profit / loss / touch / expiration
+
+Sanity tests:
+1. SPY rises 10 points with LEAP delta 0.70:
+   LEAP PnL must be +$700.
+
+2. Sell short call at 1.50 and buy back at 0.30:
+   Short call PnL must be +$120.
+
+3. Sell short call at 1.50 and buy back at 3.00:
+   Short call PnL must be -$150.
+
+4. Combined:
+   LEAP +700 and short call -150 = total +550.
+
+5. LEAP profit exit:
+   Entry premium 100, synthetic premium reaches 120:
+   LEAP exits with +2000.
+
+6. LEAP stop:
+   Entry premium 100, synthetic premium reaches 80:
+   LEAP exits with -2000.
+
+7. No naked calls:
+   If LEAP is closed and allow_naked_short_calls=false, no short calls may open.
+
+Most important:
+Do not evaluate short-call-only results as the strategy.
+The actual strategy is long LEAP + dynamic short call overlay.

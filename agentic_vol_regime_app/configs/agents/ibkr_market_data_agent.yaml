@@ -1,0 +1,11 @@
+agent_id: ibkr_market_data_agent
+name: IBKR Market Data Agent
+role: ibkr_market_data_agent
+workflow_path: ../workflows/ibkr_spy_snapshot.md
+llm_provider: none
+memory_service_type: ephemeral
+runtime_profile: short_task
+allowed_tools:
+  - ibkr_data_pipeline
+domain: volatility_regime
+description: Fetch SPY underlying and option-chain data from IBKR via the harness toolbox.

@@ -1,0 +1,11 @@
+{
+  "completed_dates": 75,
+  "total_dates": 75,
+  "last_as_of_date": "2026-06-12",
+  "prediction_records": 150,
+  "scored_records": 300,
+  "elapsed_seconds": 15.432,
+  "rss_mb": 304.617,
+  "peak_rss_mb": 304.617,
+  "object_count": 238004
+}

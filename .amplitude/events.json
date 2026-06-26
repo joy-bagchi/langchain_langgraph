@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Workflow Run Started",
+    "description": "Fired when a markdown workflow run begins via the `run` CLI command. Properties: workflow_id, run_id, has_llm_provider."
+  },
+  {
+    "name": "Workflow Run Completed",
+    "description": "Fired when a markdown workflow run finishes with status completed, failed, or awaiting_review. Properties: workflow_id, run_id, status, step_count."
+  },
+  {
+    "name": "Agent Workflow Started",
+    "description": "Fired when an agent-bound workflow run begins via the `run-agent` CLI command. Properties: agent_id, run_id, workflow_id."
+  },
+  {
+    "name": "Agent Workflow Completed",
+    "description": "Fired when an agent-bound workflow finishes. Properties: agent_id, run_id, status, step_count."
+  },
+  {
+    "name": "DAG Workflow Started",
+    "description": "Fired when a declarative DAG workflow begins via the `run-dag` CLI command. Properties: workflow_id, run_id, node_count, auto_approve_gates."
+  },
+  {
+    "name": "DAG Workflow Completed",
+    "description": "Fired when a declarative DAG workflow finishes. Properties: workflow_id, run_id, status, completed_stage_count."
+  },
+  {
+    "name": "Human Gate Decided",
+    "description": "Fired when a human gate in a DAG workflow is resumed with an approval or rejection decision. Properties: run_id, node_id, decision (approved/rejected)."
+  }
+]

@@ -1,0 +1,16 @@
+agent_id: hmm_v4_path_aware_meta_replay_agent
+name: HMM v4 Path-Aware Meta Replay Agent
+role: volatility_regime_hmm_v4_path_aware_meta_replay
+workflow_path: ../workflows/hmm_v4_path_aware_meta_replay.md
+llm_provider: none
+memory_service_type: semantic
+runtime_profile: durable_research
+memory_namespace: hmm_v4_path_aware_meta_replay_memory
+allowed_tools: []
+domain: volatility_regime
+belief_engine: hmm_v4_path_aware_meta
+guardrails:
+  post:
+    block_patterns:
+      - "(?i)live ibkr"
+      - "(?i)production artifact"

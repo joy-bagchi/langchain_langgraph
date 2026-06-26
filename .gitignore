@@ -1,0 +1,36 @@
+# Amplitude wizard
+.amplitude/dashboard.json
+.amplitude/dashboard-plan.json
+.amplitude-events.json
+.amplitude-dashboard.json
+amplitude-setup-report.previous.md
+.claude/skills/integration-*/
+.claude/skills/add-analytics-instrumentation/
+.claude/skills/amplitude-chart-dashboard-plan/
+.claude/skills/amplitude-quickstart-taxonomy-agent/
+.claude/skills/discover-analytics-patterns/
+.claude/skills/wizard-prompt-supplement/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local temp and test scratch
+.tmp*/
+
+# Agent/workflow runtime state
+.workflow_memory/
+.workflow_memory_*/
+**/.workflow_memory/
+**/.workflow_memory_*/
+**/.streamlit_workflow_memory/
+**/.tmp_memory/
+**/.tmp_memory_case/
+**/runtime_ledger.db
+**/memory/memory_events.jsonl
+**/memory/memory_index.json
+**/runs/
+
+# Local HMM model artifacts
+agentic_vol_regime_app/models/hmm/

@@ -1,0 +1,2 @@
+as_of_date,target_horizon,training_row_count,path_aware_estimator,fallback_used,feature_families_used,predicted_risk_bucket,geometry_stress_score,geometry_stress_delta_5d,geometry_stress_curvature_5_10,vol_geometry_gap,vol_geometry_diverging,top_feature_importances
+2026-06-12,3,2456,constant_single_class,False,curvature | deltas_slopes | divergence | ensemble | levels | persistence,LOW_RISK,0.36448412698412697,0.273015873015873,0.06678571428571428,0.1302876984126985,0,

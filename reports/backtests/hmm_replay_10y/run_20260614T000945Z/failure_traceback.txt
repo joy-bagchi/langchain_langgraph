@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 329, in run_hmm_replay
+    false_alarms_df, missed_risks_df = build_false_alarm_and_missed_risk_reports(
+                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        scored_records=scored_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        predictions=prediction_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        outcomes=outcome_records,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_scoring.py", line 334, in build_false_alarm_and_missed_risk_reports
+    (frame["false_alarm"] == True)  # noqa: E712
+     ~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\frame.py", line 4113, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\indexes\range.py", line 417, in get_loc
+    raise KeyError(key)
+KeyError: 'false_alarm'

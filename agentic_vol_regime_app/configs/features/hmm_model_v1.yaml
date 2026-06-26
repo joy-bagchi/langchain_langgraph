@@ -1,0 +1,29 @@
+n_components: 4
+covariance_type: diag
+n_iter: 500
+random_state: 17
+train_window: 756
+retrain_cadence: 5
+min_retrain_interval_hours: 24
+variant_id: v1
+variant_label: HMM v1 Core
+model_version: hmm_gaussian_v1
+model_artifact_name: daily_regime_hmm_v1_model.pkl
+feature_flags:
+  enable_hmm_v2_sector_corr: false
+  enable_hmm_v3_sector_geometry: false
+  enable_sector_geometry_only_diagnostic: false
+feature_list:
+  - spy_return_1d
+  - realized_vol_5d
+  - realized_vol_21d
+  - vix
+  - vix_z_22d
+  - vvix
+  - vvix_vix_ratio
+  - vvix_vix_z_22d
+  - vix9d_vix_ratio
+  - vix_vix3m_ratio
+  - term_structure_slope
+  - drawdown_21d
+  - trend_persistence_21d

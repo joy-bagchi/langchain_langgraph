@@ -3,6 +3,20 @@
   <component name="CsvFileAttributes">
     <option name="attributeMap">
       <map>
+        <entry key="\agentic_vol_regime_app\agentic_vol_regime_app\data\processed\coverage_report.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="\agentic_vol_regime_app\examples\overwrite_candidates_sample.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="\coursera\Introduction to RAG\news_data_dedup.csv">
           <value>
             <Attribute>

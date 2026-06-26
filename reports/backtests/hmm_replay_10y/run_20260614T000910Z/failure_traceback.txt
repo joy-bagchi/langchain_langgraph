@@ -1,0 +1,29 @@
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 325, in run_hmm_replay
+    summary_df = summarize_scores(scored_records)
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_scoring.py", line 188, in summarize_scores
+    grouped = frame.groupby(["model_name", "horizon"], as_index=False).agg(
+        accuracy=("state_match", "mean"),
+    ...<11 lines>...
+        avg_lead_quality=("posture_consistent", "mean"),
+    )
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\groupby\generic.py", line 1432, in aggregate
+    result = op.agg()
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\apply.py", line 190, in agg
+    return self.agg_dict_like()
+           ~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\apply.py", line 423, in agg_dict_like
+    return self.agg_or_apply_dict_like(op_name="agg")
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\apply.py", line 1603, in agg_or_apply_dict_like
+    result_index, result_data = self.compute_dict_like(
+                                ~~~~~~~~~~~~~~~~~~~~~~^
+        op_name, selected_obj, selection, kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\apply.py", line 462, in compute_dict_like
+    func = self.normalize_dictlike_arg(op_name, selected_obj, func)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\site-packages\pandas\core\apply.py", line 663, in normalize_dictlike_arg
+    raise KeyError(f"Column(s) {list(cols)} do not exist")
+KeyError: "Column(s) ['adjacent_correct', 'brier_vix_spike', 'brier_vol_expansion', 'combined_vol_directional_accuracy', 'directional_rv_correct', 'directional_vix_correct', 'directional_vvix_correct', 'false_alarm', 'missed_risk', 'posture_consistent', 'risk_bucket_correct', 'severe_miss', 'state_match'] do not exist"

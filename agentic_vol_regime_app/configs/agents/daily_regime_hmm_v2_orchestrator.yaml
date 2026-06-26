@@ -1,0 +1,17 @@
+agent_id: daily_regime_hmm_v2_orchestrator
+name: Daily Regime HMMv2 Orchestrator
+role: volatility_regime_hmm_v2_orchestrator
+workflow_path: ../workflows/daily_belief_report.md
+llm_provider: none
+memory_service_type: semantic
+runtime_profile: durable_research
+memory_namespace: daily_regime_hmm_v2_memory
+allowed_tools:
+  - ibkr_data_pipeline
+domain: volatility_regime
+belief_engine: hmm_gaussian_v2
+guardrails:
+  post:
+    block_patterns:
+      - "(?i)execute live trade"
+      - "(?i)place live trade"

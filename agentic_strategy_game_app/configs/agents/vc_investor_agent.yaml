@@ -1,0 +1,12 @@
+agent_id: vc_investor_agent
+name: VC Investor Agent
+role: venture_capital_investor
+workflow_path: ../workflows/vc_pitch_session.md
+description: LLM-backed investor agent that grills the founder and makes an investment decision or counter-offer.
+llm_provider: openai
+model: gpt-4o-mini
+temperature: 0.35
+memory_service_type: ephemeral
+runtime_profile: short_task
+allowed_tools: []
+domain: business_strategy_game

@@ -1,0 +1,4 @@
+model_name,horizon,accuracy,brier_vol_expansion,brier_vix_spike,avg_lead_quality,notes
+hmm_v3_core_plus_sector_geometry,1,0.625,0.2278077820115,0.4104975320115,0.75,
+hmm_v3_core_plus_sector_geometry,2,0.375,0.49342456275012503,0.44515881275012503,0.375,
+hmm_v3_core_plus_sector_geometry,3,0.42857142857142855,0.4501811704748572,0.5360494561891429,0.42857142857142855,

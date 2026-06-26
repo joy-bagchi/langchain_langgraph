@@ -1,0 +1,2140 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+import threading
+import time
+from pathlib import Path
+from contextlib import contextmanager
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agentic_harness.__main__ import _build_agent_input_payload, build_parser
+from agentic_harness.contracts import WorkflowGraphState, WorkflowStep
+from agentic_harness.agentic_os.evaluation_service import BasicEvaluationService, EvaluationRequest
+from agentic_harness.agentic_os.guardrail_service import GuardrailRequest, RuleBasedGuardrailService
+from agentic_harness.agentic_os.observability_service import ObservabilityRequest
+from agentic_harness.shared.services import ServiceEvent
+from agentic_harness import (
+    AgentDefinition,
+    CompiledWorkflowDag,
+    DeclarativeWorkflowDefinition,
+    DagWorkflowRunResult,
+    EphemeralMemoryService,
+    MemoryQuery,
+    MemoryRecord,
+    SemanticMemoryService,
+    StructuredMemoryService,
+    StepExecutionResult,
+    ToolExecutionRequest,
+    WorkflowDagBlueprint,
+    DefaultDagCompiler,
+    YamlDeclarativeWorkflowDefinitionService,
+    build_dag_blueprint,
+    compile_workflow_dag,
+    build_model_callable,
+    build_platform_services,
+    ContextManager,
+    DefaultCognitiveService,
+    LangSmithConfig,
+    load_declarative_workflow_definition,
+    inspect_run,
+    load_workflow_definition,
+    extract_artifact,
+    format_response,
+    select_output,
+    resolve_llm_config,
+    resolve_langsmith_config,
+    render_template,
+    resume_declarative_workflow,
+    run_declarative_workflow,
+    run_agent_workflow,
+    resume_workflow,
+    start_workflow,
+)
+
+
+def _write_workflow(path: Path) -> None:
+    path.write_text(
+        """---
+workflow_id: onboarding_workflow
+title: Onboarding Workflow
+entry_step: capture_request
+memory_namespace: onboarding_memory
+---
+
+# Onboarding Workflow
+
+## Step: capture_request
+```yaml
+type: collect
+id: capture_request
+output_key: request
+next: classify_request
+input_key: topic
+memory:
+  enabled: false
+```
+
+```prompt
+{input.topic}
+```
+
+## Step: classify_request
+```yaml
+type: prompt
+id: classify_request
+output_key: classification
+branches:
+  - when: "outputs.request == 'incident'"
+    next: incident_path
+  - when: "outputs.request != 'incident'"
+    next: standard_path
+memory:
+  enabled: true
+  type: decision
+  template: "Classification: {step_output}"
+```
+
+```prompt
+Classify the request type for: {outputs.request}
+```
+
+## Step: standard_path
+```yaml
+type: prompt
+id: standard_path
+output_key: summary
+memory:
+  enabled: true
+  type: artifact_ref
+```
+
+```prompt
+Standard handling for {outputs.request}.
+Prior memory:
+{memory_summary}
+```
+
+## Step: incident_path
+```yaml
+type: human_review
+id: incident_path
+approved_next: finalize_incident
+rejected_next: classify_request
+memory:
+  enabled: false
+```
+
+```prompt
+Review the incident routing before finalizing.
+```
+
+## Step: finalize_incident
+```yaml
+type: prompt
+id: finalize_incident
+output_key: summary
+memory:
+  enabled: true
+  type: artifact_ref
+  template: "Final incident summary: {step_output}"
+```
+
+```prompt
+Finalize the incident workflow for {outputs.request}.
+```
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_agent(path: Path, workflow_path: Path, *, runtime_profile: str = "default") -> None:
+    path.write_text(
+        f"""agent_id: onboarding_agent
+name: Onboarding Agent
+role: onboarding_specialist
+workflow_path: {workflow_path.as_posix()}
+llm_provider: none
+memory_service_type: ephemeral
+runtime_profile: {runtime_profile}
+allowed_tools: []
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_research_workflow(path: Path) -> None:
+    path.write_text(
+        """---
+workflow_id: research_agent_workflow
+title: Research Agent Workflow
+entry_step: capture_query
+memory_namespace: research_agent_memory
+---
+
+# Research Agent Workflow
+
+## Step: capture_query
+```yaml
+type: collect
+id: capture_query
+output_key: search_query
+next: run_web_search
+input_key: query
+memory:
+  enabled: false
+```
+
+```prompt
+{input.query}
+```
+
+## Step: run_web_search
+```yaml
+type: tool
+id: run_web_search
+output_key: search_results
+tool_id: web_search
+arguments:
+  query: "{outputs.search_query}"
+  max_results: 3
+memory:
+  enabled: false
+```
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_research_agent(path: Path, workflow_path: Path) -> None:
+    path.write_text(
+        f"""agent_id: research_agent
+name: Research Agent
+role: research_agent
+workflow_path: {workflow_path.as_posix()}
+llm_provider: none
+memory_service_type: ephemeral
+allowed_tools:
+  - web_search
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_declarative_workflow(path: Path, agent_path: Path) -> None:
+    path.write_text(
+        f"""workflow_id: quant_research_pipeline
+title: Quant Research Pipeline
+description: Declarative workflow that will later compile into a DAG.
+entry_nodes:
+  - gather_research
+nodes:
+  - id: gather_research
+    kind: agent
+    purpose: Research over the web.
+    agent: {agent_path.name}
+    depends_on: []
+    input_bindings:
+      query: "$workflow.query"
+    artifact_contract: search_results@1.0
+    execution_mode: real
+    mock:
+      enabled: true
+      response:
+        artifact_type: search_results
+        version: "1.0"
+        payload:
+          results:
+            - title: Mock result
+              url: https://example.com/mock
+
+  - id: extract_equations
+    kind: mock_agent
+    purpose: Extract equations from search results.
+    depends_on:
+      - gather_research
+    input_bindings:
+      search_results: "$node.gather_research.artifact"
+    artifact_contract: math_equations@1.0
+    execution_mode: mock
+    mock:
+      enabled: true
+      response:
+        artifact_type: math_equations
+        version: "1.0"
+        payload:
+          equations:
+            - expression: dF_t = alpha_t F_t^beta dW_t^1
+
+  - id: review_output
+    kind: human_gate
+    purpose: Human validation gate.
+    depends_on:
+      - extract_equations
+    input_bindings:
+      packet: "$node.extract_equations.artifact"
+    artifact_contract: review_packet@1.0
+    execution_mode: auto
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_parallel_declarative_workflow(path: Path, agent_path: Path) -> None:
+    path.write_text(
+        f"""workflow_id: parallel_research_pipeline
+title: Parallel Research Pipeline
+entry_nodes:
+  - gather_alpha
+  - gather_beta
+nodes:
+  - id: gather_alpha
+    kind: agent
+    purpose: Research alpha topic.
+    agent: {agent_path.name}
+    depends_on: []
+    input_bindings:
+      query: "$workflow.alpha_query"
+    artifact_contract: search_results@1.0
+    execution_mode: real
+
+  - id: gather_beta
+    kind: agent
+    purpose: Research beta topic.
+    agent: {agent_path.name}
+    depends_on: []
+    input_bindings:
+      query: "$workflow.beta_query"
+    artifact_contract: search_results@1.0
+    execution_mode: real
+
+  - id: combine_results
+    kind: mock_agent
+    purpose: Combine the results.
+    depends_on:
+      - gather_alpha
+      - gather_beta
+    input_bindings:
+      alpha: "$node.gather_alpha.artifact"
+      beta: "$node.gather_beta.artifact"
+    artifact_contract: combined_results@1.0
+    execution_mode: mock
+    mock:
+      enabled: true
+      response:
+        artifact_type: combined_results
+        version: "1.0"
+        payload:
+          status: combined
+""",
+        encoding="utf-8",
+    )
+
+
+def test_load_workflow_definition_parses_structured_markdown(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    _write_workflow(workflow_path)
+
+    definition = load_workflow_definition(workflow_path)
+
+    assert definition.workflow_id == "onboarding_workflow"
+    assert definition.entry_step == "capture_request"
+    assert "classify_request" in definition.steps
+    assert definition.steps["classify_request"].branches[0].next_step == "incident_path"
+    assert definition.steps["incident_path"].approved_next == "finalize_incident"
+
+
+def test_start_workflow_completes_and_persists_memory(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+    )
+
+    assert result["status"] == "completed"
+    assert result["current_step"] is None
+    assert "summary" in result["named_outputs"]
+    memory_index = json.loads(
+        (storage_root / "memory" / "memory_index.json").read_text(encoding="utf-8")
+    )
+    assert len(memory_index) == 2
+    assert memory_index[0]["namespace"] == "onboarding_memory"
+
+
+def test_runtime_ledger_persists_runs_checkpoints_and_events(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+    )
+
+    ledger_path = storage_root / "runtime_ledger.db"
+    assert ledger_path.exists()
+
+    connection = sqlite3.connect(ledger_path)
+    try:
+        run_count = connection.execute("SELECT COUNT(*) FROM runs WHERE run_id = ?", (result["run_id"],)).fetchone()[0]
+        checkpoint_count = connection.execute(
+            "SELECT COUNT(*) FROM checkpoints WHERE run_id = ?",
+            (result["run_id"],),
+        ).fetchone()[0]
+        event_count = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE run_id = ?",
+            (result["run_id"],),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert run_count == 1
+    assert checkpoint_count >= 1
+    assert event_count >= 1
+
+
+def test_resume_workflow_after_review(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    first_result = start_workflow(
+        workflow_path,
+        {"topic": "incident"},
+        storage_root=storage_root,
+        run_id="incident-run",
+    )
+
+    assert first_result["status"] == "awaiting_review"
+    assert first_result["pending_review"]["step_id"] == "incident_path"
+
+    resumed = resume_workflow(
+        "incident-run",
+        storage_root=storage_root,
+        decision="approved",
+        notes="Looks good",
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["named_outputs"]["summary"].startswith("Finalize the incident workflow")
+    inspected = inspect_run("incident-run", storage_root=storage_root)
+    assert inspected["status"] == "completed"
+    assert inspected["checkpoint_index"] >= 2
+
+
+def test_memory_is_reused_across_runs(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    start_workflow(workflow_path, {"topic": "normal request"}, storage_root=storage_root)
+    second = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+        run_id="second-run",
+    )
+
+    assert second["status"] == "completed"
+    assert second["memory_hits"], "Expected durable memory to be recalled on the second run."
+    assert any(
+        "Classification" in item["record"]["content"] or "Standard handling" in item["record"]["content"]
+        for item in second["memory_hits"]
+    )
+
+
+def test_start_workflow_uses_configurable_model_callable(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    def fake_model(prompt_text: str, step, state) -> str:
+        return f"LLM::{step.step_id}::{prompt_text[:20]}"
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+        model_callable=fake_model,
+    )
+
+    assert result["status"] == "completed"
+    assert result["named_outputs"]["classification"].startswith("LLM::classify_request::")
+    assert result["named_outputs"]["summary"].startswith("LLM::standard_path::")
+
+
+def test_resolve_llm_config_uses_workflow_default_model(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    _write_workflow(workflow_path)
+    definition = load_workflow_definition(workflow_path)
+    definition.default_model = "gpt-4o-mini"
+
+    config = resolve_llm_config(
+        workflow_definition=definition,
+        provider="openai",
+    )
+
+    assert config.provider == "openai"
+    assert config.model == "gpt-4o-mini"
+
+
+def test_build_model_callable_returns_none_for_disabled_config() -> None:
+    config = resolve_llm_config(provider="none")
+    assert build_model_callable(config) is None
+
+
+def test_context_manager_compacts_older_history(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    _write_workflow(workflow_path)
+    definition = load_workflow_definition(workflow_path)
+    manager = ContextManager(workflow_definition=definition, max_recent_history=2)
+    step = definition.steps["standard_path"]
+    state = {
+        "current_step": "standard_path",
+        "step_history": [
+            {"step_id": "capture_request", "status": "succeeded", "output": "normal request"},
+            {"step_id": "classify_request", "status": "succeeded", "output": "standard"},
+            {"step_id": "prior_action", "status": "succeeded", "output": "done"},
+        ],
+        "memory_hits": [
+            {"record": {"content": "Remember the standard process."}},
+        ],
+        "working_notes": ["Note A"],
+    }
+
+    snapshot = manager.build_context(step, state)
+
+    assert "capture_request -> succeeded" in snapshot.compacted_history
+    assert len(snapshot.recent_history) == 2
+    assert "Remember the standard process." in snapshot.memory_summary
+    assert "Working notes available." in snapshot.context_brief
+
+
+def test_render_template_uses_active_context_fields() -> None:
+    state = {
+        "input_payload": {"topic": "incident"},
+        "step_outputs": {},
+        "named_outputs": {},
+        "memory_hits": [],
+        "working_notes": [],
+        "current_step": "standard_path",
+        "active_context": {
+            "memory_summary": "Semantic memory",
+            "compacted_history": "Earlier steps compacted",
+            "context_brief": "Context packet ready",
+            "current_task": "Handle incident",
+            "raw_memory_hits": [],
+            "recent_history": [],
+            "working_notes": "",
+        },
+    }
+
+    rendered = render_template(
+        "Task={current_task}\nBrief={context_brief}\nMem={memory_summary}\nHist={compacted_history}",
+        state,
+    )
+
+    assert "Task=Handle incident" in rendered
+    assert "Brief=Context packet ready" in rendered
+    assert "Mem=Semantic memory" in rendered
+    assert "Hist=Earlier steps compacted" in rendered
+
+
+def test_workflow_run_persists_active_context(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+    )
+
+    assert "active_context" in result
+    assert "context_brief" in result["active_context"]
+
+
+def test_platform_service_bundle_supports_ephemeral_memory(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    _write_workflow(workflow_path)
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+    )
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        services=services,
+        memory_service_type="ephemeral",
+    )
+
+    assert result["status"] == "completed"
+    assert isinstance(services.memory, EphemeralMemoryService)
+    assert services.memory.descriptor.implementation_id == "ephemeral_memory_service"
+
+
+def test_platform_service_bundle_supports_semantic_memory(tmp_path: Path) -> None:
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="semantic",
+    )
+
+    assert isinstance(services.memory, SemanticMemoryService)
+    assert "semantic_memory" in services.memory.descriptor.capabilities
+
+
+def test_semantic_memory_service_recalls_related_content(tmp_path: Path) -> None:
+    service = SemanticMemoryService(tmp_path / "runtime_store")
+    service.remember(
+        MemoryRecord.create(
+            namespace="quant_memory",
+            memory_type="fact",
+            content="SABR is a stochastic volatility model used in interest rate derivatives.",
+            source_run_id="run-1",
+            source_step_id="step-1",
+        )
+    )
+    service.remember(
+        MemoryRecord.create(
+            namespace="quant_memory",
+            memory_type="fact",
+            content="Black Scholes assumes constant volatility for option pricing.",
+            source_run_id="run-2",
+            source_step_id="step-2",
+        )
+    )
+
+    results = service.recall(
+        MemoryQuery(
+            namespace="quant_memory",
+            text="stochastic volatility smile model",
+            max_results=2,
+        )
+    )
+
+    assert results
+    assert "SABR" in results[0].record.content
+    assert results[0].score >= results[-1].score
+
+
+def test_platform_service_bundle_supports_structured_memory(tmp_path: Path) -> None:
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="structured",
+    )
+
+    assert isinstance(services.memory, StructuredMemoryService)
+    assert "structured_memory" in services.memory.descriptor.capabilities
+
+
+def test_structured_memory_service_filters_nested_payload_fields(tmp_path: Path) -> None:
+    service = StructuredMemoryService(tmp_path / "runtime_store")
+    service.remember(
+        MemoryRecord.create(
+            namespace="account_memory",
+            memory_type="profile",
+            content="Enterprise customer renewal scheduled for September.",
+            source_run_id="run-1",
+            source_step_id="step-1",
+            metadata={"source": "crm"},
+            structured_payload={
+                "customer": {"tier": "enterprise", "region": "emea"},
+                "renewal": {"month": "2026-09", "risk": "medium"},
+            },
+        )
+    )
+    service.remember(
+        MemoryRecord.create(
+            namespace="account_memory",
+            memory_type="profile",
+            content="SMB customer with low annual contract value.",
+            source_run_id="run-2",
+            source_step_id="step-2",
+            metadata={"source": "crm"},
+            structured_payload={
+                "customer": {"tier": "smb", "region": "na"},
+                "renewal": {"month": "2026-11", "risk": "low"},
+            },
+        )
+    )
+
+    results = service.recall(
+        MemoryQuery(
+            namespace="account_memory",
+            text="renewal",
+            max_results=5,
+            memory_types=["profile"],
+            metadata_filters={"source": "crm"},
+            structured_filters={
+                "customer.tier": "enterprise",
+                "customer.region": "emea",
+            },
+        )
+    )
+
+    assert len(results) == 1
+    assert results[0].record.structured_payload["renewal"]["month"] == "2026-09"
+    assert "Enterprise customer" in results[0].record.content
+
+
+def test_rule_based_guardrail_service_blocks_configured_tool_ids() -> None:
+    service = RuleBasedGuardrailService()
+    step = WorkflowStep(
+        step_id="call_tool",
+        title="Call Tool",
+        step_type="tool",
+        metadata={
+            "tool_id": "web_search",
+            "guardrails": {"pre": {"blocked_tool_ids": ["web_search"]}},
+        },
+    )
+
+    decision = service.evaluate(
+        GuardrailRequest(
+            phase="pre_step",
+            step=step,
+            state=WorkflowGraphState(current_step="call_tool", workflow_id="test"),
+            metadata={"tool_id": "web_search", "input_text": "{\"query\": \"secret\"}"},
+        )
+    )
+
+    assert not decision.allowed
+    assert decision.action == "block"
+    assert "web_search" in " ".join(decision.reasons)
+
+
+def test_guardrail_escalation_pauses_and_resume_uses_approved_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "guardrail_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: guardrail_workflow
+title: Guardrail Workflow
+entry_step: draft_message
+memory_namespace: guardrail_memory
+---
+
+# Guardrail Workflow
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+guardrails:
+  post:
+    detect_secrets: false
+    detect_pii: true
+```
+
+```prompt
+Draft a sensitive message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def guarded_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, Any]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        return StepExecutionResult(output="Contact analyst@example.com for the final report.")
+
+    first = start_workflow(
+        workflow_path,
+        {"topic": "guardrail"},
+        storage_root=storage_root,
+        executors={"prompt": guarded_prompt_executor},
+    )
+
+    assert first["status"] == "awaiting_review"
+    assert first["pending_review"]["review_type"] == "guardrail_post"
+    assert "analyst@example.com" in first["pending_review"]["candidate_output"]
+    assert call_count["prompt"] == 1
+
+    resumed = resume_workflow(
+        first["run_id"],
+        storage_root=storage_root,
+        decision="approved",
+        notes="approved after review",
+        executors={"prompt": guarded_prompt_executor},
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["named_outputs"]["message"] == "Contact analyst@example.com for the final report."
+    assert call_count["prompt"] == 1
+    assert resumed["step_history"][-1]["metadata"]["guardrail_review"] == "approved"
+
+
+def test_guardrail_blocks_secret_like_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "secret_guardrail_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: secret_guardrail_workflow
+title: Secret Guardrail Workflow
+entry_step: expose_secret
+memory_namespace: guardrail_memory
+---
+
+# Secret Guardrail Workflow
+
+## Step: expose_secret
+```yaml
+type: prompt
+id: expose_secret
+output_key: secret
+```
+
+```prompt
+Return a secret.
+```
+""",
+        encoding="utf-8",
+    )
+
+    def secret_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, Any]) -> StepExecutionResult:
+        return StepExecutionResult(output="sk-abcdefghijklmnopqrstuvwxyz123456")
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "guardrail"},
+        storage_root=storage_root,
+        executors={"prompt": secret_prompt_executor},
+    )
+
+    assert result["status"] == "failed"
+    assert "secret" in (result.get("last_error") or "").lower()
+
+
+def test_basic_evaluation_service_requests_retry_for_short_output() -> None:
+    service = BasicEvaluationService()
+
+    response = service.evaluate(
+        EvaluationRequest(
+            phase="step",
+            payload={
+                "status": "succeeded",
+                "output_text": "short",
+                "step_metadata": {"evaluation": {"min_output_chars": 20}},
+            },
+        )
+    )
+
+    assert response.status == "attention_required"
+    assert response.action == "retry"
+    assert any("shorter than 20 chars" in finding for finding in response.findings)
+
+
+def test_evaluation_retry_retries_step_until_output_passes(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "evaluation_retry_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: evaluation_retry_workflow
+title: Evaluation Retry Workflow
+entry_step: draft_message
+memory_namespace: evaluation_memory
+---
+
+# Evaluation Retry Workflow
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+max_retries: 1
+evaluation:
+  min_output_chars: 20
+```
+
+```prompt
+Draft a message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def retry_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        if call_count["prompt"] == 1:
+            return StepExecutionResult(output="short")
+        return StepExecutionResult(output="This output is long enough to satisfy evaluation.")
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "evaluation"},
+        storage_root=storage_root,
+        executors={"prompt": retry_prompt_executor},
+    )
+
+    assert result["status"] == "completed"
+    assert call_count["prompt"] == 2
+    assert result["named_outputs"]["message"] == "This output is long enough to satisfy evaluation."
+    assert result["step_history"][-1]["metadata"]["evaluation"]["action"] == "allow"
+
+
+def test_evaluation_escalation_pauses_and_resume_uses_approved_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "evaluation_review_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: evaluation_review_workflow
+title: Evaluation Review Workflow
+entry_step: draft_message
+memory_namespace: evaluation_memory
+---
+
+# Evaluation Review Workflow
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+evaluation:
+  required_patterns:
+    - "approved"
+```
+
+```prompt
+Draft a message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def evaluation_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        return StepExecutionResult(output="Needs analyst confirmation before release.")
+
+    first = start_workflow(
+        workflow_path,
+        {"topic": "evaluation"},
+        storage_root=storage_root,
+        executors={"prompt": evaluation_prompt_executor},
+    )
+
+    assert first["status"] == "awaiting_review"
+    assert first["pending_review"]["review_type"] == "evaluation_post"
+    assert call_count["prompt"] == 1
+
+    resumed = resume_workflow(
+        first["run_id"],
+        storage_root=storage_root,
+        decision="approved",
+        notes="approved by operator",
+        executors={"prompt": evaluation_prompt_executor},
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["named_outputs"]["message"] == "Needs analyst confirmation before release."
+    assert call_count["prompt"] == 1
+    assert resumed["step_history"][-1]["metadata"]["evaluation_post_review"] == "approved"
+
+
+def test_basic_evaluation_service_critic_scores_missing_terms_and_history() -> None:
+    service = BasicEvaluationService()
+
+    response = service.evaluate(
+        EvaluationRequest(
+            phase="step",
+            payload={
+                "status": "succeeded",
+                "output_text": "This summary mentions SABR but omits volatility context.",
+                "step_history": [{"step_id": "capture_request"}],
+                "named_outputs": {"request": "Explain SABR"},
+                "step_metadata": {
+                    "evaluation": {
+                        "critic": {
+                            "enabled": True,
+                            "required_terms": ["SABR", "stochastic volatility"],
+                            "required_step_ids": ["capture_request", "draft_outline"],
+                            "required_output_keys": ["request", "outline"],
+                            "min_score": 0.8,
+                            "on_below_threshold": "escalate",
+                        }
+                    }
+                },
+            },
+        )
+    )
+
+    assert response.action == "escalate"
+    assert response.status == "attention_required"
+    assert any("missing required term: stochastic volatility" in finding for finding in response.findings)
+    assert any("missing required prior step: draft_outline" in finding for finding in response.findings)
+    assert any("missing required output key: outline" in finding for finding in response.findings)
+    assert response.metadata["critic"]["score"] < 0.8
+
+
+def test_critic_escalation_pauses_and_resume_uses_approved_output(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "critic_review_workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: critic_review_workflow
+title: Critic Review Workflow
+entry_step: capture_request
+memory_namespace: critic_memory
+---
+
+# Critic Review Workflow
+
+## Step: capture_request
+```yaml
+type: collect
+id: capture_request
+output_key: request
+next: draft_message
+input_key: topic
+memory:
+  enabled: false
+```
+
+```prompt
+{input.topic}
+```
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+evaluation:
+  critic:
+    enabled: true
+    required_terms:
+      - "SABR"
+      - "stochastic volatility"
+    required_step_ids:
+      - "capture_request"
+    required_output_keys:
+      - "request"
+    min_score: 1.0
+    on_below_threshold: escalate
+```
+
+```prompt
+Draft the message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def critic_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        return StepExecutionResult(output="SABR is important in rates.")
+
+    first = start_workflow(
+        workflow_path,
+        {"topic": "Explain SABR"},
+        storage_root=storage_root,
+        executors={"prompt": critic_prompt_executor},
+    )
+
+    assert first["status"] == "awaiting_review"
+    assert first["pending_review"]["review_type"] == "evaluation_post"
+    assert call_count["prompt"] == 1
+
+    resumed = resume_workflow(
+        first["run_id"],
+        storage_root=storage_root,
+        decision="approved",
+        notes="critic review approved",
+        executors={"prompt": critic_prompt_executor},
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["named_outputs"]["message"] == "SABR is important in rates."
+    assert call_count["prompt"] == 1
+    assert resumed["step_history"][-1]["metadata"]["evaluation_post_review"] == "approved"
+
+
+def test_workflow_level_evaluation_defaults_apply_to_steps(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow_default_eval.md"
+    storage_root = tmp_path / "runtime_store"
+    workflow_path.write_text(
+        """---
+workflow_id: workflow_default_eval
+title: Workflow Default Evaluation
+entry_step: draft_message
+memory_namespace: evaluation_memory
+evaluation:
+  min_output_chars: 25
+---
+
+# Workflow Default Evaluation
+
+## Step: draft_message
+```yaml
+type: prompt
+id: draft_message
+output_key: message
+max_retries: 1
+```
+
+```prompt
+Draft a message.
+```
+""",
+        encoding="utf-8",
+    )
+
+    call_count = {"prompt": 0}
+
+    def retry_prompt_executor(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, object]) -> StepExecutionResult:
+        call_count["prompt"] += 1
+        if call_count["prompt"] == 1:
+            return StepExecutionResult(output="too short")
+        return StepExecutionResult(output="This output satisfies the workflow default evaluation policy.")
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "evaluation"},
+        storage_root=storage_root,
+        executors={"prompt": retry_prompt_executor},
+    )
+
+    assert result["status"] == "completed"
+    assert call_count["prompt"] == 2
+    assert result["step_history"][-1]["metadata"]["evaluation"]["action"] == "allow"
+
+
+def test_default_cognitive_service_descriptor_exposes_capabilities() -> None:
+    cognitive = DefaultCognitiveService()
+    assert cognitive.descriptor.service_name == "cognitive"
+    assert "deterministic_fallback" in cognitive.descriptor.capabilities
+
+
+def test_run_agent_workflow_loads_agent_and_executes_bound_workflow(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    agent_path = tmp_path / "agent.yaml"
+    _write_workflow(workflow_path)
+    _write_agent(agent_path, workflow_path)
+
+    result = run_agent_workflow(
+        agent_path,
+        {"topic": "normal request"},
+        storage_root=tmp_path / "runtime_store",
+    )
+
+    assert result["status"] == "completed"
+    assert result["agent"]["agent_id"] == "onboarding_agent"
+    assert result["agent_role"] == "onboarding_specialist"
+    assert result["named_outputs"]["summary"]
+
+
+def test_run_agent_workflow_persists_agent_invocation_runtime_profile(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    agent_path = tmp_path / "agent.yaml"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+    _write_agent(agent_path, workflow_path, runtime_profile="durable_research")
+
+    result = run_agent_workflow(
+        agent_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+    )
+
+    ledger_path = storage_root / "runtime_ledger.db"
+    connection = sqlite3.connect(ledger_path)
+    try:
+        row = connection.execute(
+            "SELECT agent_id, status, runtime_profile FROM agent_invocations WHERE run_id = ?",
+            (result["run_id"],),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert row is not None
+    assert row[0] == "onboarding_agent"
+    assert row[1] == "completed"
+    assert row[2] == "durable_research"
+
+
+def test_default_toolbox_registers_web_search_tool() -> None:
+    services = build_platform_services(memory_service_type="ephemeral")
+    tool_ids = [tool.tool_id for tool in services.tools.list_tools()]
+    assert "web_search" in tool_ids
+    assert "ibkr_data_pipeline" in tool_ids
+
+
+def test_web_search_tool_executes_with_injected_client(tmp_path: Path) -> None:
+    class FakeSearchClient:
+        def search(self, *, query: str, max_results: int = 5, topic: str = "general", include_raw_content: bool = False):
+            return {
+                "query": query,
+                "results": [
+                    {"title": "Result A", "url": "https://example.com/a"},
+                    {"title": "Result B", "url": "https://example.com/b"},
+                ][:max_results],
+                "topic": topic,
+                "include_raw_content": include_raw_content,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    response = services.tools.execute(
+        ToolExecutionRequest(
+            tool_id="web_search",
+            arguments={"query": "LangGraph tool search", "max_results": 2},
+        )
+    )
+
+    assert response.status == "succeeded"
+    assert response.output["query"] == "LangGraph tool search"
+    assert len(response.output["results"]) == 2
+
+
+def test_web_search_tool_returns_unavailable_without_provider(tmp_path: Path, monkeypatch) -> None:
+    from agentic_harness.agentic_os import tool_service as tool_service_module
+
+    class MissingProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            raise ValueError("TAVILY_API_KEY is required for the web_search tool.")
+
+    monkeypatch.setattr(tool_service_module, "TavilyWebSearchClient", MissingProvider)
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+    )
+    response = services.tools.execute(
+        ToolExecutionRequest(
+            tool_id="web_search",
+            arguments={"query": "LangGraph availability"},
+        )
+    )
+
+    assert response.status == "unavailable"
+    assert "reason" in response.metadata
+
+
+def test_ibkr_data_pipeline_tool_executes_with_injected_pipe(tmp_path: Path) -> None:
+    class FakeIBKRPipe:
+        def fetch_market_snapshot(self, request) -> object:
+            class Snapshot:
+                def to_dict(self_inner) -> dict:
+                    return {
+                        "schema_version": "observation.v1",
+                        "as_of": "2026-06-02T20:00:00Z",
+                        "source": "IBKR",
+                        "symbols": {
+                            request.symbol: {"last": 601.25, "volume": 81234000},
+                        },
+                        "history": {},
+                        "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
+                        "option_chain": {
+                            "underlying_symbol": request.symbol,
+                            "expirations": list(request.expirations) or ["20260620"],
+                            "strikes": list(request.strikes) or [600.0],
+                            "rights": list(request.rights),
+                            "option_quotes": [
+                                {
+                                    "symbol": "SPY   260620C00600000",
+                                    "expiry": "20260620",
+                                    "strike": 600.0,
+                                    "right": "C",
+                                    "bid": 10.1,
+                                    "ask": 10.4,
+                                    "volume": 1200,
+                                    "open_interest": 15000,
+                                    "greeks": {"delta": 0.49, "gamma": 0.03},
+                                }
+                            ],
+                        },
+                        "provider_metadata": {"port": 4001},
+                    }
+
+            return Snapshot()
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        ibkr_data_pipe=FakeIBKRPipe(),
+    )
+    response = services.tools.execute(
+        ToolExecutionRequest(
+            tool_id="ibkr_data_pipeline",
+            arguments={
+                "operation": "fetch_market_snapshot",
+                "symbol": "SPY",
+                "port": 4001,
+                "expiry_count": 1,
+                "strike_count": 1,
+            },
+        )
+    )
+
+    assert response.status == "succeeded"
+    assert response.output["source"] == "IBKR"
+    assert response.output["symbols"]["SPY"]["last"] == 601.25
+    assert response.output["option_chain"]["option_quotes"][0]["greeks"]["delta"] == 0.49
+    assert response.metadata["port"] == 4001
+
+
+def test_run_agent_parser_accepts_query_shortcut() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run-agent",
+            "--agent",
+            "agents/research_agent.yaml",
+            "--query",
+            "What is an SABR model",
+        ]
+    )
+
+    assert args.command == "run-agent"
+    assert args.agent == "agents/research_agent.yaml"
+    assert args.query == "What is an SABR model"
+    assert args.output_mode == "response"
+
+
+def test_run_dag_parser_accepts_query_and_auto_approve() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run-dag",
+            "--workflow",
+            "workflows/sabr_research_pipeline.yaml",
+            "--query",
+            "What is an SABR model",
+            "--auto-approve-gates",
+        ]
+    )
+
+    assert args.command == "run-dag"
+    assert args.workflow == "workflows/sabr_research_pipeline.yaml"
+    assert args.query == "What is an SABR model"
+    assert args.auto_approve_gates is True
+
+
+def test_run_parser_accepts_langsmith_arguments() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "--workflow",
+            "examples/workflows/research_brief.md",
+            "--langsmith-tracing",
+            "--langsmith-project",
+            "agentic-harness-tests",
+        ]
+    )
+
+    assert args.command == "run"
+    assert args.langsmith_tracing is True
+    assert args.langsmith_project == "agentic-harness-tests"
+
+
+def test_resume_dag_parser_accepts_review_decision() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "resume-dag",
+            "--run-id",
+            "dag-run-123",
+            "--decision",
+            "approved",
+            "--notes",
+            "Looks good",
+        ]
+    )
+
+    assert args.command == "resume-dag"
+    assert args.run_id == "dag-run-123"
+    assert args.decision == "approved"
+    assert args.notes == "Looks good"
+
+
+def test_build_agent_input_payload_merges_query_shortcut(tmp_path: Path) -> None:
+    payload_path = tmp_path / "input.json"
+    payload_path.write_text(json.dumps({"topic": "quant finance"}), encoding="utf-8")
+
+    payload = _build_agent_input_payload(
+        input_path=str(payload_path),
+        query="What is an SABR model",
+    )
+
+    assert payload["topic"] == "quant finance"
+    assert payload["query"] == "What is an SABR model"
+
+
+def test_tool_step_executes_web_search_via_platform_tool_service(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "research_workflow.md"
+    _write_research_workflow(workflow_path)
+
+    class FakeSearchClient:
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            return {
+                "query": query,
+                "results": [
+                    {"title": "LangGraph Memory Patterns", "url": "https://example.com/langgraph-memory"},
+                    {"title": "Durable Agent Workflows", "url": "https://example.com/durable-workflows"},
+                    {"title": "Context Engineering", "url": "https://example.com/context-engineering"},
+                ][:max_results],
+                "topic": topic,
+                "include_raw_content": include_raw_content,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    result = start_workflow(
+        workflow_path,
+        {"query": "LangGraph durable memory"},
+        services=services,
+        memory_service_type="ephemeral",
+        initial_state_overrides={"allowed_tools": ["web_search"]},
+    )
+
+    assert result["status"] == "completed"
+    assert result["named_outputs"]["search_results"]["query"] == "LangGraph durable memory"
+    assert len(result["named_outputs"]["search_results"]["results"]) == 3
+    assert result["step_history"][-1]["metadata"]["tool_id"] == "web_search"
+
+
+def test_tool_step_rejects_agent_when_tool_not_allowed(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "research_workflow.md"
+    _write_research_workflow(workflow_path)
+
+    class FakeSearchClient:
+        def search(self, *, query: str, max_results: int = 5, topic: str = "general", include_raw_content: bool = False):
+            return {"query": query, "results": []}
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    result = start_workflow(
+        workflow_path,
+        {"query": "LangGraph durable memory"},
+        services=services,
+        memory_service_type="ephemeral",
+        initial_state_overrides={"allowed_tools": []},
+    )
+
+    assert result["status"] == "failed"
+    assert "not allowed to use tool 'web_search'" in result["last_error"]
+
+
+def test_run_agent_workflow_executes_research_agent_with_web_search(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    _write_research_workflow(workflow_path)
+    _write_research_agent(agent_path, workflow_path)
+
+    class FakeSearchClient:
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            return {
+                "query": query,
+                "results": [
+                    {"title": "Result A", "url": "https://example.com/a"},
+                    {"title": "Result B", "url": "https://example.com/b"},
+                ][:max_results],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    result = run_agent_workflow(
+        agent_path,
+        {"query": "generic web search"},
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+    )
+
+    assert result["status"] == "completed"
+    assert result["agent"]["agent_id"] == "research_agent"
+    assert result["agent"]["allowed_tools"] == ["web_search"]
+    assert result["named_outputs"]["search_results"]["query"] == "generic web search"
+
+
+def test_extract_artifact_returns_search_results_contract() -> None:
+    result = {
+        "run_id": "run-123",
+        "workflow_id": "research_agent_search",
+        "status": "completed",
+        "agent_id": "research_agent",
+        "agent_name": "Research Agent",
+        "agent_role": "research_agent",
+        "named_outputs": {
+            "search_query": "What is an SABR model",
+            "search_results": {
+                "results": [
+                    {"title": "SABR overview", "url": "https://example.com/sabr"}
+                ]
+            },
+        },
+    }
+
+    artifact = extract_artifact(result)
+
+    assert artifact.artifact_type == "search_results"
+    assert artifact.payload["query"] == "What is an SABR model"
+    assert artifact.payload["results"][0]["title"] == "SABR overview"
+
+
+def test_format_response_returns_human_and_agent_views() -> None:
+    artifact = extract_artifact(
+        {
+            "run_id": "run-123",
+            "workflow_id": "research_agent_search",
+            "status": "completed",
+            "agent_id": "research_agent",
+            "agent_name": "Research Agent",
+            "agent_role": "research_agent",
+            "named_outputs": {
+                "search_query": "What is an SABR model",
+                "search_results": {
+                    "results": [
+                        {"title": "SABR overview", "url": "https://example.com/sabr"}
+                    ]
+                },
+            },
+        }
+    )
+
+    human_response = format_response(artifact, audience="human", response_format="auto")
+    agent_response = format_response(artifact, audience="agent", response_format="auto")
+
+    assert human_response.response_format == "text"
+    assert "Search results for: What is an SABR model" in human_response.content
+    assert agent_response.response_format == "json"
+    assert agent_response.content["artifact_type"] == "search_results"
+
+
+def test_select_output_hides_internal_state_for_artifact_and_response() -> None:
+    result = {
+        "run_id": "run-123",
+        "workflow_id": "research_agent_search",
+        "status": "completed",
+        "events": [{"event_type": "checkpoint"}],
+        "named_outputs": {
+            "search_query": "What is an SABR model",
+            "search_results": {
+                "results": [
+                    {"title": "SABR overview", "url": "https://example.com/sabr"}
+                ]
+            },
+        },
+    }
+
+    artifact_view = select_output(result, output_mode="artifact")
+    response_view = select_output(result, output_mode="response", audience="agent")
+
+    assert "events" not in artifact_view
+    assert artifact_view["artifact_type"] == "search_results"
+    assert "events" not in response_view
+    assert response_view["response_format"] == "json"
+
+
+def test_load_declarative_workflow_definition_parses_agent_and_mock_nodes(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    assert isinstance(definition, DeclarativeWorkflowDefinition)
+    assert definition.workflow_id == "quant_research_pipeline"
+    assert definition.entry_nodes == ["gather_research"]
+    assert definition.nodes["gather_research"].kind == "agent"
+    assert definition.nodes["extract_equations"].kind == "mock_agent"
+    assert definition.nodes["gather_research"].agent == str(agent_path.resolve())
+
+
+def test_build_dag_blueprint_returns_roots_leaves_and_topological_order(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    blueprint = build_dag_blueprint(definition)
+
+    assert isinstance(blueprint, WorkflowDagBlueprint)
+    assert blueprint.roots == ["gather_research"]
+    assert blueprint.leaves == ["review_output"]
+    assert blueprint.topological_order == [
+        "gather_research",
+        "extract_equations",
+        "review_output",
+    ]
+    assert blueprint.adjacency["gather_research"] == ["extract_equations"]
+
+
+def test_declarative_workflow_rejects_unknown_dependencies(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "pipeline.yaml"
+    workflow_path.write_text(
+        """workflow_id: bad_workflow
+nodes:
+  - id: orphan
+    kind: mock_agent
+    depends_on:
+      - missing_node
+    execution_mode: mock
+    mock:
+      response: {}
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        load_declarative_workflow_definition(workflow_path)
+    except ValueError as exc:
+        assert "depends on unknown node 'missing_node'" in str(exc)
+    else:
+        raise AssertionError("Expected unknown dependency validation to fail.")
+
+
+def test_declarative_workflow_rejects_cycles(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "cyclic.yaml"
+    workflow_path.write_text(
+        """workflow_id: cyclic_workflow
+nodes:
+  - id: a
+    kind: mock_agent
+    depends_on:
+      - b
+    execution_mode: mock
+    mock:
+      response: {}
+  - id: b
+    kind: mock_agent
+    depends_on:
+      - a
+    execution_mode: mock
+    mock:
+      response: {}
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        load_declarative_workflow_definition(workflow_path)
+    except ValueError as exc:
+        assert "contains a cycle" in str(exc)
+    else:
+        raise AssertionError("Expected cycle validation to fail.")
+
+
+def test_platform_services_expose_declarative_workflow_loader(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+
+    services = build_platform_services(storage_root=tmp_path / "runtime_store")
+    definition = services.declarative_workflow_definitions.load(workflow_path)
+
+    assert isinstance(services.declarative_workflow_definitions, YamlDeclarativeWorkflowDefinitionService)
+    assert definition.workflow_id == "quant_research_pipeline"
+
+
+def test_compile_workflow_dag_builds_execution_stages_and_resolved_modes(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    compiled = compile_workflow_dag(definition)
+
+    assert isinstance(compiled, CompiledWorkflowDag)
+    assert compiled.execution_stages == [
+        ["gather_research"],
+        ["extract_equations"],
+        ["review_output"],
+    ]
+    assert compiled.nodes["gather_research"].execution_mode == "real"
+    assert compiled.nodes["extract_equations"].execution_mode == "mock"
+    assert compiled.nodes["review_output"].dependencies == ["extract_equations"]
+    assert compiled.nodes["gather_research"].dependents == ["extract_equations"]
+
+
+def test_compile_workflow_dag_validates_input_binding_dependency_references(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "bad_pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    workflow_path.write_text(
+        f"""workflow_id: bad_pipeline
+nodes:
+  - id: gather_research
+    kind: agent
+    agent: {agent_path.name}
+    depends_on: []
+    execution_mode: real
+  - id: downstream
+    kind: mock_agent
+    depends_on: []
+    input_bindings:
+      search_results: "$node.gather_research.artifact"
+    execution_mode: mock
+    mock:
+      response: {{}}
+""",
+        encoding="utf-8",
+    )
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    try:
+        compile_workflow_dag(definition)
+    except ValueError as exc:
+        assert "not available from its upstream DAG state" in str(exc)
+    else:
+        raise AssertionError("Expected invalid node artifact reference to fail compilation.")
+
+
+def test_compile_workflow_dag_allows_transitive_upstream_artifact_references(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+    definition = load_declarative_workflow_definition(workflow_path)
+
+    compiled = compile_workflow_dag(definition)
+
+    assert compiled.nodes["review_output"].stage_index == 2
+    assert compiled.nodes["review_output"].input_bindings["packet"] == "$node.extract_equations.artifact"
+
+
+def test_platform_services_expose_dag_compiler(tmp_path: Path) -> None:
+    agent_path = tmp_path / "research_agent.yaml"
+    workflow_path = tmp_path / "pipeline.yaml"
+    _write_research_agent(agent_path, tmp_path / "placeholder.md")
+    _write_declarative_workflow(workflow_path, agent_path)
+
+    services = build_platform_services(storage_root=tmp_path / "runtime_store")
+    definition = services.declarative_workflow_definitions.load(workflow_path)
+    compiled = services.dag_compiler.compile(definition)
+
+    assert isinstance(services.dag_compiler, DefaultDagCompiler)
+    assert compiled.execution_stages[0] == ["gather_research"]
+
+
+def test_run_declarative_workflow_executes_real_agent_mock_and_human_gate(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            return {
+                "query": query,
+                "results": [
+                    {"title": "SABR overview", "url": "https://example.com/sabr"},
+                    {"title": "SABR parameters", "url": "https://example.com/params"},
+                ][:max_results],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    result = run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+    )
+
+    assert result["status"] == "awaiting_human_gate"
+    assert result["node_results"]["gather_research"]["status"] == "completed"
+    assert result["node_results"]["extract_equations"]["status"] == "completed"
+    assert result["node_results"]["review_output"]["status"] == "awaiting_human_gate"
+    assert result["artifacts"]["gather_research"]["artifact_type"] == "search_results"
+    assert result["pending_human_gate"]["node_id"] == "review_output"
+    assert result["completed_stages"] == [0, 1]
+
+
+def test_run_declarative_workflow_auto_approves_human_gate_and_emits_leaf_artifact(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            return {
+                "query": query,
+                "results": [{"title": "SABR overview", "url": "https://example.com/sabr"}],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    result = run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        auto_approve_human_gates=True,
+    )
+
+    assert result["status"] == "completed"
+    assert result["completed_stages"] == [0, 1, 2]
+    assert result["leaf_artifacts"]["review_output"]["artifact_type"] == "review_packet"
+    artifact_view = select_output(result, output_mode="artifact")
+    assert artifact_view["artifact_type"] == "review_packet"
+
+
+def test_platform_services_expose_dag_executor(tmp_path: Path) -> None:
+    services = build_platform_services(storage_root=tmp_path / "runtime_store")
+    assert services.dag_executor.descriptor.service_name == "dag_executor"
+
+
+def test_platform_services_enable_langsmith_without_disabling_local_events(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def flush(self, timeout=None) -> None:
+            captured["flushed"] = True
+
+    @contextmanager
+    def fake_tracing_context(**kwargs):
+        captured["context_kwargs"] = kwargs
+        yield
+
+    class FakeTrace:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            captured.setdefault("trace_calls", []).append(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def end(self, *, outputs=None):
+            captured.setdefault("trace_outputs", []).append(outputs)
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        langsmith_tracing=True,
+        langsmith_project="agentic-harness-tests",
+        langsmith_api_key="test-key",
+        langsmith_client=FakeClient(),
+    )
+    services.observability._tracing_context_factory = fake_tracing_context
+    services.observability._trace_factory = lambda **kwargs: FakeTrace(**kwargs)
+
+    event = services.observability.record(
+        ObservabilityRequest(
+            event=ServiceEvent(
+                event_type="checkpoint",
+                payload={"run_id": "run-123"},
+            )
+        )
+    )
+    with services.observability.trace_context(
+        tags=["test"],
+        metadata={"run_id": "run-123"},
+    ):
+        pass
+    with services.observability.trace_span(
+        "test-span",
+        run_type="tool",
+        inputs={"foo": "bar"},
+        tags=["test"],
+        metadata={"run_id": "run-123"},
+    ) as span:
+        span.end(outputs={"ok": True})
+    services.observability.flush()
+
+    assert event["type"] == "checkpoint"
+    assert "langsmith_project" in event
+    assert "langsmith_tracing" in services.observability.descriptor.capabilities
+    assert captured["context_kwargs"]["project_name"] == "agentic-harness-tests"
+    assert captured["trace_calls"][0]["name"] == "test-span"
+    assert captured["trace_outputs"][0] == {"ok": True}
+    assert captured["flushed"] is True
+
+
+def test_workflow_runtime_emits_langsmith_execution_tree(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.md"
+    storage_root = tmp_path / "runtime_store"
+    _write_workflow(workflow_path)
+    captured: dict[str, object] = {"trace_calls": [], "trace_outputs": []}
+
+    class FakeClient:
+        def flush(self, timeout=None) -> None:
+            captured["flushed"] = True
+
+    @contextmanager
+    def fake_tracing_context(**kwargs):
+        captured["context_kwargs"] = kwargs
+        yield
+
+    class FakeTrace:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.metadata = dict(kwargs.get("metadata") or {})
+            captured["trace_calls"].append(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def end(self, *, outputs=None):
+            captured["trace_outputs"].append(outputs)
+
+    services = build_platform_services(
+        storage_root=storage_root,
+        langsmith_tracing=True,
+        langsmith_project="agentic-harness-tests",
+        langsmith_api_key="test-key",
+        langsmith_client=FakeClient(),
+    )
+    services.observability._tracing_context_factory = fake_tracing_context
+    services.observability._trace_factory = lambda **kwargs: FakeTrace(**kwargs)
+
+    result = start_workflow(
+        workflow_path,
+        {"topic": "normal request"},
+        storage_root=storage_root,
+        services=services,
+    )
+
+    span_names = [call["name"] for call in captured["trace_calls"]]
+
+    assert result["status"] == "completed"
+    assert "workflow_run:onboarding_workflow" in span_names
+    assert "memory_retrieval:capture_request" in span_names
+    assert "context_preparation:capture_request" in span_names
+    assert "step_executor:capture_request" in span_names
+    assert "guardrail_pre:classify_request" in span_names
+    assert "prompt:classify_request" in span_names
+    assert "evaluation:classify_request" in span_names
+    assert "memory_write:classify_request" in span_names
+    assert captured["context_kwargs"]["project_name"] == "agentic-harness-tests"
+    assert any(
+        isinstance(output, dict) and output.get("named_outputs", {}).get("summary")
+        for output in captured["trace_outputs"]
+    )
+
+
+def test_resolve_langsmith_config_uses_explicit_and_env_inputs(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "env-project")
+
+    config = resolve_langsmith_config(project="explicit-project")
+
+    assert isinstance(config, LangSmithConfig)
+    assert config.enabled is True
+    assert config.project == "explicit-project"
+
+
+def test_run_declarative_workflow_executes_same_stage_nodes_concurrently(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "parallel_pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_parallel_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def search(
+            self,
+            *,
+            query: str,
+            max_results: int = 5,
+            topic: str = "general",
+            include_raw_content: bool = False,
+        ):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.15)
+                return {
+                    "query": query,
+                    "results": [{"title": query, "url": "https://example.com/result"}],
+                    "topic": topic,
+                }
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    fake_client = FakeSearchClient()
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=fake_client,
+    )
+    result = run_declarative_workflow(
+        declarative_path,
+        {"alpha_query": "alpha", "beta_query": "beta"},
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        auto_approve_human_gates=True,
+    )
+
+    assert result["status"] == "completed"
+    assert fake_client.max_active >= 2
+    assert result["completed_stages"] == [0, 1]
+
+
+def test_resume_declarative_workflow_approves_human_gate_and_completes(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(self, *, query: str, max_results: int = 5, topic: str = "general", include_raw_content: bool = False):
+            return {
+                "query": query,
+                "results": [{"title": "SABR overview", "url": "https://example.com/sabr"}],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    first = run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        run_id="dag-run-1",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+    )
+
+    resumed = resume_declarative_workflow(
+        "dag-run-1",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        decision="approved",
+        notes="Looks good",
+    )
+
+    assert first["status"] == "awaiting_human_gate"
+    assert resumed["status"] == "completed"
+    assert resumed["completed_stages"] == [0, 1, 2]
+    assert resumed["node_results"]["review_output"]["status"] == "completed"
+    assert resumed["node_results"]["review_output"]["metadata"]["review_decision"] == "approved"
+    assert resumed["pending_human_gate"] is None
+
+
+def test_resume_declarative_workflow_rejects_human_gate(tmp_path: Path) -> None:
+    agent_workflow_path = tmp_path / "research_workflow.md"
+    agent_path = tmp_path / "research_agent.yaml"
+    declarative_path = tmp_path / "pipeline.yaml"
+    _write_research_workflow(agent_workflow_path)
+    _write_research_agent(agent_path, agent_workflow_path)
+    _write_declarative_workflow(declarative_path, agent_path)
+
+    class FakeSearchClient:
+        def search(self, *, query: str, max_results: int = 5, topic: str = "general", include_raw_content: bool = False):
+            return {
+                "query": query,
+                "results": [{"title": "SABR overview", "url": "https://example.com/sabr"}],
+                "topic": topic,
+            }
+
+    services = build_platform_services(
+        storage_root=tmp_path / "runtime_store",
+        memory_service_type="ephemeral",
+        web_search_client=FakeSearchClient(),
+    )
+    run_declarative_workflow(
+        declarative_path,
+        {"query": "What is an SABR model"},
+        run_id="dag-run-2",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+    )
+
+    resumed = resume_declarative_workflow(
+        "dag-run-2",
+        storage_root=tmp_path / "runtime_store",
+        services=services,
+        decision="rejected",
+        notes="Not enough detail",
+    )
+
+    assert resumed["status"] == "rejected"
+    assert resumed["node_results"]["review_output"]["status"] == "rejected"
+    assert resumed["node_results"]["review_output"]["metadata"]["review_notes"] == "Not enough detail"
+

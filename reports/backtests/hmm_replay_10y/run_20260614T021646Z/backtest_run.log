@@ -1,0 +1,22 @@
+2026-06-13 19:16:46,816Z [INFO] Replay start | config=agentic_vol_regime_app/data/processed/features_daily.parquet | start=2026-06-12 | end=2026-06-12 | as_of=2026-06-12 | models=heuristic,hmm_v1_core,hmm_v2_core_plus_sector_corr,hmm_v3_core_plus_sector_geometry,hmm_v3_1_meta_blend,hmm_v4_path_aware_meta | horizons=1,2,3,5,10
+2026-06-13 19:16:46,820Z [INFO] Eligible replay dates: 1 | first=2026-06-12 | last=2026-06-12 | min_train_rows=1260
+2026-06-13 19:16:50,285Z [INFO] Progress 1/1 dates | as_of=2026-06-12 | predictions=6 | scores=30 | elapsed=3.5s
+2026-06-13 19:16:50,379Z [ERROR] Replay failed | as_of=2026-06-12 | model=hmm_v4_path_aware_meta | elapsed=3.5s
+Traceback (most recent call last):
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 435, in run_hmm_replay
+    _write_jsonl(prediction_path, prediction_records)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\joyba\PycharmProjects\langchain_langgraph\src\backtest\hmm_replay\replay_runner.py", line 69, in _write_jsonl
+    handle.write(json.dumps(row, sort_keys=True))
+                 ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\json\__init__.py", line 242, in dumps
+    **kw).encode(obj)
+          ~~~~~~^^^^^
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\json\encoder.py", line 202, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\json\encoder.py", line 263, in iterencode
+    return _iterencode(o, 0)
+  File "C:\Users\joyba\.conda\envs\dl_ai\Lib\json\encoder.py", line 182, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+                    f'is not JSON serializable')
+TypeError: Object of type int64 is not JSON serializable
