@@ -80,8 +80,6 @@ PROMPT = ChatPromptTemplate.from_messages([
     ("human", "QUESTION:\n{question}")
 ])
 print(PROMPT)  # PROMPT
-
-
 # ---------- Graph State ----------
 class RAGState(TypedDict):
     question: str
@@ -93,7 +91,8 @@ class RAGState(TypedDict):
 # ---------- Nodes ----------
 def retrieve_node(state: RAGState) -> RAGState:
     docs = retriever.invoke(state["question"])
-    return {**state, "retrieved": docs}
+    ret = {**state, "retrieved": docs}
+    return ret
 
 
 def compose_context_node(state: RAGState) -> RAGState:
