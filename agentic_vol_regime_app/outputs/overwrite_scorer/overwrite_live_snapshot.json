@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-06-26T11:19:16.640481+00:00",
+  "underlying": "SPY",
+  "spot": 729.86,
+  "vix": 20.0,
+  "daily_sigma_points": 9.19537167568382,
+  "target_strike": 734.457685837842,
+  "hmm_regime_probs": {
+    "low_vol_trend": 0.075948,
+    "mid_vol_chop": 0.340375,
+    "vol_expansion": 0.477199,
+    "crash": 0.0
+  },
+  "selected_regime": "VOL_EXPANSION",
+  "recommendation_mode": "UNCERTAIN_SELECTIVE",
+  "best_candidate": null,
+  "input_parameters": {
+    "leap_contracts": 5,
+    "leap_delta": 0.8,
+    "upside_drag_penalty": 0.35,
+    "min_premium": 1.4,
+    "max_spread_pct": 0.25,
+    "allow_crash_overwrite": false
+  }
+}

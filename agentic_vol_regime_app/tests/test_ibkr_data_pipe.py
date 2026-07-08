@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from agentic_vol_regime_app.data.ibkr_client import (
     IBKRConnectionConfig,
@@ -142,6 +143,63 @@ def test_ibkr_data_pipe_normalizes_option_chain_snapshot() -> None:
     assert observation.option_chain["option_quotes"][0]["greeks"]["delta"] == 0.47
 
 
+def test_option_chain_snapshot_skips_invalid_contract_combinations() -> None:
+    class FakeIB:
+        def reqSecDefOptParams(self, *args, **kwargs):
+            return [
+                SimpleNamespace(
+                    expirations={"20260708"},
+                    strikes={737.5, 742.5},
+                    multiplier="100",
+                    tradingClass="SPY",
+                    exchange="CBOE",
+                )
+            ]
+
+        def qualifyContracts(self, contract):
+            expiry = str(getattr(contract, "lastTradeDateOrContractMonth", ""))
+            strike = float(getattr(contract, "strike", 0.0))
+            right = str(getattr(contract, "right", "")).upper()
+            if right == "P" and strike == 742.5:
+                raise RuntimeError("Unknown contract")
+            if right == "C" and strike == 737.5:
+                raise RuntimeError("No security definition has been found")
+            contract.localSymbol = f"SPY   {expiry[-6:]}{right}{int(strike * 1000):08d}"
+            return [contract]
+
+        def reqTickers(self, *contracts):
+            return [
+                SimpleNamespace(
+                    contract=contract,
+                    bid=1.0,
+                    ask=1.2,
+                    last=1.1,
+                    close=1.05,
+                    volume=10,
+                    bidSize=1,
+                    askSize=2,
+                    lastSize=3,
+                    modelGreeks=SimpleNamespace(delta=0.41, gamma=0.02, theta=-0.1, vega=0.08),
+                    impliedVolatility=0.22,
+                )
+                for contract in contracts
+            ]
+
+    client = IBKRLiveClient(IBKRConnectionConfig(host="127.0.0.1", port=7497, client_id=99))
+    snapshot = client._fetch_option_chain_snapshot(
+        FakeIB(),
+        stock_contract=SimpleNamespace(secType="STK", conId=756733),
+        request=IBKROptionChainRequest(symbol="SPY", expiry_count=1, strike_count=2),
+        underlying_price=742.0,
+    )
+
+    assert len(snapshot["option_quotes"]) == 2
+    assert {quote["right"] for quote in snapshot["option_quotes"]} == {"C", "P"}
+    assert snapshot["exchange"] == "CBOE"
+    assert snapshot["warnings"]
+    assert any("Skipping invalid option contract SPY" in warning for warning in snapshot["warnings"])
+
+
 def test_market_data_loader_supports_ibkr_provider_payload() -> None:
     pipe = IBKRDataPipe(
         connection=IBKRConnectionConfig(client_id=77),
@@ -234,6 +292,17 @@ def test_historical_duration_str_uses_years_for_long_windows() -> None:
     assert _historical_duration_str(365) == "370 D"
     assert _historical_duration_str(756) == "3 Y"
     assert _historical_duration_str(1512) == "6 Y"
+
+
+def test_select_strikes_prefers_integer_strikes_when_auto_selecting() -> None:
+    selected = IBKRLiveClient._select_strikes(
+        available=[737.5, 738.0, 740.0, 742.5, 745.0],
+        requested=(),
+        underlying_price=742.0,
+        limit=3,
+    )
+
+    assert selected == [738.0, 740.0, 745.0]
 
 
 def test_validate_observation_preserves_provider_warnings() -> None:

@@ -68,6 +68,17 @@ def _trace_safe_payload(value: Any, *, max_string_chars: int = 1000, max_items: 
         return rendered if len(rendered) <= max_string_chars else f"{rendered[:max_string_chars]}...<truncated>"
 
 
+def _first_valid_number(*values: Any) -> float | None:
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number:
+            return number
+    return None
+
+
 def default_agent_path() -> Path:
     return AppPaths.default().agents_dir / "daily_regime_orchestrator.yaml"
 
@@ -94,6 +105,23 @@ def default_hmm_v3_1_agent_path() -> Path:
 
 def default_ibkr_agent_path() -> Path:
     return AppPaths.default().agents_dir / "ibkr_market_data_agent.yaml"
+
+
+def _resolve_regime_engine_agent_path(regime_engine: str) -> Path:
+    normalized = str(regime_engine or "").strip().lower()
+    if normalized in {"hmmv1", "hmm_v1", "hmmv1 agent", "hmmv1_agent"}:
+        return default_hmm_agent_path()
+    if normalized in {"hmmv2", "hmm_v2", "hmmv2 agent", "hmmv2_agent"}:
+        return default_hmm_v2_agent_path()
+    if normalized in {"hmmv3", "hmm_v3", "hmmv3 agent", "hmmv3_agent"}:
+        return default_hmm_v3_agent_path()
+    if normalized in {"hmmv3.1", "hmm_v3_1", "hmmv3.1 meta-blend agent", "hmmv3_1 agent", "hmmv3.1 agent"}:
+        return default_hmm_v3_1_agent_path()
+    if normalized in {"heuristic", "heuristic agent"}:
+        return default_agent_path()
+    if normalized in {"ml", "ml agent"}:
+        return default_ml_agent_path()
+    return default_hmm_agent_path()
 
 
 def _resolve_report_model_identity(agent_path: str | Path | None = None) -> tuple[str, str]:
@@ -952,6 +980,7 @@ def run_overwrite_candidate_scorer(
 ) -> dict[str, Any]:
     from agentic_vol_regime_app.overwrite_candidate_scorer import (
         ScorerConfig,
+        build_overwrite_decision_summary,
         load_candidates,
         load_hmm_context,
         score_candidates,
@@ -1017,6 +1046,19 @@ def run_overwrite_candidate_scorer(
         )
         accepted = scored_candidates[scored_candidates["decision"] == "ACCEPT"].copy()
         rejected = scored_candidates[scored_candidates["decision"] == "REJECT"].copy()
+        decision_summary = build_overwrite_decision_summary(
+            scored_candidates=scored_candidates,
+            scenario_table=scenario_table,
+            metadata={
+                "underlying": config.underlying,
+                "spot": config.spot,
+                "vix": config.vix,
+                "target_strike": float(scored_candidates.iloc[0]["target_strike"]) if not scored_candidates.empty else None,
+                "max_spread_pct": config.max_spread_pct,
+            },
+            decision_policy=decision_policy,
+            hmm_context=hmm_context,
+        )
         result = {
             "underlying": config.underlying,
             "spot": config.spot,
@@ -1033,11 +1075,14 @@ def run_overwrite_candidate_scorer(
             "scored_candidates_path": outputs["scored_candidates_csv"],
             "scenario_pnl_path": outputs["scenario_pnl_csv"],
             "report_path": outputs["report_md"],
+            "live_snapshot_path": outputs["live_snapshot_json"],
+            "markdown_report": outputs["markdown_report"],
             "accepted_count": int(len(accepted)),
             "rejected_count": int(len(rejected)),
             "top_accepted_candidates": accepted.head(10).to_dict(orient="records"),
             "top_rejected_candidates": rejected.head(10).to_dict(orient="records"),
             "scenario_table_preview": scenario_table.head(50).to_dict(orient="records"),
+            "decision_summary": decision_summary,
             "hmm_context": (
                 {
                     "asof": hmm_context.asof,
@@ -1047,6 +1092,266 @@ def run_overwrite_candidate_scorer(
                 if hmm_context is not None
                 else None
             ),
+        }
+        if hasattr(app_span, "end"):
+            app_span.end(outputs=_trace_safe_payload(result))
+    return result
+
+
+def run_live_overwrite_policy_engine(
+    *,
+    underlying: str,
+    regime_engine: str,
+    leap_contracts: int,
+    leap_delta: float,
+    base_min_premium: float,
+    dte_choices: list[int],
+    strikes_below_target: int,
+    strikes_above_target: int,
+    host: str,
+    port: int,
+    client_id: int,
+    market_data_type: int,
+    output_dir: str,
+    exchange: str = "SMART",
+    option_exchange: str = "SMART",
+    index_exchange: str = "CBOE",
+    currency: str = "USD",
+    upside_drag_penalty: float = 0.35,
+    max_spread_pct: float = 0.25,
+    allow_crash_overwrite: bool = False,
+    storage_root: str | Path | None = None,
+    database_url: str | None = None,
+    langsmith_tracing: bool | None = None,
+    langsmith_api_key: str | None = None,
+    langsmith_endpoint: str | None = None,
+    langsmith_project: str | None = None,
+    langsmith_workspace_id: str | None = None,
+    ibkr_data_pipe=None,
+) -> dict[str, Any]:
+    from agentic_vol_regime_app.data.ibkr_client import (
+        IBKRConnectionConfig,
+        IBKRDataPipe,
+        IBKRVolRegimeSnapshotRequest,
+    )
+    from agentic_vol_regime_app.overwrite_candidate_scorer import (
+        HmmContext,
+        ScorerConfig,
+        build_overwrite_decision_summary,
+        compute_daily_sigma,
+        generate_candidates_from_option_chain,
+        normalize_regime_probs,
+        score_candidates,
+        write_outputs,
+    )
+
+    resolved_output_dir = Path(output_dir).resolve()
+    agent_path = _resolve_regime_engine_agent_path(regime_engine)
+    services = build_platform_services(
+        storage_root=storage_root,
+        database_url=database_url,
+        langsmith_tracing=langsmith_tracing,
+        langsmith_api_key=langsmith_api_key,
+        langsmith_endpoint=langsmith_endpoint,
+        langsmith_project=langsmith_project,
+        langsmith_workspace_id=langsmith_workspace_id,
+        ibkr_data_pipe=ibkr_data_pipe,
+    )
+    with services.observability.trace_span(
+        "agentic_vol_regime_app:run_live_overwrite_policy_engine",
+        run_type="chain",
+        inputs={
+            "underlying": str(underlying).strip().upper(),
+            "regime_engine": regime_engine,
+            "leap_contracts": int(leap_contracts),
+            "leap_delta": float(leap_delta),
+            "base_min_premium": float(base_min_premium),
+            "dte_choices": list(dte_choices),
+            "strikes_below_target": int(strikes_below_target),
+            "strikes_above_target": int(strikes_above_target),
+            "host": str(host),
+            "port": int(port),
+            "client_id": int(client_id),
+            "market_data_type": int(market_data_type),
+            "output_dir": str(resolved_output_dir),
+        },
+        tags=["agentic_vol_regime_app", "overwrite_policy_engine", "ibkr_live"],
+        metadata={"application": "agentic_vol_regime_app"},
+    ) as app_span:
+        pipe = ibkr_data_pipe
+        if pipe is None:
+            pipe = IBKRDataPipe(
+                connection=IBKRConnectionConfig(
+                    host=str(host).strip() or "127.0.0.1",
+                    port=int(port),
+                    client_id=int(client_id),
+                    market_data_type=int(market_data_type),
+                )
+            )
+        snapshot_request = IBKRVolRegimeSnapshotRequest.from_payload(
+            {
+                "symbol": str(underlying).strip().upper(),
+                "exchange": str(exchange).strip() or "SMART",
+                "option_exchange": str(option_exchange).strip() or "SMART",
+                "index_exchange": str(index_exchange).strip() or "CBOE",
+                "currency": str(currency).strip() or "USD",
+                "history_days": 30,
+                "expiry_count": max(len(set(int(item) for item in dte_choices if int(item) > 0)), 2),
+                "strike_count": max(int(strikes_below_target) + int(strikes_above_target) + 4, 8),
+                "min_days_to_expiry": max(min(int(item) for item in dte_choices), 0),
+            }
+        )
+        observation = pipe.fetch_vol_regime_snapshot(snapshot_request)
+        symbols = dict(observation.symbols)
+        underlying_symbol = str(underlying).strip().upper()
+        spot = _first_valid_number(
+            dict(symbols.get(underlying_symbol, {})).get("last"),
+            dict(symbols.get(underlying_symbol, {})).get("close"),
+            dict(symbols.get(underlying_symbol, {})).get("bid"),
+            dict(symbols.get(underlying_symbol, {})).get("ask"),
+        )
+        vix = _first_valid_number(
+            dict(symbols.get("VIX", {})).get("last"),
+            dict(symbols.get("VIX", {})).get("close"),
+            dict(symbols.get("VIX", {})).get("bid"),
+            dict(symbols.get("VIX", {})).get("ask"),
+        )
+        if spot is None or vix is None:
+            raise RuntimeError("IBKR live snapshot did not provide usable spot and VIX values.")
+
+        live_payload = {
+            "data_provider": "ibkr",
+            "symbol": underlying_symbol,
+            "ibkr": {
+                "host": str(host).strip() or "127.0.0.1",
+                "port": int(port),
+                "client_id": int(client_id),
+                "market_data_type": int(market_data_type),
+                "exchange": str(exchange).strip() or "SMART",
+                "option_exchange": str(option_exchange).strip() or "SMART",
+                "index_exchange": str(index_exchange).strip() or "CBOE",
+                "currency": str(currency).strip() or "USD",
+                "expiry_count": max(len(set(int(item) for item in dte_choices if int(item) > 0)), 2),
+                "strike_count": max(int(strikes_below_target) + int(strikes_above_target) + 4, 8),
+                "history_days": 756,
+                "min_days_to_expiry": 0,
+            },
+        }
+        regime_result = run_daily_regime_agent(
+            input_payload=live_payload,
+            agent_path=agent_path,
+            storage_root=storage_root,
+            database_url=database_url,
+            langsmith_tracing=langsmith_tracing,
+            langsmith_api_key=langsmith_api_key,
+            langsmith_endpoint=langsmith_endpoint,
+            langsmith_project=langsmith_project,
+            langsmith_workspace_id=langsmith_workspace_id,
+            ibkr_data_pipe=pipe,
+        )
+        outputs = dict(regime_result.get("named_outputs", {}))
+        hmm_payload = dict(outputs.get("hmm_belief", {}))
+        belief_payload = dict(outputs.get("belief_state", {}))
+        if hmm_payload:
+            regime_probs = normalize_regime_probs(dict(hmm_payload.get("state_probabilities", {})))
+            selected_regime = str(hmm_payload.get("top_state", "")).strip() or None
+            asof = str(hmm_payload.get("as_of", observation.as_of))
+        elif belief_payload:
+            regime_probs = normalize_regime_probs(dict(belief_payload.get("beliefs", {})))
+            selected_regime = max(regime_probs, key=regime_probs.get) if any(regime_probs.values()) else None
+            asof = str(belief_payload.get("as_of", observation.as_of))
+        else:
+            raise RuntimeError("Selected regime engine did not produce a usable belief output.")
+        hmm_context = HmmContext(asof=asof, regime_probs=regime_probs, selected_regime=selected_regime)
+
+        option_quotes = list(dict(observation.option_chain).get("option_quotes", []))
+        target_strike = float(spot) + 0.5 * float(compute_daily_sigma(spot=float(spot), vix=float(vix))[1])
+        candidates = generate_candidates_from_option_chain(
+            option_quotes,
+            as_of=str(observation.as_of),
+            target_strike=target_strike,
+            dte_choices=[int(item) for item in dte_choices],
+            strikes_below_target=int(strikes_below_target),
+            strikes_above_target=int(strikes_above_target),
+        )
+        config = ScorerConfig(
+            underlying=underlying_symbol,
+            spot=float(spot),
+            vix=float(vix),
+            leap_contracts=int(leap_contracts),
+            leap_delta=float(leap_delta),
+            upside_drag_penalty=float(upside_drag_penalty),
+            min_premium=float(base_min_premium),
+            max_spread_pct=float(max_spread_pct),
+            allow_crash_overwrite=bool(allow_crash_overwrite),
+        )
+        scored_candidates, scenario_table, decision_policy = score_candidates(
+            candidates,
+            config=config,
+            hmm_context=hmm_context,
+        )
+        written = write_outputs(
+            output_dir=resolved_output_dir,
+            config=config,
+            hmm_context=hmm_context,
+            decision_policy=decision_policy,
+            scored_candidates=scored_candidates,
+            scenario_table=scenario_table,
+        )
+        accepted = scored_candidates[scored_candidates["decision"] == "ACCEPT"].copy()
+        rejected = scored_candidates[scored_candidates["decision"] == "REJECT"].copy()
+        _, daily_sigma_points = compute_daily_sigma(spot=float(spot), vix=float(vix))
+        decision_summary = build_overwrite_decision_summary(
+            scored_candidates=scored_candidates,
+            scenario_table=scenario_table,
+            metadata={
+                "underlying": underlying_symbol,
+                "spot": float(spot),
+                "vix": float(vix),
+                "target_strike": float(target_strike),
+                "max_spread_pct": float(max_spread_pct),
+                "dte_choices": [int(item) for item in dte_choices],
+            },
+            decision_policy=decision_policy,
+            hmm_context=hmm_context,
+        )
+        result = {
+            "underlying": underlying_symbol,
+            "spot": float(spot),
+            "vix": float(vix),
+            "daily_sigma_points": float(daily_sigma_points),
+            "target_strike": float(target_strike),
+            "regime_engine": regime_engine,
+            "output_dir": str(resolved_output_dir),
+            "recommendation_mode": decision_policy.recommendation_mode,
+            "block_new_overwrites": bool(decision_policy.block_new_overwrites),
+            "min_premium_effective": float(decision_policy.min_premium),
+            "min_distance_sigma_effective": float(decision_policy.min_distance_sigma),
+            "allowed_dte": list(decision_policy.allowed_dte),
+            "accepted_count": int(len(accepted)),
+            "rejected_count": int(len(rejected)),
+            "top_accepted_candidates": accepted.head(10).to_dict(orient="records"),
+            "top_rejected_candidates": rejected.head(10).to_dict(orient="records"),
+            "scenario_table_preview": scenario_table.head(50).to_dict(orient="records"),
+            "decision_summary": decision_summary,
+            "scored_candidates_path": written["scored_candidates_csv"],
+            "scenario_pnl_path": written["scenario_pnl_csv"],
+            "report_path": written["report_md"],
+            "live_snapshot_path": written["live_snapshot_json"],
+            "markdown_report": written["markdown_report"],
+            "hmm_context": {
+                "asof": hmm_context.asof,
+                "selected_regime": hmm_context.selected_regime,
+                "regime_probs": dict(hmm_context.regime_probs),
+            },
+            "metadata": {
+                "regime_agent_path": str(agent_path),
+                "ibkr_provider_metadata": dict(observation.provider_metadata),
+                "ibkr_quality": dict(observation.quality),
+                "best_candidate": accepted.iloc[0].to_dict() if not accepted.empty else None,
+                "candidate_count": int(len(candidates)),
+                "market_snapshot_as_of": str(observation.as_of),
+            },
         }
         if hasattr(app_span, "end"):
             app_span.end(outputs=_trace_safe_payload(result))

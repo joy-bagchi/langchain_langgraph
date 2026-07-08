@@ -1,45 +1,51 @@
 # Overwrite Candidate Report
 
-- Timestamp: 2026-06-26 02:39:24 UTC
+- Timestamp: 2026-06-26 11:19:16 UTC
 - Underlying: SPY
-- Spot: 740.25
-- VIX: 16.80
+- Spot: 729.86
+- VIX: 20.00
 - LEAP contracts: 5
 - LEAP delta: 0.80
-- Recommendation mode: NO_HMM_CONTEXT
-- Daily sigma points: 7.83
-- Heuristic target strike: 744.17
+- Recommendation mode: UNCERTAIN_SELECTIVE
+- Daily sigma points: 9.20
+- Heuristic target strike: 734.46
+- Allowed DTE: [1]
+- Recommended action: NO OVERWRITE
+
+## HMM Context
+
+- As of: 2026-06-26T11:19:03.635837+00:00
+- Selected regime: VOL_EXPANSION
+- crash: 0.00%
+- low_vol_trend: 7.59%
+- mid_vol_chop: 34.04%
+- vol_expansion: 47.72%
 
 ## Recommendation
 
-Best candidate: SPY 745C 2DTE at mid 1.63. Distance is 0.61 sigma. Premium meets threshold. Portfolio score is -810.42. Recommended only as no hmm context.
+No candidate passed the current decision rules.
 
 ## Top Accepted Candidates
 
-| strike | dte | mid | distance_sigma | premium_total | score |
-| --- | --- | --- | --- | --- | --- |
-| 745 | 2 | 1.63 | 0.61 | 815.00 | -810.42 |
-| 743 | 1 | 1.52 | 0.35 | 760.00 | -1234.67 |
+No rows.
 
 ## Top Rejected Candidates
 
 | strike | dte | mid | distance_sigma | score | reject_reasons |
 | --- | --- | --- | --- | --- | --- |
-| 747 | 2 | 1.07 | 0.86 | -838.42 | Premium below minimum 1.40 |
-| 744 | 1 | 1.24 | 0.48 | -1248.67 | Premium below minimum 1.40 |
-| 742 | 1 | 1.39 | 0.22 | -1497.42 | Premium below minimum 1.40; Distance sigma below minimum 0.35 |
+| 730.0 | 5 | 8.29 | 0.02 | 2401.87 | DTE not allowed by policy [1]; Distance sigma below minimum 0.50 |
+| 731.0 | 5 | 7.64 | 0.12 | 2138.12 | DTE not allowed by policy [1]; Distance sigma below minimum 0.50 |
+| 732.0 | 5 | 6.99 | 0.23 | 1874.37 | DTE not allowed by policy [1]; Distance sigma below minimum 0.50 |
+| 730.0 | 4 | 7.44 | 0.02 | 1828.12 | DTE not allowed by policy [1]; Distance sigma below minimum 0.50 |
+| 733.0 | 5 | 6.39 | 0.34 | 1644.37 | DTE not allowed by policy [1]; Distance sigma below minimum 0.50 |
 
-## Best Candidate Scenario PnL
+## Why Others Failed
 
-| Scenario Sigma | Scenario Spot | LEAP PnL | Short Call PnL | Total PnL | LEAP Only PnL | Overwrite Drag |
-| --- | --- | --- | --- | --- | --- | --- |
-| -1.0 | 732.42 | -3,133.63 | 815.00 | -2,318.63 | -3,133.63 | -815.00 |
-| -0.5 | 736.33 | -1,566.81 | 815.00 | -751.81 | -1,566.81 | -815.00 |
-| 0.0 | 740.25 | 0.00 | 815.00 | 815.00 | 0.00 | -815.00 |
-| 0.5 | 744.17 | 1,566.81 | 815.00 | 2,381.81 | 1,566.81 | -815.00 |
-| 1.0 | 748.08 | 3,133.63 | -727.03 | 2,406.59 | 3,133.63 | 727.03 |
-| 1.5 | 752.00 | 4,700.44 | -2,685.55 | 2,014.89 | 4,700.44 | 2,685.55 |
-| 2.0 | 755.92 | 6,267.26 | -4,644.07 | 1,623.19 | 6,267.26 | 4,644.07 |
+- Strike 730.00 / 5DTE rejected because DTE not allowed by policy [1]; Distance sigma below minimum 0.50.
+- Strike 731.00 / 5DTE rejected because DTE not allowed by policy [1]; Distance sigma below minimum 0.50.
+- Strike 732.00 / 5DTE rejected because DTE not allowed by policy [1]; Distance sigma below minimum 0.50.
+- Strike 730.00 / 4DTE rejected because DTE not allowed by policy [1]; Distance sigma below minimum 0.50.
+- Strike 733.00 / 5DTE rejected because DTE not allowed by policy [1]; Distance sigma below minimum 0.50.
 
 ## Warning
 

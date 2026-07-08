@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import shutil
 import sys
 import tempfile
 from datetime import date
@@ -40,6 +41,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     resume_daily_regime_run,
     run_daily_regime_agent,
     run_hmm_replay_backtester,
+    run_live_overwrite_policy_engine,
     run_overwrite_candidate_scorer,
     run_policy_backtester,
     run_ibkr_market_data_agent,
@@ -77,6 +79,32 @@ REGIME_ENGINE_OPTIONS = [
     "HMMv3 Agent",
     "HMMv3.1 Meta-Blend Agent",
 ]
+REGIME_ENGINE_DESCRIPTIONS = {
+    "Heuristic Agent": (
+        "Uses live SPY, VIX, VVIX, and term-structure inputs with hand-built rules to map the current market "
+        "state into a volatility regime."
+    ),
+    "ML Agent": (
+        "Learns a simple regression-style mapping from recent realized SPY and VIX history to estimate the "
+        "current regime."
+    ),
+    "HMMv1 Agent": (
+        "Fits a basic hidden Markov model on historical volatility inputs and infers the most likely regime "
+        "from the latent state probabilities."
+    ),
+    "HMMv2 Agent": (
+        "Extends the HMM with additional volatility structure inputs so regime transitions can react to broader "
+        "market context."
+    ),
+    "HMMv3 Agent": (
+        "Adds sector-geometry features to the HMM so regime inference can reflect cross-sector dispersion and "
+        "breadth effects."
+    ),
+    "HMMv3.1 Meta-Blend Agent": (
+        "Blends the HMM signal with a meta layer that combines regime probabilities, geometry stress, and policy "
+        "context."
+    ),
+}
 BACKTEST_MODEL_OPTIONS = [
     "heuristic",
     "hmm_v1_core",
@@ -208,11 +236,10 @@ def _resolve_daily_agent_path_from_choice(choice: str) -> Path:
     return default_agent_path()
 
 
-def _default_history_days_for_agent_choice(choice: str, fallback: int) -> int:
-    return (
-        756
-        if choice in {"HMMv1 Agent", "HMMv2 Agent", "HMMv3 Agent", "HMMv3.1 Meta-Blend Agent"}
-        else int(fallback)
+def _regime_engine_description(choice: str) -> str:
+    return REGIME_ENGINE_DESCRIPTIONS.get(
+        choice,
+        "Select a regime engine to compute the current volatility state from the available market inputs.",
     )
 
 
@@ -277,6 +304,58 @@ def _render_summary_card(st, *, label: str, value: str) -> None:
                 word-break: break-word;
                 color: {CARD_VALUE_COLOR};
             ">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _tone_for_overwrite_action(action: str) -> tuple[str, str]:
+    value = str(action or "").upper()
+    if value == "NO_OVERWRITE":
+        return ("#c62828", "#fdecea")
+    if value == "SELECTIVE_OVERWRITE":
+        return ("#a15c00", "#fff4db")
+    if value == "NORMAL_OVERWRITE":
+        return ("#1565c0", "#eaf3ff")
+    return ("#345d7e", "#edf3f8")
+
+
+def _render_overwrite_decision_card(st, *, summary: dict[str, Any], underlying: str) -> None:
+    action = str(summary.get("recommended_action", "NO_OVERWRITE"))
+    headline = str(summary.get("headline", "")).strip() or "No overwrite recommendation available."
+    next_best_action = str(summary.get("next_best_action", "")).strip() or "Review diagnostics for context."
+    reason_bullets = list(summary.get("reason_bullets", []))
+    fg, bg = _tone_for_overwrite_action(action)
+    reasons_html = "".join(f"<li>{str(item)}</li>" for item in reason_bullets[:3]) or "<li>No additional context.</li>"
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid rgba(128,128,128,0.25);
+            border-left: 6px solid {fg};
+            border-radius: 0.8rem;
+            padding: 1rem 1rem 0.95rem 1rem;
+            background: {bg};
+            color: #121212;
+        ">
+            <div style="font-size:0.78rem; letter-spacing:0.05em; text-transform:uppercase; opacity:0.75;">
+                Recommended Action
+            </div>
+            <div style="font-size:1.25rem; font-weight:700; margin-top:0.2rem;">
+                {action.replace('_', ' ')}
+            </div>
+            <div style="margin-top:0.5rem; font-size:1.0rem; font-weight:600;">
+                {headline}
+            </div>
+            <div style="margin-top:0.65rem; font-size:0.9rem;">
+                <strong>Why</strong>
+                <ul style="margin-top:0.35rem; margin-bottom:0.35rem; padding-left:1.2rem;">
+                    {reasons_html}
+                </ul>
+            </div>
+            <div style="font-size:0.9rem;">
+                <strong>Next Best Action:</strong> {next_best_action}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -909,6 +988,20 @@ def _write_temp_streamlit_upload(*, suffix: str, payload: bytes) -> Path:
     return path
 
 
+def _cleanup_temp_uploads(paths: list[Path]) -> None:
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = Path(path).resolve()
+        root = resolved.parent
+        if root in seen:
+            continue
+        seen.add(root)
+        try:
+            shutil.rmtree(root, ignore_errors=True)
+        except OSError:
+            continue
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         result = float(value)
@@ -1047,6 +1140,9 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Runtime")
+        sidebar_daily_live_defaults = load_json(DEFAULT_DAILY_LIVE_INPUT)
+        sidebar_ibkr_defaults = dict(sidebar_daily_live_defaults.get("ibkr", {}))
+        sidebar_ibkr_input_defaults = load_json(DEFAULT_IBKR_INPUT)
         storage_root = st.text_input(
             "Storage Root",
             value=str((APP_PATHS.root / ".streamlit_workflow_memory").resolve()),
@@ -1054,6 +1150,85 @@ def main() -> None:
         database_url = st.text_input("Database URL", value="")
         langsmith_tracing = st.checkbox("Enable LangSmith Tracing", value=True)
         langsmith_project = st.text_input("LangSmith Project", value="agentic_harness")
+        st.divider()
+        st.subheader("IBKR Settings")
+        with st.expander("Core", expanded=True):
+            sidebar_ibkr_symbol = st.text_input(
+                "Symbol",
+                value=str(sidebar_ibkr_input_defaults.get("symbol", "SPY")),
+                key="sidebar_ibkr_symbol",
+            )
+            sidebar_ibkr_host = st.text_input(
+                "IBKR Host",
+                value=str(sidebar_ibkr_defaults.get("host", "127.0.0.1")),
+                key="sidebar_ibkr_host",
+            )
+            sidebar_ibkr_port = st.number_input(
+                "IBKR Port",
+                value=int(sidebar_ibkr_defaults.get("port", 4001)),
+                step=1,
+                key="sidebar_ibkr_port",
+            )
+            sidebar_ibkr_client_id = st.number_input(
+                "Client ID",
+                value=int(sidebar_ibkr_defaults.get("client_id", 73)),
+                step=1,
+                key="sidebar_ibkr_client_id",
+            )
+            sidebar_ibkr_market_data_type = st.number_input(
+                "Market Data Type",
+                value=int(sidebar_ibkr_defaults.get("market_data_type", 1)),
+                step=1,
+                key="sidebar_ibkr_market_data_type",
+            )
+            sidebar_ibkr_exchange = st.text_input(
+                "Exchange",
+                value=str(sidebar_ibkr_defaults.get("exchange", "SMART")),
+                key="sidebar_ibkr_exchange",
+            )
+            sidebar_ibkr_currency = st.text_input(
+                "Currency",
+                value=str(sidebar_ibkr_defaults.get("currency", "USD")),
+                key="sidebar_ibkr_currency",
+            )
+        with st.expander("Option Chain", expanded=False):
+            sidebar_ibkr_option_exchange = st.text_input(
+                "Option Exchange",
+                value=str(sidebar_ibkr_defaults.get("option_exchange", "SMART")),
+                key="sidebar_ibkr_option_exchange",
+            )
+            sidebar_ibkr_index_exchange = st.text_input(
+                "Index Exchange",
+                value=str(sidebar_ibkr_defaults.get("index_exchange", "CBOE")),
+                key="sidebar_ibkr_index_exchange",
+            )
+            sidebar_ibkr_expiry_count = st.number_input(
+                "Expiry Count",
+                value=int(sidebar_ibkr_defaults.get("expiry_count", 2)),
+                step=1,
+                key="sidebar_ibkr_expiry_count",
+            )
+            sidebar_ibkr_strike_count = st.number_input(
+                "Strike Count",
+                value=int(sidebar_ibkr_defaults.get("strike_count", 8)),
+                step=1,
+                key="sidebar_ibkr_strike_count",
+            )
+        with st.expander("History", expanded=False):
+            sidebar_ibkr_history_days = st.number_input(
+                "History Days (Daily/Historical)",
+                value=int(sidebar_ibkr_defaults.get("history_days", 756)),
+                min_value=1,
+                step=1,
+                key="sidebar_ibkr_history_days",
+            )
+            sidebar_ibkr_build_history_days = st.number_input(
+                "History Days (Feature-Store Build)",
+                value=max(int(sidebar_ibkr_defaults.get("history_days", 756)), 2520),
+                min_value=1,
+                step=1,
+                key="sidebar_ibkr_build_history_days",
+            )
         st.caption("IBKR default port is 4001.")
 
     daily_tab, historical_tab, backtester_tab, policy_backtester_tab, overwrite_tab, ibkr_tab, resume_tab = st.tabs(
@@ -1077,12 +1252,12 @@ def main() -> None:
     with daily_tab:
         st.subheader("Daily Volatility Regime Workflow")
         default_daily_payload = load_json(DEFAULT_DAILY_INPUT)
-        default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
         agent_choice = st.selectbox(
             "Regime Engine",
             options=REGIME_ENGINE_OPTIONS,
             help="All agents use the same workflow surface. HMM variants additively extend the HMMv1 core lens.",
         )
+        st.caption(_regime_engine_description(agent_choice))
         selected_daily_agent_path = _resolve_daily_agent_path_from_choice(agent_choice)
         mode = st.radio(
             "Mode",
@@ -1096,95 +1271,21 @@ def main() -> None:
 
         effective_daily_payload: dict[str, Any]
         if mode == "Live IBKR":
-            ibkr_defaults = dict(default_live_payload.get("ibkr", {}))
-            default_history_days = _default_history_days_for_agent_choice(
-                agent_choice,
-                int(ibkr_defaults.get("history_days", 252)),
-            )
-            with st.expander("Advanced IBKR Settings", expanded=False):
-                live_col1, live_col2, live_col3 = st.columns(3)
-                live_host = live_col1.text_input(
-                    "IBKR Host",
-                    value=str(ibkr_defaults.get("host", "127.0.0.1")),
-                    key="daily_live_host",
-                )
-                live_port = live_col2.number_input(
-                    "IBKR Port",
-                    value=int(ibkr_defaults.get("port", 4001)),
-                    step=1,
-                    key="daily_live_port",
-                )
-                live_client_id = live_col3.number_input(
-                    "Client ID",
-                    value=int(ibkr_defaults.get("client_id", 73)),
-                    step=1,
-                    key="daily_live_client_id",
-                )
-
-                live_cfg1, live_cfg2, live_cfg3, live_cfg4 = st.columns(4)
-                live_market_data_type = live_cfg1.number_input(
-                    "Market Data Type",
-                    value=int(ibkr_defaults.get("market_data_type", 1)),
-                    step=1,
-                    key="daily_live_market_data_type",
-                )
-                live_history_days = live_cfg2.number_input(
-                    "History Days",
-                    value=int(default_history_days),
-                    step=1,
-                    key="daily_live_history_days",
-                )
-                live_expiry_count = live_cfg3.number_input(
-                    "Expiry Count",
-                    value=int(ibkr_defaults.get("expiry_count", 2)),
-                    step=1,
-                    key="daily_live_expiry_count",
-                )
-                live_strike_count = live_cfg4.number_input(
-                    "Strike Count",
-                    value=int(ibkr_defaults.get("strike_count", 8)),
-                    step=1,
-                    key="daily_live_strike_count",
-                )
-
-                live_cfg5, live_cfg6, live_cfg7 = st.columns(3)
-                live_exchange = live_cfg5.text_input(
-                    "Exchange",
-                    value=str(ibkr_defaults.get("exchange", "SMART")),
-                    key="daily_live_exchange",
-                )
-                live_option_exchange = live_cfg6.text_input(
-                    "Option Exchange",
-                    value=str(ibkr_defaults.get("option_exchange", "SMART")),
-                    key="daily_live_option_exchange",
-                )
-                live_index_exchange = live_cfg7.text_input(
-                    "Index Exchange",
-                    value=str(ibkr_defaults.get("index_exchange", "CBOE")),
-                    key="daily_live_index_exchange",
-                )
-
-                live_currency = st.text_input(
-                    "Currency",
-                    value=str(ibkr_defaults.get("currency", "USD")),
-                    key="daily_live_currency",
-                )
-
             effective_daily_payload = {
                 "data_provider": "ibkr",
-                "symbol": str(default_live_payload.get("symbol", "SPY")),
+                "symbol": sidebar_ibkr_symbol.strip() or "SPY",
                 "ibkr": {
-                    "host": live_host.strip() or "127.0.0.1",
-                    "port": int(live_port),
-                    "client_id": int(live_client_id),
-                    "market_data_type": int(live_market_data_type),
-                    "exchange": live_exchange.strip() or "SMART",
-                    "option_exchange": live_option_exchange.strip() or "SMART",
-                    "currency": live_currency.strip() or "USD",
-                    "index_exchange": live_index_exchange.strip() or "CBOE",
-                    "expiry_count": int(live_expiry_count),
-                    "strike_count": int(live_strike_count),
-                    "history_days": int(live_history_days),
+                    "host": sidebar_ibkr_host.strip() or "127.0.0.1",
+                    "port": int(sidebar_ibkr_port),
+                    "client_id": int(sidebar_ibkr_client_id),
+                    "market_data_type": int(sidebar_ibkr_market_data_type),
+                    "exchange": sidebar_ibkr_exchange.strip() or "SMART",
+                    "option_exchange": sidebar_ibkr_option_exchange.strip() or "SMART",
+                    "currency": sidebar_ibkr_currency.strip() or "USD",
+                    "index_exchange": sidebar_ibkr_index_exchange.strip() or "CBOE",
+                    "expiry_count": int(sidebar_ibkr_expiry_count),
+                    "strike_count": int(sidebar_ibkr_strike_count),
+                    "history_days": int(sidebar_ibkr_history_days),
                     "min_days_to_expiry": 0,
                 },
                 "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
@@ -1366,7 +1467,6 @@ def main() -> None:
             "If it does not exist yet, the app will run the selected model using that as-of date."
         )
 
-        historical_default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
         historical_agent_choice = st.selectbox(
             "Historical Regime Engine",
             options=REGIME_ENGINE_OPTIONS,
@@ -1380,96 +1480,22 @@ def main() -> None:
             key="historical_as_of_date",
         )
 
-        historical_ibkr_defaults = dict(historical_default_live_payload.get("ibkr", {}))
-        historical_default_history_days = _default_history_days_for_agent_choice(
-            historical_agent_choice,
-            int(historical_ibkr_defaults.get("history_days", 252)),
-        )
-        with st.expander("Advanced Historical IBKR Settings", expanded=False):
-            hist_col1, hist_col2, hist_col3 = st.columns(3)
-            historical_host = hist_col1.text_input(
-                "IBKR Host",
-                value=str(historical_ibkr_defaults.get("host", "127.0.0.1")),
-                key="historical_live_host",
-            )
-            historical_port = hist_col2.number_input(
-                "IBKR Port",
-                value=int(historical_ibkr_defaults.get("port", 4001)),
-                step=1,
-                key="historical_live_port",
-            )
-            historical_client_id = hist_col3.number_input(
-                "Client ID",
-                value=int(historical_ibkr_defaults.get("client_id", 73)),
-                step=1,
-                key="historical_live_client_id",
-            )
-
-            hist_cfg1, hist_cfg2, hist_cfg3, hist_cfg4 = st.columns(4)
-            historical_market_data_type = hist_cfg1.number_input(
-                "Market Data Type",
-                value=int(historical_ibkr_defaults.get("market_data_type", 1)),
-                step=1,
-                key="historical_market_data_type",
-            )
-            historical_history_days = hist_cfg2.number_input(
-                "History Days",
-                value=int(historical_default_history_days),
-                step=1,
-                key="historical_history_days",
-            )
-            historical_expiry_count = hist_cfg3.number_input(
-                "Expiry Count",
-                value=int(historical_ibkr_defaults.get("expiry_count", 2)),
-                step=1,
-                key="historical_expiry_count",
-            )
-            historical_strike_count = hist_cfg4.number_input(
-                "Strike Count",
-                value=int(historical_ibkr_defaults.get("strike_count", 8)),
-                step=1,
-                key="historical_strike_count",
-            )
-
-            hist_cfg5, hist_cfg6, hist_cfg7 = st.columns(3)
-            historical_exchange = hist_cfg5.text_input(
-                "Exchange",
-                value=str(historical_ibkr_defaults.get("exchange", "SMART")),
-                key="historical_exchange",
-            )
-            historical_option_exchange = hist_cfg6.text_input(
-                "Option Exchange",
-                value=str(historical_ibkr_defaults.get("option_exchange", "SMART")),
-                key="historical_option_exchange",
-            )
-            historical_index_exchange = hist_cfg7.text_input(
-                "Index Exchange",
-                value=str(historical_ibkr_defaults.get("index_exchange", "CBOE")),
-                key="historical_index_exchange",
-            )
-
-            historical_currency = st.text_input(
-                "Currency",
-                value=str(historical_ibkr_defaults.get("currency", "USD")),
-                key="historical_currency",
-            )
-
         if st.button("Load Historical Report", type="primary", key="load_historical_report_button"):
             historical_payload = {
                 "data_provider": "ibkr",
-                "symbol": str(historical_default_live_payload.get("symbol", "SPY")),
+                "symbol": sidebar_ibkr_symbol.strip() or "SPY",
                 "ibkr": {
-                    "host": historical_host.strip() or "127.0.0.1",
-                    "port": int(historical_port),
-                    "client_id": int(historical_client_id),
-                    "market_data_type": int(historical_market_data_type),
-                    "exchange": historical_exchange.strip() or "SMART",
-                    "option_exchange": historical_option_exchange.strip() or "SMART",
-                    "currency": historical_currency.strip() or "USD",
-                    "index_exchange": historical_index_exchange.strip() or "CBOE",
-                    "expiry_count": int(historical_expiry_count),
-                    "strike_count": int(historical_strike_count),
-                    "history_days": int(historical_history_days),
+                    "host": sidebar_ibkr_host.strip() or "127.0.0.1",
+                    "port": int(sidebar_ibkr_port),
+                    "client_id": int(sidebar_ibkr_client_id),
+                    "market_data_type": int(sidebar_ibkr_market_data_type),
+                    "exchange": sidebar_ibkr_exchange.strip() or "SMART",
+                    "option_exchange": sidebar_ibkr_option_exchange.strip() or "SMART",
+                    "currency": sidebar_ibkr_currency.strip() or "USD",
+                    "index_exchange": sidebar_ibkr_index_exchange.strip() or "CBOE",
+                    "expiry_count": int(sidebar_ibkr_expiry_count),
+                    "strike_count": int(sidebar_ibkr_strike_count),
+                    "history_days": int(sidebar_ibkr_history_days),
                     "min_days_to_expiry": 0,
                 },
                 "reference_market_snapshot": dict(default_daily_payload.get("market_snapshot", {})),
@@ -1532,7 +1558,6 @@ def main() -> None:
         strict_10y_mode = bool(getattr(replay_config, "require_10y_replay", False))
         train_lookback_days = int(getattr(replay_config, "train_lookback_days", 2520))
         min_history_days = max(2520 if strict_10y_mode else 252, train_lookback_days)
-        default_history_days = max(2520, min_history_days) if strict_10y_mode else max(2520, train_lookback_days)
 
         if strict_10y_mode:
             st.info(
@@ -1542,28 +1567,9 @@ def main() -> None:
                 "Use `History Days` around 3300-3600 for IBKR builds."
             )
         st.markdown("**Feature Store Builder (IBKR)**")
-        default_live_payload = load_json(DEFAULT_DAILY_LIVE_INPUT)
-        builder_ibkr = dict(default_live_payload.get("ibkr", {}))
-        bcol1, bcol2, bcol3, bcol4 = st.columns(4)
-        backtest_symbol = bcol1.text_input("Symbol", value=str(default_live_payload.get("symbol", "SPY")), key="backtest_build_symbol")
-        backtest_history_days = bcol2.number_input(
-            "History Days (IBKR Pull)",
-            value=default_history_days,
-            min_value=min_history_days,
-            step=1,
-            key="backtest_build_history_days",
-            help=(
-                "This controls how much historical data is requested from IBKR to build the local feature store. "
-                "In strict 10-year mode, this must be large enough to include pre-2016 training history."
-            ),
+        st.caption(
+            "Using sidebar `Symbol` and `History Days (Feature-Store Build)` for IBKR feature-store refresh."
         )
-        backtest_host = bcol3.text_input("IBKR Host", value=str(builder_ibkr.get("host", "127.0.0.1")), key="backtest_build_host")
-        backtest_port = bcol4.number_input("IBKR Port", value=int(builder_ibkr.get("port", 4001)), step=1, key="backtest_build_port")
-        bcol5, bcol6, bcol7, bcol8 = st.columns(4)
-        backtest_client_id = bcol5.number_input("Client ID", value=int(builder_ibkr.get("client_id", 73)), step=1, key="backtest_build_client_id")
-        backtest_market_data_type = bcol6.number_input("Market Data Type", value=int(builder_ibkr.get("market_data_type", 1)), step=1, key="backtest_build_market_data_type")
-        backtest_exchange = bcol7.text_input("Exchange", value=str(builder_ibkr.get("exchange", "SMART")), key="backtest_build_exchange")
-        backtest_index_exchange = bcol8.text_input("Index Exchange", value=str(builder_ibkr.get("index_exchange", "CBOE")), key="backtest_build_index_exchange")
         backtest_as_of = st.date_input(
             "Feature Store As-of Date (optional historical cut)",
             value=date.today(),
@@ -1575,17 +1581,17 @@ def main() -> None:
             try:
                 build_result = build_backtest_feature_store(
                     config_path=config_path.strip(),
-                    history_days=int(backtest_history_days),
+                    history_days=max(int(sidebar_ibkr_build_history_days), int(min_history_days)),
                     as_of_date=backtest_as_of.isoformat(),
-                    symbol=backtest_symbol.strip() or "SPY",
-                    host=backtest_host.strip() or "127.0.0.1",
-                    port=int(backtest_port),
-                    client_id=int(backtest_client_id),
-                    market_data_type=int(backtest_market_data_type),
-                    exchange=backtest_exchange.strip() or "SMART",
-                    option_exchange=str(builder_ibkr.get("option_exchange", "SMART")),
-                    index_exchange=backtest_index_exchange.strip() or "CBOE",
-                    currency=str(builder_ibkr.get("currency", "USD")),
+                    symbol=sidebar_ibkr_symbol.strip() or "SPY",
+                    host=sidebar_ibkr_host.strip() or "127.0.0.1",
+                    port=int(sidebar_ibkr_port),
+                    client_id=int(sidebar_ibkr_client_id),
+                    market_data_type=int(sidebar_ibkr_market_data_type),
+                    exchange=sidebar_ibkr_exchange.strip() or "SMART",
+                    option_exchange=sidebar_ibkr_option_exchange.strip() or "SMART",
+                    index_exchange=sidebar_ibkr_index_exchange.strip() or "CBOE",
+                    currency=sidebar_ibkr_currency.strip() or "USD",
                     langsmith_tracing=langsmith_tracing,
                     langsmith_project=langsmith_project or None,
                 )
@@ -2285,21 +2291,22 @@ def main() -> None:
             "selected_regime": "vol_expansion",
         }
         default_output_dir = (APP_PATHS.root / "outputs" / "overwrite_scorer").resolve()
+        overwrite_mode = st.selectbox(
+            "Mode",
+            options=["Live IBKR + HMM", "Manual CSV", "Manual JSON/debug"],
+            key="overwrite_mode",
+        )
 
         overwrite_col1, overwrite_col2, overwrite_col3, overwrite_col4 = st.columns(4)
         overwrite_underlying = overwrite_col1.text_input("Underlying", value="SPY", key="overwrite_underlying")
-        overwrite_spot = overwrite_col2.number_input("Spot", min_value=0.01, value=740.25, step=0.25, key="overwrite_spot")
-        overwrite_vix = overwrite_col3.number_input("VIX", min_value=0.01, value=16.8, step=0.1, key="overwrite_vix")
-        overwrite_contracts = overwrite_col4.number_input(
+        overwrite_contracts = overwrite_col2.number_input(
             "LEAP Contracts",
             min_value=1,
             value=5,
             step=1,
             key="overwrite_leap_contracts",
         )
-
-        overwrite_col5, overwrite_col6, overwrite_col7, overwrite_col8 = st.columns(4)
-        overwrite_leap_delta = overwrite_col5.number_input(
+        overwrite_leap_delta = overwrite_col3.number_input(
             "LEAP Delta",
             min_value=0.01,
             max_value=1.0,
@@ -2307,229 +2314,361 @@ def main() -> None:
             step=0.01,
             key="overwrite_leap_delta",
         )
-        overwrite_drag_penalty = overwrite_col6.number_input(
+        overwrite_drag_penalty = overwrite_col4.number_input(
             "Upside Drag Penalty",
             min_value=0.0,
             value=0.35,
             step=0.05,
             key="overwrite_drag_penalty",
         )
-        overwrite_min_premium = overwrite_col7.number_input(
-            "Min Premium",
-            min_value=0.0,
-            value=1.40,
-            step=0.05,
-            key="overwrite_min_premium",
-        )
-        overwrite_max_spread = overwrite_col8.number_input(
-            "Max Spread Pct",
-            min_value=0.0,
-            value=0.25,
-            step=0.01,
-            key="overwrite_max_spread",
-        )
-        overwrite_allow_crash = st.checkbox(
-            "Allow crash-regime overwrite",
-            value=False,
-            key="overwrite_allow_crash",
-        )
 
-        candidate_source = st.radio(
-            "Candidate Source",
-            options=["Path", "Upload"],
-            horizontal=True,
-            key="overwrite_candidate_source",
-        )
-        if candidate_source == "Path":
-            overwrite_candidate_csv_path = st.text_input(
-                "Candidate CSV Path",
-                value=str(overwrite_default_csv),
-                key="overwrite_candidate_csv_path",
+        overwrite_allowed_dte: list[int] = [1, 2]
+        with st.expander("Advanced Policy Controls", expanded=False):
+            adv_col1, adv_col2, adv_col3, adv_col4 = st.columns(4)
+            overwrite_min_premium = adv_col1.number_input(
+                "Min Premium",
+                min_value=0.0,
+                value=1.40,
+                step=0.05,
+                key="overwrite_min_premium",
             )
-            overwrite_candidate_upload = None
-        else:
-            overwrite_candidate_upload = st.file_uploader(
-                "Candidate CSV Upload",
-                type=["csv"],
-                key="overwrite_candidate_upload",
+            overwrite_max_spread = adv_col2.number_input(
+                "Max Spread Pct",
+                min_value=0.0,
+                value=0.25,
+                step=0.01,
+                key="overwrite_max_spread",
             )
-            overwrite_candidate_csv_path = ""
-
-        hmm_source = st.radio(
-            "HMM Context",
-            options=["None", "Paste JSON", "Path", "Upload"],
-            horizontal=True,
-            key="overwrite_hmm_source",
-        )
-        overwrite_hmm_text = ""
-        overwrite_hmm_path = ""
-        overwrite_hmm_upload = None
-        if hmm_source == "Paste JSON":
-            overwrite_hmm_text = st.text_area(
-                "HMM JSON",
-                value=_pretty_json(default_hmm_payload),
-                height=220,
-                key="overwrite_hmm_text",
+            overwrite_strikes_below = adv_col3.number_input(
+                "Strikes Below Target",
+                min_value=0,
+                value=4,
+                step=1,
+                key="overwrite_strikes_below",
             )
-        elif hmm_source == "Path":
-            overwrite_hmm_path = st.text_input(
-                "HMM JSON Path",
-                value="",
-                key="overwrite_hmm_path",
+            overwrite_strikes_above = adv_col4.number_input(
+                "Strikes Above Target",
+                min_value=0,
+                value=8,
+                step=1,
+                key="overwrite_strikes_above",
             )
-        elif hmm_source == "Upload":
-            overwrite_hmm_upload = st.file_uploader(
-                "HMM JSON Upload",
-                type=["json"],
-                key="overwrite_hmm_upload",
+            overwrite_allow_crash = st.checkbox(
+                "Allow crash-regime overwrite",
+                value=False,
+                key="overwrite_allow_crash",
+                help=(
+                    "Crash override is for research only. Production policy should not open new overwrites "
+                    "when crash gate is active."
+                ),
             )
-
-        overwrite_output_dir = st.text_input(
-            "Output Directory",
-            value=str(default_output_dir),
-            key="overwrite_output_dir",
-        )
-
-        if st.button("Run Overwrite Scorer", type="primary", key="run_overwrite_scorer_button"):
-            candidate_csv_path_value: Path | None = None
-            hmm_json_path_value: Path | None = None
-            try:
-                if candidate_source == "Path":
-                    candidate_csv_path_value = Path(overwrite_candidate_csv_path.strip()).resolve()
-                elif overwrite_candidate_upload is not None:
-                    candidate_csv_path_value = _write_temp_streamlit_upload(
-                        suffix=".csv",
-                        payload=overwrite_candidate_upload.getvalue(),
-                    )
-                if candidate_csv_path_value is None:
-                    raise ValueError("Provide a candidate CSV path or upload before running the scorer.")
-
-                if hmm_source == "Paste JSON":
-                    parsed_hmm = _parse_json_text(overwrite_hmm_text, fallback=default_hmm_payload)
-                    hmm_json_path_value = _write_temp_streamlit_upload(
-                        suffix=".json",
-                        payload=_pretty_json(parsed_hmm).encode("utf-8"),
-                    )
-                elif hmm_source == "Path" and overwrite_hmm_path.strip():
-                    hmm_json_path_value = Path(overwrite_hmm_path.strip()).resolve()
-                elif hmm_source == "Upload" and overwrite_hmm_upload is not None:
-                    hmm_json_path_value = _write_temp_streamlit_upload(
-                        suffix=".json",
-                        payload=overwrite_hmm_upload.getvalue(),
-                    )
-
-                overwrite_result = run_overwrite_candidate_scorer(
-                    underlying=overwrite_underlying.strip() or "SPY",
-                    spot=float(overwrite_spot),
-                    vix=float(overwrite_vix),
-                    leap_contracts=int(overwrite_contracts),
-                    leap_delta=float(overwrite_leap_delta),
-                    candidate_csv=str(candidate_csv_path_value),
-                    hmm_json=str(hmm_json_path_value) if hmm_json_path_value is not None else None,
-                    output_dir=overwrite_output_dir.strip() or str(default_output_dir),
-                    upside_drag_penalty=float(overwrite_drag_penalty),
-                    min_premium=float(overwrite_min_premium),
-                    max_spread_pct=float(overwrite_max_spread),
-                    allow_crash_overwrite=bool(overwrite_allow_crash),
-                    langsmith_tracing=langsmith_tracing,
-                    langsmith_project=langsmith_project or None,
+            if overwrite_mode == "Live IBKR + HMM":
+                overwrite_allowed_dte = st.multiselect(
+                    "Allowed Candidate DTE",
+                    options=[1, 2, 3, 4, 5],
+                    default=[1, 2],
+                    key="overwrite_live_dte_choices",
                 )
-            except Exception as exc:
-                st.error(str(exc))
+            overwrite_output_dir = st.text_input(
+                "Output Directory",
+                value=str(default_output_dir),
+                key="overwrite_output_dir",
+            )
+
+        temp_upload_paths: list[Path] = []
+        if overwrite_mode == "Live IBKR + HMM":
+            live_agent_choice = st.selectbox(
+                "Regime Engine",
+                options=REGIME_ENGINE_OPTIONS,
+                index=5,
+                key="overwrite_live_regime_engine",
+            )
+            if st.button("Run Live Overwrite Policy", type="primary", key="run_live_overwrite_scorer_button"):
+                try:
+                    overwrite_result = run_live_overwrite_policy_engine(
+                        underlying=overwrite_underlying.strip() or "SPY",
+                        regime_engine=live_agent_choice,
+                        leap_contracts=int(overwrite_contracts),
+                        leap_delta=float(overwrite_leap_delta),
+                        base_min_premium=float(overwrite_min_premium),
+                        dte_choices=[int(item) for item in (overwrite_allowed_dte or [1])],
+                        strikes_below_target=int(overwrite_strikes_below),
+                        strikes_above_target=int(overwrite_strikes_above),
+                        host=sidebar_ibkr_host.strip() or "127.0.0.1",
+                        port=int(sidebar_ibkr_port),
+                        client_id=int(sidebar_ibkr_client_id),
+                        market_data_type=int(sidebar_ibkr_market_data_type),
+                        exchange=sidebar_ibkr_exchange.strip() or "SMART",
+                        option_exchange=sidebar_ibkr_option_exchange.strip() or "SMART",
+                        index_exchange=sidebar_ibkr_index_exchange.strip() or "CBOE",
+                        currency=sidebar_ibkr_currency.strip() or "USD",
+                        output_dir=overwrite_output_dir.strip() or str(default_output_dir),
+                        upside_drag_penalty=float(overwrite_drag_penalty),
+                        max_spread_pct=float(overwrite_max_spread),
+                        allow_crash_overwrite=bool(overwrite_allow_crash),
+                        storage_root=storage_root,
+                        database_url=database_url or None,
+                        langsmith_tracing=langsmith_tracing,
+                        langsmith_project=langsmith_project or None,
+                    )
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state[state_overwrite_result_key] = dict(overwrite_result)
+        else:
+            candidate_source = st.radio(
+                "Candidate Source",
+                options=["Path", "Upload"],
+                horizontal=True,
+                key="overwrite_candidate_source",
+            )
+            if candidate_source == "Path":
+                overwrite_candidate_csv_path = st.text_input(
+                    "Candidate CSV Path",
+                    value=str(overwrite_default_csv),
+                    key="overwrite_candidate_csv_path",
+                )
+                overwrite_candidate_upload = None
             else:
-                st.session_state[state_overwrite_result_key] = dict(overwrite_result)
+                overwrite_candidate_upload = st.file_uploader(
+                    "Candidate CSV Upload",
+                    type=["csv"],
+                    key="overwrite_candidate_upload",
+                )
+                overwrite_candidate_csv_path = ""
+
+            if overwrite_mode == "Manual CSV":
+                hmm_source_options = ["None", "Paste JSON", "Path", "Upload"]
+            else:
+                hmm_source_options = ["Paste JSON", "Path", "Upload", "None"]
+            hmm_source = st.radio(
+                "HMM Context",
+                options=hmm_source_options,
+                horizontal=True,
+                key="overwrite_hmm_source",
+            )
+            overwrite_hmm_text = ""
+            overwrite_hmm_path = ""
+            overwrite_hmm_upload = None
+            if hmm_source == "Paste JSON":
+                overwrite_hmm_text = st.text_area(
+                    "HMM JSON",
+                    value=_pretty_json(default_hmm_payload),
+                    height=220,
+                    key="overwrite_hmm_text",
+                )
+            elif hmm_source == "Path":
+                overwrite_hmm_path = st.text_input(
+                    "HMM JSON Path",
+                    value="",
+                    key="overwrite_hmm_path",
+                )
+            elif hmm_source == "Upload":
+                overwrite_hmm_upload = st.file_uploader(
+                    "HMM JSON Upload",
+                    type=["json"],
+                    key="overwrite_hmm_upload",
+                )
+            manual_col1, manual_col2 = st.columns(2)
+            overwrite_spot = manual_col1.number_input(
+                "Spot",
+                min_value=0.01,
+                value=740.25,
+                step=0.25,
+                key="overwrite_spot",
+            )
+            overwrite_vix = manual_col2.number_input(
+                "VIX",
+                min_value=0.01,
+                value=16.8,
+                step=0.1,
+                key="overwrite_vix",
+            )
+
+            if st.button("Run Overwrite Scorer", type="primary", key="run_overwrite_scorer_button"):
+                candidate_csv_path_value: Path | None = None
+                hmm_json_path_value: Path | None = None
+                try:
+                    if candidate_source == "Path":
+                        candidate_csv_path_value = Path(overwrite_candidate_csv_path.strip()).resolve()
+                    elif overwrite_candidate_upload is not None:
+                        candidate_csv_path_value = _write_temp_streamlit_upload(
+                            suffix=".csv",
+                            payload=overwrite_candidate_upload.getvalue(),
+                        )
+                        temp_upload_paths.append(candidate_csv_path_value)
+                    if candidate_csv_path_value is None:
+                        raise ValueError("Provide a candidate CSV path or upload before running the scorer.")
+
+                    if hmm_source == "Paste JSON":
+                        parsed_hmm = _parse_json_text(overwrite_hmm_text, fallback=default_hmm_payload)
+                        hmm_json_path_value = _write_temp_streamlit_upload(
+                            suffix=".json",
+                            payload=_pretty_json(parsed_hmm).encode("utf-8"),
+                        )
+                        temp_upload_paths.append(hmm_json_path_value)
+                    elif hmm_source == "Path" and overwrite_hmm_path.strip():
+                        hmm_json_path_value = Path(overwrite_hmm_path.strip()).resolve()
+                    elif hmm_source == "Upload" and overwrite_hmm_upload is not None:
+                        hmm_json_path_value = _write_temp_streamlit_upload(
+                            suffix=".json",
+                            payload=overwrite_hmm_upload.getvalue(),
+                        )
+                        temp_upload_paths.append(hmm_json_path_value)
+
+                    overwrite_result = run_overwrite_candidate_scorer(
+                        underlying=overwrite_underlying.strip() or "SPY",
+                        spot=float(overwrite_spot),
+                        vix=float(overwrite_vix),
+                        leap_contracts=int(overwrite_contracts),
+                        leap_delta=float(overwrite_leap_delta),
+                        candidate_csv=str(candidate_csv_path_value),
+                        hmm_json=str(hmm_json_path_value) if hmm_json_path_value is not None else None,
+                        output_dir=overwrite_output_dir.strip() or str(default_output_dir),
+                        upside_drag_penalty=float(overwrite_drag_penalty),
+                        min_premium=float(overwrite_min_premium),
+                        max_spread_pct=float(overwrite_max_spread),
+                        allow_crash_overwrite=bool(overwrite_allow_crash),
+                        langsmith_tracing=langsmith_tracing,
+                        langsmith_project=langsmith_project or None,
+                    )
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state[state_overwrite_result_key] = dict(overwrite_result)
+                finally:
+                    _cleanup_temp_uploads(temp_upload_paths)
 
         current_overwrite_result = st.session_state.get(state_overwrite_result_key)
         if isinstance(current_overwrite_result, dict):
-            st.subheader("Scorer Summary")
-            overwrite_s1, overwrite_s2, overwrite_s3, overwrite_s4 = st.columns(4)
+            st.subheader("Overwrite Policy Decision")
+            summary = dict(current_overwrite_result.get("decision_summary", {}))
+            _render_overwrite_decision_card(
+                st,
+                summary=summary,
+                underlying=str(current_overwrite_result.get("underlying", "SPY")),
+            )
+
+            key_col1, key_col2, key_col3, key_col4 = st.columns(4)
+            _render_summary_card(key_col1, label="Spot", value=f"{float(current_overwrite_result.get('spot', 0.0) or 0.0):.2f}")
+            _render_summary_card(key_col2, label="VIX", value=f"{float(current_overwrite_result.get('vix', 0.0) or 0.0):.2f}")
             _render_summary_card(
-                overwrite_s1,
-                label="Recommendation Mode",
-                value=str(current_overwrite_result.get("recommendation_mode", "n/a")),
+                key_col3,
+                label="Daily Sigma Pts",
+                value=f"{float(current_overwrite_result.get('daily_sigma_points', 0.0) or 0.0):.2f}",
             )
             _render_summary_card(
-                overwrite_s2,
-                label="Accepted",
-                value=str(current_overwrite_result.get("accepted_count", 0)),
+                key_col4,
+                label="0.5 Sigma Target",
+                value=f"{float(current_overwrite_result.get('target_strike', 0.0) or 0.0):.2f}",
+            )
+            key_col5, key_col6, key_col7, key_col8 = st.columns(4)
+            _render_summary_card(
+                key_col5,
+                label="HMM Top Regime",
+                value=str(summary.get("top_regime", "n/a")),
             )
             _render_summary_card(
-                overwrite_s3,
-                label="Rejected",
-                value=str(current_overwrite_result.get("rejected_count", 0)),
-            )
-            _render_summary_card(
-                overwrite_s4,
+                key_col6,
                 label="Crash Gate",
-                value="Blocked" if bool(current_overwrite_result.get("block_new_overwrites")) else "Open",
+                value=str(summary.get("crash_gate_status", "OPEN")),
+            )
+            _render_summary_card(
+                key_col7,
+                label="Accepted",
+                value=str(summary.get("accepted_count", current_overwrite_result.get("accepted_count", 0))),
+            )
+            _render_summary_card(
+                key_col8,
+                label="Rejected",
+                value=str(summary.get("rejected_count", current_overwrite_result.get("rejected_count", 0))),
             )
 
-            st.caption(f"Candidate CSV: `{current_overwrite_result.get('candidate_csv', '')}`")
-            if current_overwrite_result.get("hmm_json"):
-                st.caption(f"HMM JSON: `{current_overwrite_result.get('hmm_json', '')}`")
-            st.caption(f"Output Directory: `{current_overwrite_result.get('output_dir', '')}`")
-            st.caption(f"Scored CSV: `{current_overwrite_result.get('scored_candidates_path', '')}`")
-            st.caption(f"Scenario CSV: `{current_overwrite_result.get('scenario_pnl_path', '')}`")
-            st.caption(f"Report: `{current_overwrite_result.get('report_path', '')}`")
-
-            overwrite_hmm_context = current_overwrite_result.get("hmm_context")
-            if isinstance(overwrite_hmm_context, dict):
-                with st.expander("HMM Context Used", expanded=False):
-                    st.code(_pretty_json(overwrite_hmm_context), language="json")
+            overwrite_hmm_context = dict(current_overwrite_result.get("hmm_context", {}))
+            with st.expander("Diagnostics: HMM Regime Probability Vector", expanded=False):
+                regime_probs = dict(overwrite_hmm_context.get("regime_probs", {}))
+                if regime_probs:
+                    st.dataframe(
+                        pd.DataFrame(
+                            [{"regime": key, "probability": float(value)} for key, value in regime_probs.items()]
+                        ),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                st.caption(f"Selected regime: `{overwrite_hmm_context.get('selected_regime', 'n/a')}`")
+                st.caption(f"As-of: `{overwrite_hmm_context.get('asof', 'n/a')}`")
 
             top_accepted = list(current_overwrite_result.get("top_accepted_candidates", []))
-            if top_accepted:
-                st.subheader("Top Accepted Candidates")
-                st.dataframe(pd.DataFrame(top_accepted), width="stretch", hide_index=True)
-
             top_rejected = list(current_overwrite_result.get("top_rejected_candidates", []))
-            if top_rejected:
-                st.subheader("Top Rejected Candidates")
-                st.dataframe(pd.DataFrame(top_rejected), width="stretch", hide_index=True)
+            with st.expander("Diagnostics: Candidate Scoring Table", expanded=False):
+                if top_accepted:
+                    st.markdown("**Accepted Candidates**")
+                    st.dataframe(pd.DataFrame(top_accepted), width="stretch", hide_index=True)
+                if top_rejected:
+                    st.markdown("**Rejected Candidates**")
+                    st.dataframe(pd.DataFrame(top_rejected), width="stretch", hide_index=True)
+                if not top_accepted and not top_rejected:
+                    st.info("No candidate scoring rows available.")
 
             scenario_preview = list(current_overwrite_result.get("scenario_table_preview", []))
-            if scenario_preview:
-                st.subheader("Scenario PnL Preview")
-                st.dataframe(pd.DataFrame(scenario_preview), width="stretch", hide_index=True)
+            with st.expander("Diagnostics: Scenario PnL", expanded=False):
+                if scenario_preview:
+                    scenario_df = pd.DataFrame(scenario_preview)
+                    candidate_for_scenario = dict(summary.get("best_candidate") or summary.get("diagnostic_candidate") or {})
+                    if candidate_for_scenario and {"strike", "dte"}.issubset(set(scenario_df.columns)):
+                        strike = float(candidate_for_scenario.get("strike", 0.0) or 0.0)
+                        dte = float(candidate_for_scenario.get("dte", 0.0) or 0.0)
+                        scoped = scenario_df[
+                            (pd.to_numeric(scenario_df["strike"], errors="coerce") == strike)
+                            & (pd.to_numeric(scenario_df["dte"], errors="coerce") == dte)
+                        ].copy()
+                        if not scoped.empty:
+                            st.dataframe(scoped, width="stretch", hide_index=True)
+                        else:
+                            st.dataframe(scenario_df, width="stretch", hide_index=True)
+                    else:
+                        st.dataframe(scenario_df, width="stretch", hide_index=True)
+                else:
+                    st.info("Scenario PnL preview is not available.")
+
+            with st.expander("Diagnostics: IBKR / Engine Settings", expanded=False):
+                if current_overwrite_result.get("candidate_csv"):
+                    st.caption(f"Candidate CSV: `{current_overwrite_result.get('candidate_csv', '')}`")
+                if current_overwrite_result.get("hmm_json"):
+                    st.caption(f"HMM JSON: `{current_overwrite_result.get('hmm_json', '')}`")
+                st.caption(f"Output Directory: `{current_overwrite_result.get('output_dir', '')}`")
+                st.caption(f"Scored CSV: `{current_overwrite_result.get('scored_candidates_path', '')}`")
+                st.caption(f"Scenario CSV: `{current_overwrite_result.get('scenario_pnl_path', '')}`")
+                st.caption(f"Report: `{current_overwrite_result.get('report_path', '')}`")
+                if current_overwrite_result.get("live_snapshot_path"):
+                    st.caption(f"Snapshot: `{current_overwrite_result.get('live_snapshot_path', '')}`")
+                metadata_payload = dict(current_overwrite_result.get("metadata", {}))
+                if metadata_payload:
+                    st.code(_pretty_json(metadata_payload), language="json")
+
+            with st.expander("Diagnostics: Full Markdown Report", expanded=False):
+                markdown_report = str(current_overwrite_result.get("markdown_report", "")).strip()
+                if markdown_report:
+                    st.markdown(markdown_report)
+                else:
+                    st.info("No markdown report available.")
 
     with ibkr_tab:
         st.subheader("Live IBKR Market Data Agent")
-        default_ibkr_payload = load_json(DEFAULT_IBKR_INPUT)
-        ibkr_col1, ibkr_col2, ibkr_col3 = st.columns(3)
-        symbol = ibkr_col1.text_input("Symbol", value=str(default_ibkr_payload.get("symbol", "SPY")))
-        host = ibkr_col2.text_input("Host", value=str(default_ibkr_payload.get("host", "127.0.0.1")))
-        port = ibkr_col3.number_input("Port", value=int(default_ibkr_payload.get("port", 4001)), step=1)
-
-        cfg_col1, cfg_col2, cfg_col3, cfg_col4 = st.columns(4)
-        client_id = cfg_col1.number_input("Client ID", value=int(default_ibkr_payload.get("client_id", 73)), step=1)
-        market_data_type = cfg_col2.number_input(
-            "Market Data Type",
-            value=int(default_ibkr_payload.get("market_data_type", 1)),
-            step=1,
-        )
-        expiry_count = cfg_col3.number_input("Expiry Count", value=int(default_ibkr_payload.get("expiry_count", 2)), step=1)
-        strike_count = cfg_col4.number_input("Strike Count", value=int(default_ibkr_payload.get("strike_count", 8)), step=1)
-
-        opt_col1, opt_col2, opt_col3 = st.columns(3)
-        exchange = opt_col1.text_input("Exchange", value=str(default_ibkr_payload.get("exchange", "SMART")))
-        option_exchange = opt_col2.text_input(
-            "Option Exchange",
-            value=str(default_ibkr_payload.get("option_exchange", "SMART")),
-        )
-        currency = opt_col3.text_input("Currency", value=str(default_ibkr_payload.get("currency", "USD")))
+        st.caption("Using sidebar `Symbol` and shared IBKR connection settings.")
 
         if st.button("Fetch IBKR Snapshot", type="primary"):
             payload = {
-                "symbol": symbol.strip() or "SPY",
-                "host": host.strip() or "127.0.0.1",
-                "port": int(port),
-                "client_id": int(client_id),
-                "market_data_type": int(market_data_type),
-                "exchange": exchange.strip() or "SMART",
-                "option_exchange": option_exchange.strip() or "SMART",
-                "currency": currency.strip() or "USD",
-                "expiry_count": int(expiry_count),
-                "strike_count": int(strike_count),
+                "symbol": sidebar_ibkr_symbol.strip() or "SPY",
+                "host": sidebar_ibkr_host.strip() or "127.0.0.1",
+                "port": int(sidebar_ibkr_port),
+                "client_id": int(sidebar_ibkr_client_id),
+                "market_data_type": int(sidebar_ibkr_market_data_type),
+                "exchange": sidebar_ibkr_exchange.strip() or "SMART",
+                "option_exchange": sidebar_ibkr_option_exchange.strip() or "SMART",
+                "currency": sidebar_ibkr_currency.strip() or "USD",
+                "expiry_count": int(sidebar_ibkr_expiry_count),
+                "strike_count": int(sidebar_ibkr_strike_count),
                 "min_days_to_expiry": 0,
             }
             try:

@@ -602,6 +602,7 @@ class IBKRLiveClient:
             option_parameters,
             preferred_exchange=request.option_exchange,
         )
+        selected_exchange = str(getattr(selected_parameters, "exchange", "") or request.option_exchange or "SMART")
         expirations = self._select_expirations(
             available=selected_parameters.expirations,
             requested=request.expirations,
@@ -624,28 +625,52 @@ class IBKRLiveClient:
                             expiry,
                             strike,
                             right,
-                            request.option_exchange,
+                            selected_exchange,
                             multiplier=str(getattr(selected_parameters, "multiplier", "") or ""),
                             currency=request.currency,
                             tradingClass=getattr(selected_parameters, "tradingClass", None),
                         )
-                    )
+        )
         if not option_contracts:
             raise RuntimeError("No option contracts were selected from the IBKR chain parameters.")
 
-        qualified_option_contracts = ib.qualifyContracts(*option_contracts)
+        qualified_option_contracts: list[Any] = []
+        qualification_warnings: list[str] = []
+        for option_contract in option_contracts:
+            expiry = str(getattr(option_contract, "lastTradeDateOrContractMonth", ""))
+            strike = getattr(option_contract, "strike", None)
+            right = str(getattr(option_contract, "right", ""))
+            try:
+                qualified = ib.qualifyContracts(option_contract)
+            except Exception as exc:  # pragma: no cover - depends on broker response
+                qualification_warnings.append(
+                    f"Skipping invalid option contract {request.symbol} {expiry} {strike} {right}: {exc}"
+                )
+                continue
+            if not qualified:
+                qualification_warnings.append(
+                    f"Skipping unqualified option contract {request.symbol} {expiry} {strike} {right}: IBKR returned no contract details."
+                )
+                continue
+            qualified_option_contracts.append(qualified[0])
+
+        if not qualified_option_contracts:
+            warning_text = "; ".join(qualification_warnings) if qualification_warnings else "IBKR rejected all generated option contracts."
+            raise RuntimeError(f"No valid option contracts were qualified for {request.symbol}. {warning_text}")
+
         tickers = list(ib.reqTickers(*qualified_option_contracts))
         option_quotes = [self._normalize_option_ticker(ticker) for ticker in tickers]
         return OptionChainSnapshot(
             underlying_symbol=request.symbol,
             underlying_price=underlying_price,
             fetched_at=_utc_now(),
-            exchange=request.option_exchange,
+            exchange=selected_exchange,
             currency=request.currency,
             expirations=list(expirations),
             strikes=[float(strike) for strike in strikes],
             rights=list(request.rights),
             option_quotes=[quote.to_dict() for quote in option_quotes],
+            warnings=qualification_warnings,
         ).to_dict()
 
     @staticmethod
@@ -922,7 +947,14 @@ class IBKRLiveClient:
             requested_set = {float(item) for item in requested}
             return [float(strike) for strike in available if float(strike) in requested_set]
         sorted_strikes = sorted(float(strike) for strike in available)
-        ranked = sorted(sorted_strikes, key=lambda strike: (abs(strike - underlying_price), strike))
+        ranked = sorted(
+            sorted_strikes,
+            key=lambda strike: (
+                1 if abs(strike - round(strike)) > 1e-9 else 0,
+                abs(strike - underlying_price),
+                strike,
+            ),
+        )
         selected = sorted(ranked[:limit])
         return selected
 

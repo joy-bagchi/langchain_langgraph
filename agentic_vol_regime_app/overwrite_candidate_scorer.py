@@ -53,6 +53,7 @@ class DecisionPolicy:
     recommendation_mode: str
     min_premium: float
     min_distance_sigma: float
+    allowed_dte: tuple[int, ...]
     block_new_overwrites: bool
 
 
@@ -125,27 +126,110 @@ def load_hmm_context(hmm_json: str | Path | None) -> HmmContext | None:
     )
 
 
+def normalize_regime_probs(regime_probs: dict[str, Any]) -> dict[str, float]:
+    normalized = {str(key).strip().lower(): float(value) for key, value in dict(regime_probs).items()}
+    return {
+        "low_vol_trend": float(normalized.get("low_vol_trend", normalized.get("stable_low_vol_trend", 0.0)) or 0.0),
+        "mid_vol_chop": float(normalized.get("mid_vol_chop", 0.0) or 0.0),
+        "vol_expansion": float(
+            normalized.get("vol_expansion", normalized.get("vol_expansion_transition", 0.0)) or 0.0
+        ),
+        "crash": float(normalized.get("crash", normalized.get("high_vol_risk_off", 0.0)) or 0.0),
+    }
+
+
 def build_decision_policy(
     *, hmm_context: HmmContext | None, base_min_premium: float, allow_crash_overwrite: bool
 ) -> DecisionPolicy:
     if hmm_context is None:
-        return DecisionPolicy("NO_HMM_CONTEXT", base_min_premium, 0.35, False)
+        return DecisionPolicy("NO_HMM_CONTEXT", base_min_premium, 0.35, (1,), False)
 
-    regime_probs = hmm_context.regime_probs
+    regime_probs = normalize_regime_probs(hmm_context.regime_probs)
     crash = float(regime_probs.get("crash", 0.0) or 0.0)
     vol_expansion = float(regime_probs.get("vol_expansion", 0.0) or 0.0)
     mid_vol_chop = float(regime_probs.get("mid_vol_chop", 0.0) or 0.0)
     low_vol_trend = float(regime_probs.get("low_vol_trend", 0.0) or 0.0)
 
     if crash >= 0.15:
-        return DecisionPolicy("NO_NEW_OVERWRITE", base_min_premium, 0.35, not allow_crash_overwrite)
+        return DecisionPolicy("NO_NEW_OVERWRITE", base_min_premium, 0.35, tuple(), not allow_crash_overwrite)
     if vol_expansion >= 0.55:
-        return DecisionPolicy("SELECTIVE_ONLY", base_min_premium * 1.25, 0.50, False)
-    if low_vol_trend >= 0.50:
-        return DecisionPolicy("LIGHT_OVERWRITE", base_min_premium, 0.50, False)
+        return DecisionPolicy("SELECTIVE_ONLY", base_min_premium * 1.25, 0.50, (1,), False)
     if mid_vol_chop >= 0.50:
-        return DecisionPolicy("NORMAL_OVERWRITE", base_min_premium, 0.35, False)
-    return DecisionPolicy("NO_HMM_CONTEXT", base_min_premium, 0.35, False)
+        return DecisionPolicy("NORMAL_OVERWRITE", base_min_premium, 0.35, (1, 2), False)
+    if low_vol_trend >= 0.50:
+        return DecisionPolicy("LIGHT_OVERWRITE", base_min_premium, 0.50, (1,), False)
+    if any(regime_probs.values()):
+        return DecisionPolicy("UNCERTAIN_SELECTIVE", base_min_premium * 1.15, 0.50, (1,), False)
+    return DecisionPolicy("NO_HMM_CONTEXT", base_min_premium, 0.35, (1,), False)
+
+
+def candidate_generation_anchor(*, spot: float, vix: float) -> float:
+    _, daily_sigma_points = compute_daily_sigma(spot=spot, vix=vix)
+    return float(spot) + 0.5 * float(daily_sigma_points)
+
+
+def generate_candidates_from_option_chain(
+    option_quotes: list[dict[str, Any]],
+    *,
+    as_of: str,
+    target_strike: float,
+    dte_choices: list[int],
+    strikes_below_target: int,
+    strikes_above_target: int,
+) -> pd.DataFrame:
+    if not option_quotes:
+        raise ValueError("IBKR option chain returned no quotes.")
+    if not dte_choices:
+        raise ValueError("At least one DTE choice is required.")
+
+    as_of_ts = pd.Timestamp(str(as_of)).tz_localize(None)
+    rows: list[dict[str, Any]] = []
+    for quote in option_quotes:
+        if str(quote.get("right", "")).upper() != "C":
+            continue
+        expiry_text = str(quote.get("expiry", "")).strip()
+        if not expiry_text:
+            continue
+        expiry_ts = pd.to_datetime(expiry_text, format="%Y%m%d", errors="coerce")
+        if pd.isna(expiry_ts):
+            continue
+        dte = int((expiry_ts.normalize() - as_of_ts.normalize()).days)
+        rows.append(
+            {
+                "symbol": str(quote.get("symbol", "")),
+                "expiry": expiry_text,
+                "strike": float(quote.get("strike", 0.0) or 0.0),
+                "dte": dte,
+                "bid": quote.get("bid"),
+                "ask": quote.get("ask"),
+                "mid": quote.get("mark"),
+                "delta": dict(quote.get("greeks", {})).get("delta"),
+                "iv": dict(quote.get("greeks", {})).get("implied_vol"),
+                "volume": quote.get("volume"),
+                "open_interest": quote.get("open_interest"),
+            }
+        )
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        raise ValueError("IBKR option chain returned no call candidates.")
+    for column in ["strike", "dte", "bid", "ask", "mid", "delta", "iv"]:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame["mid"] = frame["mid"].where(frame["mid"].notna(), (frame["bid"] + frame["ask"]) / 2.0)
+    frame = frame[frame["dte"].isin([int(item) for item in dte_choices])].copy()
+    if frame.empty:
+        raise ValueError(f"IBKR option chain did not contain any calls for DTE choices {dte_choices}.")
+    frame["target_distance_abs"] = (frame["strike"] - float(target_strike)).abs()
+    strikes_sorted = sorted(set(float(value) for value in frame["strike"].dropna().tolist()))
+    if not strikes_sorted:
+        raise ValueError("IBKR option chain did not contain any usable strike values.")
+    anchor_idx = min(range(len(strikes_sorted)), key=lambda idx: abs(strikes_sorted[idx] - float(target_strike)))
+    lower_idx = max(0, anchor_idx - max(int(strikes_below_target), 0))
+    upper_idx = min(len(strikes_sorted), anchor_idx + max(int(strikes_above_target), 0) + 1)
+    selected_strikes = set(strikes_sorted[lower_idx:upper_idx])
+    frame = frame[frame["strike"].isin(selected_strikes)].copy()
+    if frame.empty:
+        raise ValueError("No option candidates remained after target-strike window filtering.")
+    return frame.sort_values(["dte", "target_distance_abs", "strike"]).reset_index(drop=True)
 
 
 def build_scenario_table(
@@ -199,12 +283,20 @@ def apply_decision_rules(
         reasons: list[str] = []
         if decision_policy.block_new_overwrites:
             reasons.append("Crash regime gate blocks new overwrites")
+        if int(float(row["dte"])) not in set(int(item) for item in decision_policy.allowed_dte):
+            reasons.append(f"DTE not allowed by policy {list(decision_policy.allowed_dte)}")
         if float(row["mid"]) < float(decision_policy.min_premium):
             reasons.append(f"Premium below minimum {decision_policy.min_premium:.2f}")
         if float(row["distance_sigma"]) < float(decision_policy.min_distance_sigma):
             reasons.append(f"Distance sigma below minimum {decision_policy.min_distance_sigma:.2f}")
         if float(row["spread_pct"]) > float(max_spread_pct):
             reasons.append(f"Spread pct above maximum {max_spread_pct:.2f}")
+        if float(row["bid"]) <= 0.0:
+            reasons.append("Bid must be positive")
+        if float(row["mid"]) <= 0.0:
+            reasons.append("Mid must be positive")
+        if float(row["ask"]) <= float(row["bid"]):
+            reasons.append("Ask must be greater than bid")
         decisions.append("ACCEPT" if not reasons else "REJECT")
         reject_reasons.append("; ".join(reasons))
 
@@ -222,7 +314,7 @@ def score_candidates(
     hmm_context: HmmContext | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, DecisionPolicy]:
     _, daily_sigma_points = compute_daily_sigma(spot=config.spot, vix=config.vix)
-    target_strike = config.spot + 0.5 * daily_sigma_points
+    target_strike = candidate_generation_anchor(spot=config.spot, vix=config.vix)
     scenario_table = build_scenario_table(
         candidates,
         spot=config.spot,
@@ -287,6 +379,126 @@ def _top_rows(frame: pd.DataFrame, *, decision: str, count: int = 5) -> pd.DataF
     return filtered.sort_values("score", ascending=False).head(count)
 
 
+def _most_common_reject_reasons(rejected: pd.DataFrame, *, limit: int = 3) -> list[str]:
+    if rejected.empty or "reject_reasons" not in rejected.columns:
+        return []
+    counts: dict[str, int] = {}
+    for raw in rejected["reject_reasons"].astype(str).tolist():
+        for part in [item.strip() for item in raw.split(";") if item.strip()]:
+            counts[part] = counts.get(part, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    return [reason for reason, _ in ranked[:limit]]
+
+
+def build_overwrite_decision_summary(
+    *,
+    scored_candidates: pd.DataFrame,
+    scenario_table: pd.DataFrame,
+    metadata: dict[str, Any],
+    decision_policy: DecisionPolicy,
+    hmm_context: HmmContext | None,
+) -> dict[str, Any]:
+    accepted = scored_candidates[scored_candidates["decision"] == "ACCEPT"].copy()
+    rejected = scored_candidates[scored_candidates["decision"] == "REJECT"].copy()
+    accepted = accepted.sort_values("score", ascending=False).reset_index(drop=True)
+    rejected = rejected.sort_values("score", ascending=False).reset_index(drop=True)
+    best_candidate = accepted.iloc[0].to_dict() if not accepted.empty else None
+
+    target_strike = metadata.get("target_strike")
+    if target_strike is None and not scored_candidates.empty and "target_strike" in scored_candidates.columns:
+        target_strike = float(pd.to_numeric(scored_candidates["target_strike"], errors="coerce").dropna().iloc[0])
+    diagnostic_candidate = None
+    if best_candidate is None and not scored_candidates.empty:
+        working = scored_candidates.copy()
+        if target_strike is not None:
+            working["target_distance_abs"] = (pd.to_numeric(working["strike"], errors="coerce") - float(target_strike)).abs()
+            working = working.sort_values(["target_distance_abs", "score"], ascending=[True, False])
+        else:
+            working = working.sort_values("score", ascending=False)
+        diagnostic_candidate = working.iloc[0].to_dict()
+
+    mode = str(decision_policy.recommendation_mode).upper()
+    if best_candidate is None:
+        recommended_action = "NO_OVERWRITE"
+    elif mode == "SELECTIVE_ONLY":
+        recommended_action = "SELECTIVE_OVERWRITE"
+    elif mode == "NORMAL_OVERWRITE":
+        recommended_action = "NORMAL_OVERWRITE"
+    elif mode == "LIGHT_OVERWRITE":
+        recommended_action = "LIGHT_OVERWRITE"
+    elif mode == "UNCERTAIN_SELECTIVE":
+        recommended_action = "SELECTIVE_OVERWRITE"
+    else:
+        recommended_action = "SELECTIVE_OVERWRITE"
+
+    regime_probs = normalize_regime_probs(hmm_context.regime_probs) if hmm_context is not None else {}
+    top_regime = max(regime_probs, key=regime_probs.get) if regime_probs else None
+    top_regime_probability = float(regime_probs.get(top_regime, 0.0)) if top_regime else 0.0
+    crash_gate_status = "ACTIVE" if bool(decision_policy.block_new_overwrites) else "OPEN"
+
+    reason_bullets: list[str] = []
+    if best_candidate is None:
+        if top_regime:
+            reason_bullets.append(
+                f"HMM context is led by {top_regime.replace('_', ' ')} ({top_regime_probability:.1%})."
+            )
+        reason_bullets.extend(_most_common_reject_reasons(rejected, limit=3))
+        if not reason_bullets:
+            reason_bullets.append("No policy-valid candidates were returned.")
+        reject_text = " | ".join(rejected.get("reject_reasons", pd.Series(dtype=str)).astype(str).tolist()).lower()
+        if decision_policy.block_new_overwrites:
+            next_best_action = "Do not open new overwrites under current crash policy."
+        elif "dte not allowed by policy" in reject_text:
+            next_best_action = (
+                "Run again with the policy-allowed DTE chain, or intentionally add this DTE to allowed candidates "
+                "if you want to evaluate it."
+            )
+        elif "premium below minimum" in reject_text:
+            next_best_action = "Do not overwrite unless premium improves."
+        elif "distance sigma below minimum" in reject_text:
+            next_best_action = "Check farther OTM strikes or wait."
+        elif "spread pct above maximum" in reject_text:
+            next_best_action = "Wait for tighter bid/ask spreads before opening a new overwrite."
+        else:
+            next_best_action = "Policy is selective right now; wait for better candidates."
+        headline = "No overwrite recommended."
+    else:
+        reason_bullets = [
+            f"Distance {float(best_candidate.get('distance_sigma', 0.0)):.2f} sigma is above minimum {decision_policy.min_distance_sigma:.2f}.",
+            f"Premium {float(best_candidate.get('mid', 0.0)):.2f} is above minimum {decision_policy.min_premium:.2f}.",
+            f"DTE {int(float(best_candidate.get('dte', 0.0)))} is allowed by policy {list(decision_policy.allowed_dte)}.",
+            f"Spread {float(best_candidate.get('spread_pct', 0.0)):.2f} is within max {float(metadata.get('max_spread_pct', 0.25)):.2f}.",
+            "This candidate has the best portfolio score among accepted candidates.",
+            f"Policy mode is {mode}.",
+        ]
+        next_best_action = "Review the best candidate and scenario PnL before placing any trade manually."
+        headline = (
+            f"{recommended_action.replace('_', ' ')}: "
+            f"{str(metadata.get('underlying', best_candidate.get('underlying', 'SPY'))).upper()} "
+            f"{int(float(best_candidate.get('strike', 0.0)))}C "
+            f"{int(float(best_candidate.get('dte', 0.0)))}DTE @ {float(best_candidate.get('mid', 0.0)):.2f}"
+        )
+
+    return {
+        "recommended_action": recommended_action,
+        "policy_mode": mode,
+        "best_candidate": best_candidate,
+        "headline": headline,
+        "reason_bullets": reason_bullets,
+        "next_best_action": next_best_action,
+        "top_regime": top_regime,
+        "top_regime_probability": top_regime_probability,
+        "accepted_count": int(len(accepted)),
+        "rejected_count": int(len(rejected)),
+        "crash_gate_status": crash_gate_status,
+        "diagnostic_candidate": diagnostic_candidate,
+        "selected_regime": hmm_context.selected_regime if hmm_context is not None else None,
+        "asof": hmm_context.asof if hmm_context is not None else None,
+        "target_strike": float(target_strike) if target_strike is not None else None,
+        "has_scenario_rows": bool(not scenario_table.empty),
+    }
+
+
 def _render_markdown_report(
     *,
     config: ScorerConfig,
@@ -301,6 +513,15 @@ def _render_markdown_report(
     accepted = _top_rows(scored_candidates, decision="ACCEPT")
     rejected = _top_rows(scored_candidates, decision="REJECT")
 
+    action_summary = "NO OVERWRITE"
+    if not accepted.empty:
+        best = accepted.iloc[0]
+        action_summary = (
+            f"{decision_policy.recommendation_mode.replace('_', ' ')}: "
+            f"best candidate is {config.underlying.upper()} {int(best['strike'])}C {int(best['dte'])}DTE "
+            f"at mid {float(best['mid']):.2f}"
+        )
+
     lines = [
         "# Overwrite Candidate Report",
         "",
@@ -313,6 +534,8 @@ def _render_markdown_report(
         f"- Recommendation mode: {decision_policy.recommendation_mode}",
         f"- Daily sigma points: {daily_sigma_points:.2f}",
         f"- Heuristic target strike: {target_strike:.2f}",
+        f"- Allowed DTE: {list(decision_policy.allowed_dte)}",
+        f"- Recommended action: {action_summary}",
         "",
     ]
     if hmm_context is not None:
@@ -334,7 +557,8 @@ def _render_markdown_report(
                 (
                     f"Best candidate: {config.underlying.upper()} {int(best['strike'])}C {int(best['dte'])}DTE "
                     f"at mid {float(best['mid']):.2f}. Distance is {float(best['distance_sigma']):.2f} sigma. "
-                    f"Premium meets threshold. Portfolio score is {float(best['score']):.2f}. "
+                    f"Premium meets threshold, spread is {float(best['spread_pct']):.2f}, "
+                    f"and DTE is allowed by policy. Portfolio score is {float(best['score']):.2f}. "
                     f"Recommended only as {decision_policy.recommendation_mode.lower().replace('_', ' ')}."
                 ),
                 "",
@@ -397,6 +621,27 @@ def _render_markdown_report(
                 )
                 + " |"
             )
+            lines.append("")
+
+    if not accepted.empty:
+        lines.extend(["## Why This Candidate Passed", ""])
+        best = accepted.iloc[0]
+        lines.extend(
+            [
+                f"- Premium {float(best['mid']):.2f} meets minimum {decision_policy.min_premium:.2f}.",
+                f"- Distance {float(best['distance_sigma']):.2f} sigma meets minimum {decision_policy.min_distance_sigma:.2f}.",
+                f"- DTE {int(float(best['dte']))} is allowed by policy {list(decision_policy.allowed_dte)}.",
+                f"- Spread pct {float(best['spread_pct']):.2f} is within limit {float(config.max_spread_pct):.2f}.",
+                "",
+            ]
+        )
+
+    if not rejected.empty:
+        lines.extend(["## Why Others Failed", ""])
+        for _, row in rejected.head(5).iterrows():
+            lines.append(
+                f"- Strike {float(row['strike']):.2f} / {int(float(row['dte']))}DTE rejected because {row['reject_reasons']}."
+            )
         lines.append("")
 
     lines.extend(
@@ -425,23 +670,48 @@ def write_outputs(
     scored_path = destination / "overwrite_candidates_scored.csv"
     scenario_path = destination / "overwrite_scenario_pnl.csv"
     report_path = destination / "overwrite_report.md"
+    snapshot_path = destination / "overwrite_live_snapshot.json"
+    markdown_report = _render_markdown_report(
+        config=config,
+        hmm_context=hmm_context,
+        decision_policy=decision_policy,
+        scored_candidates=scored_candidates,
+        scenario_table=scenario_table,
+    )
 
     scored_candidates.to_csv(scored_path, index=False)
     scenario_table.to_csv(scenario_path, index=False)
-    report_path.write_text(
-        _render_markdown_report(
-            config=config,
-            hmm_context=hmm_context,
-            decision_policy=decision_policy,
-            scored_candidates=scored_candidates,
-            scenario_table=scenario_table,
-        ),
-        encoding="utf-8",
-    )
+    report_path.write_text(markdown_report, encoding="utf-8")
+    accepted = scored_candidates[scored_candidates["decision"] == "ACCEPT"].copy()
+    _, daily_sigma_points = compute_daily_sigma(spot=config.spot, vix=config.vix)
+    best_candidate = accepted.iloc[0].to_dict() if not accepted.empty else None
+    snapshot_payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "underlying": config.underlying.upper(),
+        "spot": float(config.spot),
+        "vix": float(config.vix),
+        "daily_sigma_points": float(daily_sigma_points),
+        "target_strike": float(candidate_generation_anchor(spot=config.spot, vix=config.vix)),
+        "hmm_regime_probs": dict(normalize_regime_probs(hmm_context.regime_probs)) if hmm_context is not None else {},
+        "selected_regime": hmm_context.selected_regime if hmm_context is not None else None,
+        "recommendation_mode": decision_policy.recommendation_mode,
+        "best_candidate": best_candidate,
+        "input_parameters": {
+            "leap_contracts": int(config.leap_contracts),
+            "leap_delta": float(config.leap_delta),
+            "upside_drag_penalty": float(config.upside_drag_penalty),
+            "min_premium": float(config.min_premium),
+            "max_spread_pct": float(config.max_spread_pct),
+            "allow_crash_overwrite": bool(config.allow_crash_overwrite),
+        },
+    }
+    snapshot_path.write_text(json.dumps(snapshot_payload, indent=2, default=str), encoding="utf-8")
     return {
         "scored_candidates_csv": str(scored_path),
         "scenario_pnl_csv": str(scenario_path),
         "report_md": str(report_path),
+        "live_snapshot_json": str(snapshot_path),
+        "markdown_report": markdown_report,
     }
 
 

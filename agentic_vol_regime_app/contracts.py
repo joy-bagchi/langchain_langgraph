@@ -67,6 +67,7 @@ class OptionChainSnapshot:
     strikes: list[float] = field(default_factory=list)
     rights: list[str] = field(default_factory=list)
     option_quotes: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return _asdict(self)
