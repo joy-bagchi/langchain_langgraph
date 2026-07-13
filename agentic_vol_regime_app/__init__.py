@@ -27,6 +27,7 @@ from .app_runtime import (
     run_daily_regime_agent,
     run_ibkr_market_data_agent,
 )
+from .data.sector_history_store import load_sector_price_history, sync_sector_history
 
 __all__ = [
     "default_agent_path",
@@ -50,4 +51,6 @@ __all__ = [
     "resume_daily_regime_run",
     "run_daily_regime_agent",
     "run_ibkr_market_data_agent",
+    "load_sector_price_history",
+    "sync_sector_history",
 ]

@@ -34,3 +34,6 @@ __pycache__/
 
 # Local HMM model artifacts
 agentic_vol_regime_app/models/hmm/
+
+# Local market-history store artifacts
+agentic_vol_regime_app/data/market_history/
