@@ -784,10 +784,16 @@ class IBKRLiveClient:
         sec_type: str,
         preferred_what_to_show: str,
         allow_fallback_to_trades: bool,
+        end_datetime: str,
     ) -> tuple[str, ...]:
         normalized_sec_type = str(sec_type).upper()
         normalized_preference = str(preferred_what_to_show).upper()
         if normalized_sec_type == "STK":
+            if normalized_preference == "ADJUSTED_LAST" and str(end_datetime).strip():
+                ordered = ["TRADES"]
+                if allow_fallback_to_trades:
+                    ordered.append("ADJUSTED_LAST")
+                return tuple(dict.fromkeys(item for item in ordered if item))
             ordered = [normalized_preference or "ADJUSTED_LAST"]
             if allow_fallback_to_trades and "TRADES" not in ordered:
                 ordered.append("TRADES")
@@ -872,6 +878,7 @@ class IBKRLiveClient:
             sec_type=sec_type,
             preferred_what_to_show=preferred_what_to_show,
             allow_fallback_to_trades=allow_fallback_to_trades,
+            end_datetime=end_datetime,
         )
         for what_to_show in what_to_show_candidates:
             actual_what_to_show = what_to_show

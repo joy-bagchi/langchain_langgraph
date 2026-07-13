@@ -1,1 +1,2 @@
-"""Data loading and validation helpers."""
+"""Data-layer helpers for the volatility regime app."""
+
