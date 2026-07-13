@@ -4,7 +4,7 @@ from ._bootstrap import ensure_repo_imports
 
 ensure_repo_imports()
 
-from .app_runtime import (
+from .app_runtime import (  # noqa: E402
     default_agent_path,
     default_hmm_agent_path,
     default_hmm_v2_agent_path,
@@ -27,7 +27,8 @@ from .app_runtime import (
     run_daily_regime_agent,
     run_ibkr_market_data_agent,
 )
-from .data.sector_history_store import load_sector_price_history, sync_sector_history
+from .data.sector_history_gcs import publish_sector_store_to_gcs, verify_sector_store_in_gcs  # noqa: E402
+from .data.sector_history_store import load_sector_price_history, sync_sector_history  # noqa: E402
 
 __all__ = [
     "default_agent_path",
@@ -53,4 +54,6 @@ __all__ = [
     "run_ibkr_market_data_agent",
     "load_sector_price_history",
     "sync_sector_history",
+    "publish_sector_store_to_gcs",
+    "verify_sector_store_in_gcs",
 ]

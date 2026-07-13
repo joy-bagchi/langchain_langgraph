@@ -115,4 +115,84 @@ The regression test for the old bug checks that an update from `T` to `T+1` neve
 
 ## Next Slice
 
-This store is intentionally local only. Google Cloud Storage publication is the next separate slice.
+## Google Cloud Storage Publication
+
+Publishing to Google Cloud Storage is a separate step from updating the local IBKR-backed store.
+
+Mode boundaries:
+
+- `update`: reads the local store, contacts IBKR for a bounded delta, writes local Parquet + metadata
+- `offline`: reads only the local Parquet + metadata, contacts neither IBKR nor GCS
+- `publish-gcs`: reads only the local Parquet + metadata, writes to GCS, never contacts IBKR
+- `verify-gcs`: reads from GCS, validates the referenced dataset, never contacts IBKR
+
+Install the GCS dependency:
+
+```bash
+pip install -e agentic_vol_regime_app[gcs]
+```
+
+Authenticate locally with Application Default Credentials:
+
+```bash
+gcloud auth application-default login
+gcloud config set project <PROJECT_ID>
+```
+
+Create the destination bucket manually before publishing. The publisher does not create buckets automatically.
+
+Default GCS layout:
+
+- `gs://<bucket>/market-manifold/datasets/<dataset_id>/sector_prices_daily.parquet`
+- `gs://<bucket>/market-manifold/datasets/<dataset_id>/metadata.json`
+- `gs://<bucket>/market-manifold/manifests/latest.json`
+
+The dataset id is deterministic:
+
+- `sector-prices-<last_market_date>-<parquet_sha256_prefix>`
+
+Identical content publishes to the same immutable dataset path. Immutable dataset objects are never silently overwritten.
+
+Dry run:
+
+```bash
+python -m agentic_vol_regime_app.data.sector_history_cli publish-gcs \
+  --bucket <BUCKET_NAME> \
+  --prefix market-manifold \
+  --dry-run
+```
+
+Publish:
+
+```bash
+python -m agentic_vol_regime_app.data.sector_history_cli publish-gcs \
+  --bucket <BUCKET_NAME> \
+  --prefix market-manifold \
+  --project <PROJECT_ID>
+```
+
+Verify the published dataset from GCS:
+
+```bash
+python -m agentic_vol_regime_app.data.sector_history_cli verify-gcs \
+  --bucket <BUCKET_NAME> \
+  --prefix market-manifold \
+  --project <PROJECT_ID>
+```
+
+Environment-variable equivalents:
+
+- `MARKET_MANIFOLD_GCP_PROJECT`
+- `MARKET_MANIFOLD_GCS_BUCKET`
+- `MARKET_MANIFOLD_GCS_PREFIX`
+
+Publication sequence:
+
+1. Load the local Parquet with the offline loader.
+2. Validate the Parquet and local metadata.
+3. Calculate checksums and the deterministic dataset id.
+4. Upload immutable Parquet and metadata objects.
+5. Verify uploaded bytes against local SHA-256 checksums.
+6. Update `manifests/latest.json` only after immutable object verification succeeds.
+
+`latest.json` is the publication pointer that the future consumer will read first. Updating local history and publishing to GCS remain separate commands by design.

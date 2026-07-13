@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,12 @@ def _ensure_cli_imports() -> None:
 
 _ensure_cli_imports()
 
-from agentic_vol_regime_app.data.sector_history_store import (
+from agentic_vol_regime_app.data.sector_history_gcs import (  # noqa: E402
+    DEFAULT_GCS_PREFIX,
+    publish_sector_store_to_gcs,
+    verify_sector_store_in_gcs,
+)
+from agentic_vol_regime_app.data.sector_history_store import (  # noqa: E402
     DEFAULT_SECTOR_PRICE_SYMBOLS,
     SectorHistorySyncResult,
     SectorPriceStore,
@@ -80,6 +86,10 @@ def _render_frame_summary(frame: pd.DataFrame, *, store: SectorPriceStore, inclu
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
+def _render_publish_result(result: Any) -> str:
+    return json.dumps(result.to_dict(), indent=2, sort_keys=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manage the offline-first IBKR sector price history store.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -110,11 +120,35 @@ def main() -> None:
     validate.add_argument("--metadata-output", default=None)
     validate.add_argument("--symbols", default=None)
 
+    publish_gcs = subparsers.add_parser(
+        "publish-gcs",
+        help="Validate the local store and publish immutable dataset objects plus the latest GCS manifest.",
+    )
+    publish_gcs.add_argument("--output", default=None)
+    publish_gcs.add_argument("--metadata-output", default=None)
+    publish_gcs.add_argument("--symbols", default=None)
+    publish_gcs.add_argument("--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET"))
+    publish_gcs.add_argument("--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX))
+    publish_gcs.add_argument("--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT"))
+    publish_gcs.add_argument("--dry-run", action="store_true")
+
+    verify_gcs = subparsers.add_parser(
+        "verify-gcs",
+        help="Read GCS latest.json, verify immutable objects, and validate the referenced parquet store.",
+    )
+    verify_gcs.add_argument("--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET"))
+    verify_gcs.add_argument("--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX))
+    verify_gcs.add_argument("--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT"))
+
     args = parser.parse_args()
+
+    if args.command in {"publish-gcs", "verify-gcs"} and not args.bucket:
+        parser.error("--bucket is required or set MARKET_MANIFOLD_GCS_BUCKET.")
+
     store = SectorPriceStore(
-        parquet_path=args.output,
-        metadata_path=args.metadata_output,
-        symbols=_parse_symbols(args.symbols) or list(DEFAULT_SECTOR_PRICE_SYMBOLS),
+        parquet_path=getattr(args, "output", None),
+        metadata_path=getattr(args, "metadata_output", None),
+        symbols=_parse_symbols(getattr(args, "symbols", None)) or list(DEFAULT_SECTOR_PRICE_SYMBOLS),
     )
 
     if args.command == "bootstrap":
@@ -170,6 +204,28 @@ def main() -> None:
             symbols=list(store.symbols),
         )
         print(_render_frame_summary(frame, store=store, include_rows=bool(args.summary)))
+        return
+
+    if args.command == "publish-gcs":
+        result = publish_sector_store_to_gcs(
+            bucket=args.bucket,
+            prefix=args.prefix,
+            project=args.project,
+            parquet_path=store.parquet_path,
+            metadata_path=store.metadata_path,
+            symbols=list(store.symbols),
+            dry_run=bool(args.dry_run),
+        )
+        print(_render_publish_result(result))
+        return
+
+    if args.command == "verify-gcs":
+        result = verify_sector_store_in_gcs(
+            bucket=args.bucket,
+            prefix=args.prefix,
+            project=args.project,
+        )
+        print(_render_publish_result(result))
         return
 
     validation = sync_sector_history(
