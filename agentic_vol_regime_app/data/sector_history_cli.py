@@ -31,6 +31,10 @@ from agentic_vol_regime_app.data.sector_history_store import (  # noqa: E402
     SectorPriceStore,
     sync_sector_history,
 )
+from agentic_vol_regime_app.data.sector_history_update_publish import (  # noqa: E402
+    SUCCESSFUL_UPDATE_AND_PUBLISH_STATUSES,
+    update_and_publish_sector_history,
+)
 
 
 def _parse_symbols(value: str | None) -> list[str] | None:
@@ -40,9 +44,17 @@ def _parse_symbols(value: str | None) -> list[str] | None:
 
 
 def _shared_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--output", default=None, help="Optional explicit parquet output path.")
-    parser.add_argument("--metadata-output", default=None, help="Optional explicit metadata JSON output path.")
-    parser.add_argument("--symbols", default=None, help="Comma-separated symbol universe.")
+    parser.add_argument(
+        "--output", default=None, help="Optional explicit parquet output path."
+    )
+    parser.add_argument(
+        "--metadata-output",
+        default=None,
+        help="Optional explicit metadata JSON output path.",
+    )
+    parser.add_argument(
+        "--symbols", default=None, help="Comma-separated symbol universe."
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4001)
     parser.add_argument("--client-id", type=int, default=73)
@@ -69,7 +81,9 @@ def _render_sync_result(result: SectorHistorySyncResult) -> str:
     return "\n".join(lines)
 
 
-def _render_frame_summary(frame: pd.DataFrame, *, store: SectorPriceStore, include_rows: bool) -> str:
+def _render_frame_summary(
+    frame: pd.DataFrame, *, store: SectorPriceStore, include_rows: bool
+) -> str:
     validation = store.validate_frame(frame)
     payload: dict[str, Any] = {
         "schema_version": "sector_prices.v1",
@@ -90,11 +104,19 @@ def _render_publish_result(result: Any) -> str:
     return json.dumps(result.to_dict(), indent=2, sort_keys=True)
 
 
+def _exit_code_for_update_publish_status(status: str) -> int:
+    return 0 if status in SUCCESSFUL_UPDATE_AND_PUBLISH_STATUSES else 1
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage the offline-first IBKR sector price history store.")
+    parser = argparse.ArgumentParser(
+        description="Manage the offline-first IBKR sector price history store."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    bootstrap = subparsers.add_parser("bootstrap", help="Create or rebuild the authoritative sector history store.")
+    bootstrap = subparsers.add_parser(
+        "bootstrap", help="Create or rebuild the authoritative sector history store."
+    )
     _shared_parser(bootstrap)
     bootstrap.add_argument("--start-date", default=None)
     bootstrap.add_argument("--history-years", type=int, default=None)
@@ -102,20 +124,26 @@ def main() -> None:
     bootstrap.add_argument("--target-end-date", default=None)
     bootstrap.add_argument("--force", action="store_true")
 
-    update = subparsers.add_parser("update", help="Fetch only the missing delta plus overlap.")
+    update = subparsers.add_parser(
+        "update", help="Fetch only the missing delta plus overlap."
+    )
     _shared_parser(update)
     update.add_argument("--target-end-date", default=None)
     update.add_argument("--overlap-trading-days", type=int, default=5)
     update.add_argument("--repair-start-date", default=None)
     update.add_argument("--bootstrap-start-date", default=None)
 
-    offline = subparsers.add_parser("offline", help="Load and validate the local store without IBKR.")
+    offline = subparsers.add_parser(
+        "offline", help="Load and validate the local store without IBKR."
+    )
     offline.add_argument("--output", default=None)
     offline.add_argument("--metadata-output", default=None)
     offline.add_argument("--symbols", default=None)
     offline.add_argument("--summary", action="store_true")
 
-    validate = subparsers.add_parser("validate", help="Validate the local store and print a summary.")
+    validate = subparsers.add_parser(
+        "validate", help="Validate the local store and print a summary."
+    )
     validate.add_argument("--output", default=None)
     validate.add_argument("--metadata-output", default=None)
     validate.add_argument("--symbols", default=None)
@@ -127,9 +155,15 @@ def main() -> None:
     publish_gcs.add_argument("--output", default=None)
     publish_gcs.add_argument("--metadata-output", default=None)
     publish_gcs.add_argument("--symbols", default=None)
-    publish_gcs.add_argument("--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET"))
-    publish_gcs.add_argument("--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX))
-    publish_gcs.add_argument("--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT"))
+    publish_gcs.add_argument(
+        "--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET")
+    )
+    publish_gcs.add_argument(
+        "--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX)
+    )
+    publish_gcs.add_argument(
+        "--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT")
+    )
     publish_gcs.add_argument("--dry-run", action="store_true")
 
     verify_gcs = subparsers.add_parser(
@@ -137,18 +171,50 @@ def main() -> None:
         help="Read GCS latest.json, verify immutable objects, and validate the referenced parquet store.",
     )
     verify_gcs.add_argument("--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET"))
-    verify_gcs.add_argument("--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX))
-    verify_gcs.add_argument("--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT"))
+    verify_gcs.add_argument(
+        "--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX)
+    )
+    verify_gcs.add_argument(
+        "--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT")
+    )
+
+    update_publish_gcs = subparsers.add_parser(
+        "update-and-publish-gcs",
+        help="Update the local sector store from IBKR, validate publication readiness, then publish and verify in GCS.",
+    )
+    _shared_parser(update_publish_gcs)
+    update_publish_gcs.add_argument("--target-end-date", default=None)
+    update_publish_gcs.add_argument("--overlap-trading-days", type=int, default=5)
+    update_publish_gcs.add_argument("--repair-start-date", default=None)
+    update_publish_gcs.add_argument("--bootstrap-start-date", default=None)
+    update_publish_gcs.add_argument(
+        "--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET")
+    )
+    update_publish_gcs.add_argument(
+        "--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX)
+    )
+    update_publish_gcs.add_argument(
+        "--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT")
+    )
+    update_publish_gcs.add_argument("--require-adjusted-last", action="store_true")
+    update_publish_gcs.add_argument(
+        "--skip-publish-if-already-current", action="store_true"
+    )
+    update_publish_gcs.add_argument("--dry-run-publish", action="store_true")
 
     args = parser.parse_args()
 
-    if args.command in {"publish-gcs", "verify-gcs"} and not args.bucket:
+    if (
+        args.command in {"publish-gcs", "verify-gcs", "update-and-publish-gcs"}
+        and not args.bucket
+    ):
         parser.error("--bucket is required or set MARKET_MANIFOLD_GCS_BUCKET.")
 
     store = SectorPriceStore(
         parquet_path=getattr(args, "output", None),
         metadata_path=getattr(args, "metadata_output", None),
-        symbols=_parse_symbols(getattr(args, "symbols", None)) or list(DEFAULT_SECTOR_PRICE_SYMBOLS),
+        symbols=_parse_symbols(getattr(args, "symbols", None))
+        or list(DEFAULT_SECTOR_PRICE_SYMBOLS),
     )
 
     if args.command == "bootstrap":
@@ -203,7 +269,9 @@ def main() -> None:
             metadata_path=store.metadata_path,
             symbols=list(store.symbols),
         )
-        print(_render_frame_summary(frame, store=store, include_rows=bool(args.summary)))
+        print(
+            _render_frame_summary(frame, store=store, include_rows=bool(args.summary))
+        )
         return
 
     if args.command == "publish-gcs":
@@ -227,6 +295,33 @@ def main() -> None:
         )
         print(_render_publish_result(result))
         return
+
+    if args.command == "update-and-publish-gcs":
+        result = update_and_publish_sector_history(
+            bucket=args.bucket,
+            prefix=args.prefix,
+            project=args.project,
+            parquet_path=store.parquet_path,
+            metadata_path=store.metadata_path,
+            symbols=list(store.symbols),
+            target_end_date=args.target_end_date,
+            overlap_trading_days=args.overlap_trading_days,
+            repair_start_date=args.repair_start_date,
+            bootstrap_start_date=args.bootstrap_start_date,
+            host=args.host,
+            port=args.port,
+            client_id=args.client_id,
+            readonly=args.readonly,
+            timeout_seconds=args.timeout_seconds,
+            market_data_type=args.market_data_type,
+            preferred_what_to_show=args.preferred_what_to_show,
+            allow_trades_fallback=not args.no_trades_fallback,
+            publish_if_already_current=not args.skip_publish_if_already_current,
+            require_adjusted_last=bool(args.require_adjusted_last),
+            dry_run_publish=bool(args.dry_run_publish),
+        )
+        print(_render_publish_result(result))
+        raise SystemExit(_exit_code_for_update_publish_status(result.status))
 
     validation = sync_sector_history(
         mode="validate",

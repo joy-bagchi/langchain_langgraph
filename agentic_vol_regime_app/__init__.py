@@ -29,6 +29,7 @@ from .app_runtime import (  # noqa: E402
 )
 from .data.sector_history_gcs import publish_sector_store_to_gcs, verify_sector_store_in_gcs  # noqa: E402
 from .data.sector_history_store import load_sector_price_history, sync_sector_history  # noqa: E402
+from .data.sector_history_update_publish import update_and_publish_sector_history  # noqa: E402
 
 __all__ = [
     "default_agent_path",
@@ -56,4 +57,5 @@ __all__ = [
     "sync_sector_history",
     "publish_sector_store_to_gcs",
     "verify_sector_store_in_gcs",
+    "update_and_publish_sector_history",
 ]

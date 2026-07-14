@@ -47,7 +47,9 @@ def _json_default(value: Any) -> Any:
     return str(value)
 
 
-def _normalize_symbol_universe(symbols: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+def _normalize_symbol_universe(
+    symbols: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
     configured = symbols or DEFAULT_SECTOR_PRICE_SYMBOLS
     normalized = []
     seen: set[str] = set()
@@ -190,7 +192,9 @@ class SectorHistorySyncResult:
             "store_before": dict(self.store_before),
             "store_after": dict(self.store_after),
             "ibkr_request_count": int(self.ibkr_request_count),
-            "symbols": {symbol: result.to_dict() for symbol, result in self.symbols.items()},
+            "symbols": {
+                symbol: result.to_dict() for symbol, result in self.symbols.items()
+            },
             "warnings": list(self.warnings),
             "parquet_path": self.parquet_path,
             "metadata_path": self.metadata_path,
@@ -215,12 +219,16 @@ class SectorPriceStore:
 
     def load_metadata(self) -> dict[str, Any]:
         if not self.metadata_path.exists():
-            raise FileNotFoundError(f"Sector history metadata does not exist: {self.metadata_path}")
+            raise FileNotFoundError(
+                f"Sector history metadata does not exist: {self.metadata_path}"
+            )
         return json.loads(self.metadata_path.read_text(encoding="utf-8"))
 
     def read_frame(self) -> pd.DataFrame:
         if not self.parquet_path.exists():
-            raise FileNotFoundError(f"Sector history parquet does not exist: {self.parquet_path}")
+            raise FileNotFoundError(
+                f"Sector history parquet does not exist: {self.parquet_path}"
+            )
         return pd.read_parquet(self.parquet_path)
 
     def load_offline(self) -> pd.DataFrame:
@@ -234,7 +242,9 @@ class SectorPriceStore:
         metadata = self.load_metadata()
         expected_sha = str(metadata.get("content_sha256", "")).strip()
         if expected_sha and expected_sha != _frame_content_sha256(validation.frame):
-            raise ValueError("Stored sector history metadata checksum does not match the parquet content.")
+            raise ValueError(
+                "Stored sector history metadata checksum does not match the parquet content."
+            )
         return validation.frame
 
     def summarize_existing_store(self) -> dict[str, Any]:
@@ -257,10 +267,14 @@ class SectorPriceStore:
                 f"expected={expected_columns} actual={list(frame.columns)}"
             )
         normalized = frame.copy()
-        normalized["date"] = pd.to_datetime(normalized["date"], errors="raise").dt.normalize()
+        normalized["date"] = pd.to_datetime(
+            normalized["date"], errors="raise"
+        ).dt.normalize()
         if normalized["date"].duplicated().any():
             raise ValueError("Sector history dataset contains duplicate session dates.")
-        normalized = normalized.sort_values("date", kind="stable").reset_index(drop=True)
+        normalized = normalized.sort_values("date", kind="stable").reset_index(
+            drop=True
+        )
         if not normalized["date"].is_monotonic_increasing:
             raise ValueError("Sector history dataset must be sorted by ascending date.")
 
@@ -269,25 +283,45 @@ class SectorPriceStore:
         date_index = normalized["date"]
         for symbol in self.symbols:
             series = pd.to_numeric(normalized[symbol], errors="coerce")
-            invalid_non_null = normalized[symbol].notna() & (~series.isna()) & (series <= 0.0)
+            invalid_non_null = (
+                normalized[symbol].notna() & (~series.isna()) & (series <= 0.0)
+            )
             if invalid_non_null.any():
-                raise ValueError(f"Sector history contains non-positive values for {symbol}.")
-            infinite_mask = normalized[symbol].map(lambda value: isinstance(value, float) and math.isinf(value))
+                raise ValueError(
+                    f"Sector history contains non-positive values for {symbol}."
+                )
+            infinite_mask = normalized[symbol].map(
+                lambda value: isinstance(value, float) and math.isinf(value)
+            )
             if infinite_mask.any():
-                raise ValueError(f"Sector history contains Infinity values for {symbol}.")
+                raise ValueError(
+                    f"Sector history contains Infinity values for {symbol}."
+                )
             normalized[symbol] = series.astype(float)
             non_null_mask = normalized[symbol].notna()
-            first_valid = date_index[non_null_mask].min() if non_null_mask.any() else pd.NaT
-            last_valid = date_index[non_null_mask].max() if non_null_mask.any() else pd.NaT
+            first_valid = (
+                date_index[non_null_mask].min() if non_null_mask.any() else pd.NaT
+            )
+            last_valid = (
+                date_index[non_null_mask].max() if non_null_mask.any() else pd.NaT
+            )
             internal_gap_count = 0
             if non_null_mask.any():
                 coverage_mask = (date_index >= first_valid) & (date_index <= last_valid)
-                internal_gap_count = int(normalized.loc[coverage_mask, symbol].isna().sum())
+                internal_gap_count = int(
+                    normalized.loc[coverage_mask, symbol].isna().sum()
+                )
                 if internal_gap_count:
-                    warnings.append(f"{symbol} has {internal_gap_count} internal null gaps inside observed coverage.")
+                    warnings.append(
+                        f"{symbol} has {internal_gap_count} internal null gaps inside observed coverage."
+                    )
             per_symbol[symbol] = {
-                "first_valid_date": first_valid.date().isoformat() if pd.notna(first_valid) else None,
-                "last_valid_date": last_valid.date().isoformat() if pd.notna(last_valid) else None,
+                "first_valid_date": first_valid.date().isoformat()
+                if pd.notna(first_valid)
+                else None,
+                "last_valid_date": last_valid.date().isoformat()
+                if pd.notna(last_valid)
+                else None,
                 "non_null_count": int(non_null_mask.sum()),
                 "internal_gap_count": int(internal_gap_count),
             }
@@ -314,15 +348,35 @@ class SectorPriceStore:
         warnings: list[str],
     ) -> dict[str, Any]:
         validation = self.validate_frame(frame)
+        existing_metadata: dict[str, Any] = {}
+        if self.metadata_path.exists():
+            try:
+                existing_metadata = self.load_metadata()
+            except (FileNotFoundError, json.JSONDecodeError, ValueError):
+                existing_metadata = {}
+        existing_per_symbol = {
+            str(symbol).strip().upper(): dict(values)
+            for symbol, values in dict(existing_metadata.get("per_symbol", {})).items()
+        }
         metadata_per_symbol: dict[str, dict[str, Any]] = {}
         for symbol in self.symbols:
             fetch_result = per_symbol_fetch.get(symbol)
             coverage = dict(validation.per_symbol.get(symbol, {}))
+            previous_symbol_metadata = existing_per_symbol.get(symbol, {})
+            actual_what_to_show = (
+                fetch_result.actual_what_to_show if fetch_result else None
+            )
+            if actual_what_to_show is None:
+                actual_what_to_show = previous_symbol_metadata.get(
+                    "actual_what_to_show"
+                )
             metadata_per_symbol[symbol] = {
                 **coverage,
-                "actual_what_to_show": fetch_result.actual_what_to_show if fetch_result else None,
+                "actual_what_to_show": actual_what_to_show,
                 "fetch_status": fetch_result.status if fetch_result else "offline",
-                "requested_start": fetch_result.requested_start if fetch_result else None,
+                "requested_start": fetch_result.requested_start
+                if fetch_result
+                else None,
                 "requested_end": fetch_result.requested_end if fetch_result else None,
                 "received_bar_count": int(fetch_result.received if fetch_result else 0),
                 "inserted_count": int(fetch_result.inserted if fetch_result else 0),
@@ -330,7 +384,9 @@ class SectorPriceStore:
             }
         return {
             "schema_version": SECTOR_PRICE_SCHEMA_VERSION,
-            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "generated_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "source": "IBKR",
             "mode": mode,
             "symbols": list(self.symbols),
@@ -353,15 +409,28 @@ class SectorPriceStore:
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         validation = self.validate_frame(frame)
         temp_parquet = self.parquet_path.with_suffix(f"{self.parquet_path.suffix}.tmp")
-        temp_metadata = self.metadata_path.with_suffix(f"{self.metadata_path.suffix}.tmp")
+        temp_metadata = self.metadata_path.with_suffix(
+            f"{self.metadata_path.suffix}.tmp"
+        )
         validation.frame.to_parquet(temp_parquet, index=False)
         reloaded = pd.read_parquet(temp_parquet)
         revalidated = self.validate_frame(reloaded)
-        if revalidated.row_count != validation.row_count or list(revalidated.frame.columns) != list(validation.frame.columns):
+        if revalidated.row_count != validation.row_count or list(
+            revalidated.frame.columns
+        ) != list(validation.frame.columns):
             raise ValueError("Temporary parquet validation failed before publish.")
         payload = dict(metadata)
         payload["file_sha256"] = _parquet_file_sha256(temp_parquet)
-        temp_metadata.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False, default=_json_default), encoding="utf-8")
+        temp_metadata.write_text(
+            json.dumps(
+                payload,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+                default=_json_default,
+            ),
+            encoding="utf-8",
+        )
         os.replace(temp_parquet, self.parquet_path)
         os.replace(temp_metadata, self.metadata_path)
 
@@ -434,7 +503,9 @@ class IBKRHistoricalStoreUpdater:
         warnings: list[str] = []
         ibkr_request_count = 0
         for symbol in self.symbols:
-            fetched = self._fetch_symbol_range(symbol=symbol, request_start=bootstrap_start, request_end=target_end)
+            fetched = self._fetch_symbol_range(
+                symbol=symbol, request_start=bootstrap_start, request_end=target_end
+            )
             ibkr_request_count += fetched.request_count
             warnings.extend(fetched.warnings)
             frame, inserted_count, revised_count = self._merge_symbol_bars(
@@ -485,7 +556,9 @@ class IBKRHistoricalStoreUpdater:
         bootstrap_start_date: date | str | None = None,
     ) -> SectorHistorySyncResult:
         if not self.store.exists():
-            raise FileNotFoundError("Update mode requires an existing authoritative sector history store.")
+            raise FileNotFoundError(
+                "Update mode requires an existing authoritative sector history store."
+            )
         existing = self.store.load_offline()
         before = self.store.summarize_existing_store()
         target_end = resolve_target_completed_session(
@@ -498,7 +571,9 @@ class IBKRHistoricalStoreUpdater:
         if full_start is None and not existing.empty:
             full_start = pd.to_datetime(existing["date"]).dt.date.min()
         if full_start is None:
-            raise ValueError("Update mode requires bootstrap_start_date when the existing store has no rows.")
+            raise ValueError(
+                "Update mode requires bootstrap_start_date when the existing store has no rows."
+            )
 
         frame = existing.copy()
         symbol_results: dict[str, SymbolSyncResult] = {}
@@ -506,7 +581,11 @@ class IBKRHistoricalStoreUpdater:
         ibkr_request_count = 0
         for symbol in self.symbols:
             previous_last_date = self._last_valid_date_for_symbol(frame, symbol)
-            previous_last = previous_last_date.isoformat() if previous_last_date is not None else None
+            previous_last = (
+                previous_last_date.isoformat()
+                if previous_last_date is not None
+                else None
+            )
             request_start = self._determine_update_start(
                 frame=frame,
                 symbol=symbol,
@@ -528,13 +607,19 @@ class IBKRHistoricalStoreUpdater:
                     request_count=0,
                 )
                 continue
-            fetched = self._fetch_symbol_range(symbol=symbol, request_start=request_start, request_end=target_end)
+            fetched = self._fetch_symbol_range(
+                symbol=symbol, request_start=request_start, request_end=target_end
+            )
             ibkr_request_count += fetched.request_count
             warnings.extend(fetched.warnings)
             frame, inserted_count, revised_count = self._merge_symbol_bars(
                 base_frame=frame,
                 symbol=symbol,
-                fetched_bars=[bar for bar in fetched.bars if request_start <= bar.session_date <= target_end],
+                fetched_bars=[
+                    bar
+                    for bar in fetched.bars
+                    if request_start <= bar.session_date <= target_end
+                ],
             )
             symbol_results[symbol] = SymbolSyncResult(
                 symbol=symbol,
@@ -549,6 +634,19 @@ class IBKRHistoricalStoreUpdater:
                 actual_what_to_show=fetched.actual_what_to_show,
                 request_count=fetched.request_count,
                 warnings=list(fetched.warnings),
+            )
+        if ibkr_request_count == 0 and all(
+            payload.status == "already_current" for payload in symbol_results.values()
+        ):
+            return SectorHistorySyncResult(
+                mode="update",
+                store_before=before,
+                store_after=before,
+                ibkr_request_count=0,
+                symbols=symbol_results,
+                warnings=warnings,
+                parquet_path=str(self.store.parquet_path),
+                metadata_path=str(self.store.metadata_path),
             )
         frame = self._finalize_frame(frame)
         metadata = self.store.build_metadata(
@@ -598,7 +696,9 @@ class IBKRHistoricalStoreUpdater:
         if explicit_start is not None:
             return explicit_start
         if history_years is not None:
-            return _normalize_explicit_target_date(target_end - timedelta(days=365 * max(int(history_years), 1)))
+            return _normalize_explicit_target_date(
+                target_end - timedelta(days=365 * max(int(history_years), 1))
+            )
         if history_days is not None:
             return business_day_start_from_period(target_end, int(history_days))
         return date(2015, 1, 1)
@@ -616,7 +716,9 @@ class IBKRHistoricalStoreUpdater:
         actual_what_to_show_values: set[str] = set()
         cursor_end = request_end
         while cursor_end >= request_start:
-            window_start = max(request_start, cursor_end - timedelta(days=self.chunk_calendar_days))
+            window_start = max(
+                request_start, cursor_end - timedelta(days=self.chunk_calendar_days)
+            )
             duration_days = max((cursor_end - window_start).days + 10, 1)
             request = IBKRDailyHistoryRequest(
                 symbol=symbol,
@@ -657,7 +759,9 @@ class IBKRHistoricalStoreUpdater:
             actual_what_to_show = next(iter(actual_what_to_show_values))
         elif actual_what_to_show_values:
             actual_what_to_show = "MIXED"
-            warnings.append(f"{symbol} used mixed whatToShow values across chunked requests: {sorted(actual_what_to_show_values)}.")
+            warnings.append(
+                f"{symbol} used mixed whatToShow values across chunked requests: {sorted(actual_what_to_show_values)}."
+            )
         return _FetchedSymbolBars(
             bars=[all_bars[item] for item in sorted(all_bars.keys())],
             actual_what_to_show=actual_what_to_show,
@@ -684,7 +788,9 @@ class IBKRHistoricalStoreUpdater:
             return recent_gap_start or bootstrap_start_date
         if last_stored >= target_end and recent_gap_start is None:
             return None
-        overlap_start = subtract_weekday_sessions(last_stored, self.overlap_trading_days)
+        overlap_start = subtract_weekday_sessions(
+            last_stored, self.overlap_trading_days
+        )
         starts = [overlap_start]
         if recent_gap_start is not None:
             starts.append(recent_gap_start)
@@ -706,9 +812,19 @@ class IBKRHistoricalStoreUpdater:
             return None
         first_valid = normalized_dates[non_null_mask].min()
         last_valid = normalized_dates[non_null_mask].max()
-        horizon_start = subtract_weekday_sessions(last_valid, self.repair_horizon_trading_days)
-        effective_start = max(horizon_start, repair_start_date) if repair_start_date is not None else horizon_start
-        coverage_mask = (normalized_dates >= first_valid) & (normalized_dates <= last_valid) & (normalized_dates >= effective_start)
+        horizon_start = subtract_weekday_sessions(
+            last_valid, self.repair_horizon_trading_days
+        )
+        effective_start = (
+            max(horizon_start, repair_start_date)
+            if repair_start_date is not None
+            else horizon_start
+        )
+        coverage_mask = (
+            (normalized_dates >= first_valid)
+            & (normalized_dates <= last_valid)
+            & (normalized_dates >= effective_start)
+        )
         gap_dates = normalized_dates[coverage_mask & series.isna()]
         if gap_dates.empty:
             return None
@@ -737,7 +853,9 @@ class IBKRHistoricalStoreUpdater:
             if value is None:
                 continue
             row_key = pd.Timestamp(bar.session_date)
-            previous = frame.at[row_key, symbol] if row_key in frame.index else float("nan")
+            previous = (
+                frame.at[row_key, symbol] if row_key in frame.index else float("nan")
+            )
             if row_key not in frame.index:
                 frame.loc[row_key, :] = pd.Series(dtype=float)
                 previous = float("nan")
@@ -759,7 +877,12 @@ class IBKRHistoricalStoreUpdater:
             if symbol not in normalized.columns:
                 normalized[symbol] = pd.Series(dtype=float)
             normalized[symbol] = pd.to_numeric(normalized[symbol], errors="coerce")
-        normalized = normalized[["date", *self.symbols]].sort_values("date", kind="stable").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+        normalized = (
+            normalized[["date", *self.symbols]]
+            .sort_values("date", kind="stable")
+            .drop_duplicates(subset=["date"], keep="last")
+            .reset_index(drop=True)
+        )
         return normalized
 
     @staticmethod
@@ -773,7 +896,9 @@ class IBKRHistoricalStoreUpdater:
         return max(dates)
 
     @classmethod
-    def _last_valid_date_for_symbol_iso(cls, frame: pd.DataFrame, symbol: str) -> str | None:
+    def _last_valid_date_for_symbol_iso(
+        cls, frame: pd.DataFrame, symbol: str
+    ) -> str | None:
         last_valid = cls._last_valid_date_for_symbol(frame, symbol)
         return last_valid.isoformat() if last_valid is not None else None
 

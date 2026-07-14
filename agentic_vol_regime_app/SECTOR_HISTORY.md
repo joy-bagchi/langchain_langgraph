@@ -113,8 +113,6 @@ The CLI result includes per symbol:
 
 The regression test for the old bug checks that an update from `T` to `T+1` never sends a large/full historical duration again. Only a small overlap-bounded duration is requested.
 
-## Next Slice
-
 ## Google Cloud Storage Publication
 
 Publishing to Google Cloud Storage is a separate step from updating the local IBKR-backed store.
@@ -196,3 +194,49 @@ Publication sequence:
 6. Update `manifests/latest.json` only after immutable object verification succeeds.
 
 `latest.json` is the publication pointer that the future consumer will read first. Updating local history and publishing to GCS remain separate commands by design.
+
+## One-Command Daily Workflow
+
+The repository now also provides a combined manual orchestration command:
+
+```bash
+python -m agentic_vol_regime_app.data.sector_history_cli update-and-publish-gcs \
+  --project marketphysics \
+  --bucket <BUCKET_NAME> \
+  --prefix market-manifold
+```
+
+Prerequisites:
+
+- IB Gateway or TWS is running and reachable from the local machine
+- Google Application Default Credentials are configured
+- a local bootstrap store already exists
+- the destination GCS bucket already exists
+
+Environment-variable defaults:
+
+- `MARKET_MANIFOLD_GCP_PROJECT`
+- `MARKET_MANIFOLD_GCS_BUCKET`
+- `MARKET_MANIFOLD_GCS_PREFIX`
+
+Sequence:
+
+1. Resolve the target completed market session.
+2. Run the existing `update` flow against the local Parquet store.
+3. Download only the missing per-symbol IBKR delta plus the configured overlap.
+4. Atomically rewrite the local Parquet plus metadata.
+5. Reload and validate the local dataset.
+6. Enforce publication-readiness checks for the configured symbol universe.
+7. Publish immutable dataset objects to GCS.
+8. Update `manifests/latest.json`.
+9. Verify the published dataset back from GCS.
+
+Important behavior:
+
+- Normal reruns do not redownload full history. Already-current symbols make zero IBKR historical requests.
+- Publication is blocked when required symbols are still behind the normalized target completed session.
+- If the local update succeeds but cloud publication fails, the updated local Parquet is retained. Rerunning retries only the cloud portion when the local store is already current.
+- `--require-adjusted-last` enables strict adjusted-only mode. In that mode any required symbol whose stored `actual_what_to_show` is `TRADES` or `MIXED` blocks publication.
+- `--dry-run-publish` performs the real IBKR update and local validation, then simulates the GCS publication without remote writes or remote verification.
+
+This remains a manually initiated command. It does not add scheduling, cloud execution, or automatic bootstrap behavior.
