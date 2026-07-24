@@ -240,3 +240,15 @@ Important behavior:
 - `--dry-run-publish` performs the real IBKR update and local validation, then simulates the GCS publication without remote writes or remote verification.
 
 This remains a manually initiated command. It does not add scheduling, cloud execution, or automatic bootstrap behavior.
+
+## SPY, VIX, and VVIX history publication
+
+`sync-vol-regime-history-gcs` maintains a separate local history store for `SPY`, `VIX`, and `VVIX`. It uses IBKR daily bars, writes immutable objects under `market-manifold/vol-regime-history`, and defaults to the `marketphysics-market-manifold-data` bucket. VIX and VVIX are requested as CBOE index contracts; SPY is requested as a stock contract.
+
+```bash
+python -m agentic_vol_regime_app.data.sector_history_cli sync-vol-regime-history-gcs \
+  --history-years 10 \
+  --dry-run
+```
+
+Omit `--dry-run` to write and verify GCS objects. The command is manually initiated; it does not schedule IBKR downloads or cloud writes.

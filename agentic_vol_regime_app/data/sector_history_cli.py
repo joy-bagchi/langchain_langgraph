@@ -35,6 +35,11 @@ from agentic_vol_regime_app.data.sector_history_update_publish import (  # noqa:
     SUCCESSFUL_UPDATE_AND_PUBLISH_STATUSES,
     update_and_publish_sector_history,
 )
+from agentic_vol_regime_app.data.vol_regime_history_gcs import (  # noqa: E402
+    DEFAULT_VOL_REGIME_GCS_BUCKET,
+    DEFAULT_VOL_REGIME_GCS_PREFIX,
+    sync_and_publish_vol_regime_history,
+)
 
 
 def _parse_symbols(value: str | None) -> list[str] | None:
@@ -202,10 +207,32 @@ def main() -> None:
     )
     update_publish_gcs.add_argument("--dry-run-publish", action="store_true")
 
+    vol_regime_gcs = subparsers.add_parser(
+        "sync-vol-regime-history-gcs",
+        help="Sync IBKR SPY/VIX/VVIX history, then publish and verify it in GCS.",
+    )
+    vol_regime_gcs.add_argument("--output", default=None, help="Optional explicit parquet output path.")
+    vol_regime_gcs.add_argument("--metadata-output", default=None, help="Optional explicit metadata JSON output path.")
+    vol_regime_gcs.add_argument("--host", default="127.0.0.1")
+    vol_regime_gcs.add_argument("--port", type=int, default=4001)
+    vol_regime_gcs.add_argument("--client-id", type=int, default=73)
+    vol_regime_gcs.add_argument("--readonly", action="store_true", default=True)
+    vol_regime_gcs.add_argument("--timeout-seconds", type=float, default=10.0)
+    vol_regime_gcs.add_argument("--market-data-type", type=int, default=1)
+    vol_regime_gcs.add_argument("--target-end-date", default=None)
+    vol_regime_gcs.add_argument("--bootstrap-start-date", default=None)
+    vol_regime_gcs.add_argument("--history-years", type=int, default=None)
+    vol_regime_gcs.add_argument("--history-days", type=int, default=None)
+    vol_regime_gcs.add_argument("--overlap-trading-days", type=int, default=5)
+    vol_regime_gcs.add_argument("--bucket", default=DEFAULT_VOL_REGIME_GCS_BUCKET)
+    vol_regime_gcs.add_argument("--prefix", default=os.getenv("MARKET_MANIFOLD_VOL_REGIME_GCS_PREFIX", DEFAULT_VOL_REGIME_GCS_PREFIX))
+    vol_regime_gcs.add_argument("--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT", "marketphysics"))
+    vol_regime_gcs.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
 
     if (
-        args.command in {"publish-gcs", "verify-gcs", "update-and-publish-gcs"}
+        args.command in {"publish-gcs", "verify-gcs", "update-and-publish-gcs", "sync-vol-regime-history-gcs"}
         and not args.bucket
     ):
         parser.error("--bucket is required or set MARKET_MANIFOLD_GCS_BUCKET.")
@@ -216,6 +243,29 @@ def main() -> None:
         symbols=_parse_symbols(getattr(args, "symbols", None))
         or list(DEFAULT_SECTOR_PRICE_SYMBOLS),
     )
+
+    if args.command == "sync-vol-regime-history-gcs":
+        result = sync_and_publish_vol_regime_history(
+            bucket=args.bucket,
+            prefix=args.prefix,
+            project=args.project,
+            parquet_path=args.output,
+            metadata_path=args.metadata_output,
+            target_end_date=args.target_end_date,
+            bootstrap_start_date=args.bootstrap_start_date,
+            history_years=args.history_years,
+            history_days=args.history_days,
+            overlap_trading_days=args.overlap_trading_days,
+            host=args.host,
+            port=args.port,
+            client_id=args.client_id,
+            readonly=args.readonly,
+            timeout_seconds=args.timeout_seconds,
+            market_data_type=args.market_data_type,
+            dry_run=bool(args.dry_run),
+        )
+        print(_render_publish_result(result))
+        return
 
     if args.command == "bootstrap":
         result = sync_sector_history(

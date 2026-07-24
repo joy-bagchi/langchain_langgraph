@@ -45,6 +45,7 @@ from agentic_vol_regime_app import (  # noqa: E402
     run_overwrite_candidate_scorer,
     run_policy_backtester,
     run_ibkr_market_data_agent,
+    sync_and_publish_vol_regime_history,
 )
 from agentic_vol_regime_app.config import AppPaths, load_json  # noqa: E402
 
@@ -241,6 +242,26 @@ def _regime_engine_description(choice: str) -> str:
         choice,
         "Select a regime engine to compute the current volatility state from the available market inputs.",
     )
+
+
+def _sync_feature_store_vol_regime_history(
+    *,
+    history_days: int,
+    as_of_date: str,
+    host: str,
+    port: int,
+    client_id: int,
+    market_data_type: int,
+) -> dict[str, Any]:
+    """Publish the canonical SPY/VIX/VVIX source history after an IBKR feature-store refresh."""
+    return sync_and_publish_vol_regime_history(
+        history_days=history_days,
+        target_end_date=as_of_date,
+        host=host,
+        port=port,
+        client_id=client_id,
+        market_data_type=market_data_type,
+    ).to_dict()
 
 
 def _render_runtime_diagnostics(st, result: dict[str, Any]) -> None:
@@ -1568,7 +1589,7 @@ def main() -> None:
             )
         st.markdown("**Feature Store Builder (IBKR)**")
         st.caption(
-            "Using sidebar `Symbol` and `History Days (Feature-Store Build)` for IBKR feature-store refresh."
+            "Uses the sidebar IBKR connection for the feature-store refresh, then publishes verified SPY/VIX/VVIX history to GCP."
         )
         backtest_as_of = st.date_input(
             "Feature Store As-of Date (optional historical cut)",
@@ -1578,10 +1599,11 @@ def main() -> None:
             help="The builder fetches up to this date from IBKR. Use today's date for current replay data.",
         )
         if st.button("Build / Refresh Feature Store", type="secondary", key="build_backtest_feature_store_button"):
+            requested_history_days = max(int(sidebar_ibkr_build_history_days), int(min_history_days))
             try:
                 build_result = build_backtest_feature_store(
                     config_path=config_path.strip(),
-                    history_days=max(int(sidebar_ibkr_build_history_days), int(min_history_days)),
+                    history_days=requested_history_days,
                     as_of_date=backtest_as_of.isoformat(),
                     symbol=sidebar_ibkr_symbol.strip() or "SPY",
                     host=sidebar_ibkr_host.strip() or "127.0.0.1",
@@ -1598,6 +1620,17 @@ def main() -> None:
             except Exception as exc:
                 st.error(str(exc))
             else:
+                try:
+                    build_result["vol_regime_gcs"] = _sync_feature_store_vol_regime_history(
+                        history_days=requested_history_days,
+                        as_of_date=backtest_as_of.isoformat(),
+                        host=sidebar_ibkr_host.strip() or "127.0.0.1",
+                        port=int(sidebar_ibkr_port),
+                        client_id=int(sidebar_ibkr_client_id),
+                        market_data_type=int(sidebar_ibkr_market_data_type),
+                    )
+                except Exception as exc:
+                    build_result["vol_regime_gcs_error"] = str(exc)
                 st.session_state[state_backtester_build_key] = build_result
 
         current_build_result = st.session_state.get(state_backtester_build_key)
@@ -1614,6 +1647,20 @@ def main() -> None:
             build_warnings = list(current_build_result.get("warnings", []))
             if build_warnings:
                 st.warning(" | ".join(str(item) for item in build_warnings))
+            vol_regime_gcs = current_build_result.get("vol_regime_gcs")
+            if isinstance(vol_regime_gcs, dict):
+                published = dict(vol_regime_gcs.get("gcs_publish", {}))
+                verified = dict(vol_regime_gcs.get("gcs_verify", {}))
+                st.success(
+                    "SPY/VIX/VVIX history published to GCP: "
+                    f"`{published.get('manifest_uri', '')}` "
+                    f"(publish={published.get('status', 'unknown')}, verify={verified.get('status', 'unknown')})."
+                )
+            elif current_build_result.get("vol_regime_gcs_error"):
+                st.warning(
+                    "Feature store was built locally, but SPY/VIX/VVIX GCP publication failed: "
+                    f"{current_build_result['vol_regime_gcs_error']}"
+                )
             required_summary = dict(current_build_result.get("required_history_summary", {}))
             if required_summary:
                 st.caption(

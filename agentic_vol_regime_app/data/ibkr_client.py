@@ -420,12 +420,24 @@ class IBKRLiveClient:
     def request_daily_bars(self, request: IBKRDailyHistoryRequest) -> IBKRDailyHistoryResult:
         ib = self._connect()
         try:
-            contract = self._qualify_stock_contract(
-                ib,
-                symbol=request.symbol,
-                exchange=request.exchange,
-                currency=request.currency,
-            )
+            symbol = str(request.symbol).upper()
+            if symbol in INDEX_STYLE_SYMBOLS:
+                index_exchange = str(request.exchange or "").upper()
+                contract = self._qualify_index_contract(
+                    ib,
+                    symbol=symbol,
+                    exchange="CBOE" if index_exchange in {"", "SMART"} else index_exchange,
+                    currency=request.currency,
+                )
+                if contract is None:
+                    raise RuntimeError(f"Unable to qualify IBKR index contract for {symbol}.")
+            else:
+                contract = self._qualify_stock_contract(
+                    ib,
+                    symbol=symbol,
+                    exchange=request.exchange,
+                    currency=request.currency,
+                )
             end_datetime = ""
             if request.end_date is not None:
                 end_dt = datetime.combine(request.end_date, time(hour=23, minute=59, second=59), tzinfo=timezone.utc)
@@ -433,7 +445,7 @@ class IBKRLiveClient:
             bars, actual_what_to_show, warnings = self._request_daily_history_bars(
                 ib,
                 contract,
-                symbol=str(request.symbol).upper(),
+                symbol=symbol,
                 duration_calendar_days=max(int(request.duration_calendar_days), 1),
                 history_label=f"{str(request.symbol).upper()}_close",
                 end_datetime=end_datetime,
