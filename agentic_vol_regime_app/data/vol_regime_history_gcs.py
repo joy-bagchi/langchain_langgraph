@@ -19,11 +19,14 @@ from agentic_vol_regime_app.data.sector_history_store import SectorHistorySyncRe
 VOL_REGIME_HISTORY_SYMBOLS = ("SPY", "VIX", "VVIX")
 DEFAULT_VOL_REGIME_GCS_BUCKET = "marketphysics-market-manifold-data"
 DEFAULT_VOL_REGIME_GCS_PREFIX = "market-manifold/vol-regime-history"
+VOL_REGIME_DATASET_ID_PREFIX = "SPY-volatility-history"
+VOL_REGIME_PARQUET_FILENAME = "SPY-volatility-history.parquet"
+VOL_REGIME_METADATA_FILENAME = "SPY-volatility-history.metadata.json"
 
 
 def default_vol_regime_history_paths(app_paths: AppPaths | None = None) -> tuple[Path, Path]:
     root = (app_paths or AppPaths.default()).root / "data" / "market_history"
-    return root / "vol_regime_prices_daily.parquet", root / "vol_regime_prices_daily.metadata.json"
+    return root / VOL_REGIME_PARQUET_FILENAME, root / VOL_REGIME_METADATA_FILENAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +99,9 @@ def sync_and_publish_vol_regime_history(
         parquet_path=resolved_parquet,
         metadata_path=resolved_metadata,
         symbols=VOL_REGIME_HISTORY_SYMBOLS,
+        dataset_id_prefix=VOL_REGIME_DATASET_ID_PREFIX,
+        parquet_filename=VOL_REGIME_PARQUET_FILENAME,
+        metadata_filename=VOL_REGIME_METADATA_FILENAME,
         dry_run=dry_run,
         storage_client=storage_client,
     )

@@ -17,6 +17,9 @@ from agentic_vol_regime_app.data.sector_history_gcs import StorageManifestConfli
 from agentic_vol_regime_app.data.vol_regime_history_gcs import (
     DEFAULT_VOL_REGIME_GCS_BUCKET,
     DEFAULT_VOL_REGIME_GCS_PREFIX,
+    VOL_REGIME_DATASET_ID_PREFIX,
+    VOL_REGIME_METADATA_FILENAME,
+    VOL_REGIME_PARQUET_FILENAME,
     VOL_REGIME_HISTORY_SYMBOLS,
     sync_and_publish_vol_regime_history,
 )
@@ -90,6 +93,10 @@ def test_sync_and_publish_vol_regime_history_writes_dedicated_gcs_dataset(tmp_pa
     assert pipe.calls == list(VOL_REGIME_HISTORY_SYMBOLS)
     assert result.gcs_publish.bucket == DEFAULT_VOL_REGIME_GCS_BUCKET
     assert result.gcs_publish.prefix == DEFAULT_VOL_REGIME_GCS_PREFIX
+    assert result.gcs_publish.dataset_id.startswith("SPY-volatility-history-2026-07-10-")
+    assert VOL_REGIME_DATASET_ID_PREFIX == "SPY-volatility-history"
+    assert result.gcs_publish.parquet_uri.endswith(f"/{VOL_REGIME_PARQUET_FILENAME}")
+    assert result.gcs_publish.metadata_uri.endswith(f"/{VOL_REGIME_METADATA_FILENAME}")
     assert result.gcs_publish.symbols == list(VOL_REGIME_HISTORY_SYMBOLS)
     assert result.gcs_verify is not None and result.gcs_verify.verified is True
     assert any(name.endswith("/manifests/latest.json") for name in storage.uploads)

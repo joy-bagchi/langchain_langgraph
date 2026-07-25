@@ -245,6 +245,8 @@ This remains a manually initiated command. It does not add scheduling, cloud exe
 
 `sync-vol-regime-history-gcs` maintains a separate local history store for `SPY`, `VIX`, and `VVIX`. It uses IBKR daily bars, writes immutable objects under `market-manifold/vol-regime-history`, and defaults to the `marketphysics-market-manifold-data` bucket. VIX and VVIX are requested as CBOE index contracts; SPY is requested as a stock contract.
 
+Its local and GCS dataset filenames are `SPY-volatility-history.parquet` and `SPY-volatility-history.metadata.json`; dataset IDs use `SPY-volatility-history-<date>-<hash>`.
+
 ```bash
 python -m agentic_vol_regime_app.data.sector_history_cli sync-vol-regime-history-gcs \
   --history-years 10 \

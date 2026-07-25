@@ -168,16 +168,36 @@ def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _dataset_id(*, market_data_as_of: str, parquet_sha256: str) -> str:
-    return f"sector-prices-{market_data_as_of}-{parquet_sha256[:8]}"
+def _dataset_id(
+    *,
+    market_data_as_of: str,
+    parquet_sha256: str,
+    dataset_id_prefix: str = "sector-prices",
+) -> str:
+    prefix = str(dataset_id_prefix).strip()
+    if not prefix or "/" in prefix or "\\" in prefix:
+        raise ValueError("dataset_id_prefix must be a non-empty path-safe identifier.")
+    return f"{prefix}-{market_data_as_of}-{parquet_sha256[:8]}"
 
 
-def _dataset_paths(*, prefix: str, dataset_id: str) -> tuple[str, str, str]:
+def _dataset_paths(
+    *,
+    prefix: str,
+    dataset_id: str,
+    parquet_filename: str = "sector_prices_daily.parquet",
+    metadata_filename: str = "metadata.json",
+) -> tuple[str, str, str]:
     normalized_prefix = str(prefix).strip("/").replace("\\", "/")
+    normalized_parquet_filename = str(parquet_filename).strip()
+    normalized_metadata_filename = str(metadata_filename).strip()
+    if not normalized_parquet_filename or "/" in normalized_parquet_filename or "\\" in normalized_parquet_filename:
+        raise ValueError("parquet_filename must be a non-empty filename.")
+    if not normalized_metadata_filename or "/" in normalized_metadata_filename or "\\" in normalized_metadata_filename:
+        raise ValueError("metadata_filename must be a non-empty filename.")
     dataset_root = f"{normalized_prefix}/datasets/{dataset_id}"
     return (
-        f"{dataset_root}/sector_prices_daily.parquet",
-        f"{dataset_root}/metadata.json",
+        f"{dataset_root}/{normalized_parquet_filename}",
+        f"{dataset_root}/{normalized_metadata_filename}",
         f"{normalized_prefix}/manifests/latest.json",
     )
 
@@ -347,17 +367,28 @@ class SectorHistoryGCSPublisher:
         storage_client: StorageClientProtocol,
         bucket: str,
         prefix: str = DEFAULT_GCS_PREFIX,
+        dataset_id_prefix: str = "sector-prices",
+        parquet_filename: str = "sector_prices_daily.parquet",
+        metadata_filename: str = "metadata.json",
     ) -> None:
         self.store = store
         self.storage_client = storage_client
         self.bucket = str(bucket).strip()
         self.prefix = str(prefix).strip("/") or DEFAULT_GCS_PREFIX
+        self.dataset_id_prefix = str(dataset_id_prefix).strip()
+        self.parquet_filename = str(parquet_filename).strip()
+        self.metadata_filename = str(metadata_filename).strip()
 
     def publish(self, *, dry_run: bool = False) -> GCSPublishResult:
         if not self.bucket:
             raise ValueError("GCS bucket name is required for publication.")
         local = self._load_local_dataset()
-        parquet_object, metadata_object, manifest_object = _dataset_paths(prefix=self.prefix, dataset_id=local.dataset_id)
+        parquet_object, metadata_object, manifest_object = _dataset_paths(
+            prefix=self.prefix,
+            dataset_id=local.dataset_id,
+            parquet_filename=self.parquet_filename,
+            metadata_filename=self.metadata_filename,
+        )
         manifest_uri = f"gs://{self.bucket}/{manifest_object}"
         if dry_run:
             return self._build_result(
@@ -561,7 +592,11 @@ class SectorHistoryGCSPublisher:
         metadata_bytes = Path(self.store.metadata_path).read_bytes()
         parquet_sha256 = _parquet_file_sha256(self.store.parquet_path)
         metadata_sha256 = _sha256_bytes(metadata_bytes)
-        dataset_id = _dataset_id(market_data_as_of=validation.last_date, parquet_sha256=parquet_sha256)
+        dataset_id = _dataset_id(
+            market_data_as_of=validation.last_date,
+            parquet_sha256=parquet_sha256,
+            dataset_id_prefix=self.dataset_id_prefix,
+        )
         return _LocalDatasetContext(
             store=self.store,
             validation=validation,
@@ -647,6 +682,9 @@ def publish_sector_store_to_gcs(
     parquet_path: str | Path | None = None,
     metadata_path: str | Path | None = None,
     symbols: list[str] | tuple[str, ...] | None = None,
+    dataset_id_prefix: str = "sector-prices",
+    parquet_filename: str = "sector_prices_daily.parquet",
+    metadata_filename: str = "metadata.json",
     dry_run: bool = False,
     storage_client: StorageClientProtocol | None = None,
 ) -> GCSPublishResult:
@@ -660,6 +698,9 @@ def publish_sector_store_to_gcs(
         storage_client=storage_client or GoogleCloudStorageClient(project=project),
         bucket=bucket,
         prefix=prefix,
+        dataset_id_prefix=dataset_id_prefix,
+        parquet_filename=parquet_filename,
+        metadata_filename=metadata_filename,
     )
     return publisher.publish(dry_run=dry_run)
 
