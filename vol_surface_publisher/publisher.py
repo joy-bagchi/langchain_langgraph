@@ -59,7 +59,8 @@ def _catalog_has_session(
 
 
 def publish_option_chain(frame: pd.DataFrame, *, bucket: str = DEFAULT_BUCKET, prefix: str = DEFAULT_PREFIX,
-                         project: str | None = None, dry_run: bool = False, storage_client: StorageClientProtocol | None = None) -> dict[str, Any]:
+                         project: str | None = None, dry_run: bool = False, storage_client: StorageClientProtocol | None = None,
+                         replace_existing_session: bool = False) -> dict[str, Any]:
     """Publish one dated surface and add it to the discoverable catalog."""
     validate_option_chain_frame(frame)
     buf = BytesIO(); frame.to_parquet(buf, index=False); parquet = buf.getvalue(); parquet_sha = _sha(parquet)
@@ -82,7 +83,16 @@ def publish_option_chain(frame: pd.DataFrame, *, bucket: str = DEFAULT_BUCKET, p
     for _ in range(3):
         current = client.get_object_metadata(bucket, catalog_object)
         catalog = {"manifest_schema_version": MANIFEST_SCHEMA_VERSION, "dataset_schema_version": OPTION_CHAIN_SCHEMA_VERSION, "datasets": []} if current is None else json.loads(client.download_bytes(bucket, catalog_object).decode("utf-8"))
-        datasets = [item for item in catalog["datasets"] if item["dataset_id"] != dataset_id] + [entry]
+        symbols = {str(symbol).upper() for symbol in entry["symbols"]}
+        datasets = [
+            item for item in catalog["datasets"]
+            if item["dataset_id"] != dataset_id
+            and not (
+                replace_existing_session
+                and item.get("observation_date") == observation_date
+                and (not item.get("symbols") or bool(symbols & {str(value).upper() for value in item["symbols"]}))
+            )
+        ] + [entry]
         catalog["datasets"] = sorted(datasets, key=lambda item: (item["observation_time"], item["dataset_id"]))
         try:
             client.upload_bytes(bucket=bucket, object_name=catalog_object, data=_json(catalog), if_generation_match=0 if current is None else current.generation, content_type="application/json")
@@ -97,8 +107,8 @@ def publish_option_chain(frame: pd.DataFrame, *, bucket: str = DEFAULT_BUCKET, p
 def collect_and_publish(*, symbol: str = "SPY", host: str = "127.0.0.1", port: int = 4001, client_id: int = 74,
                         expiry_count: int = 8, strike_count: int = 25, bucket: str = DEFAULT_BUCKET, prefix: str = DEFAULT_PREFIX,
                         project: str | None = None, dry_run: bool = False, now: datetime | None = None,
-                        storage_client: StorageClientProtocol | None = None) -> dict[str, Any]:
-    """Publish exactly one frozen end-of-session surface when one is due."""
+                        storage_client: StorageClientProtocol | None = None, force: bool = False) -> dict[str, Any]:
+    """Publish one EOD surface using the nearest available expiries."""
     completed = latest_completed_option_session(now)
     if completed is None:
         return {
@@ -109,7 +119,7 @@ def collect_and_publish(*, symbol: str = "SPY", host: str = "127.0.0.1", port: i
     session_date, market_data_type = completed
     session_iso = session_date.isoformat()
     client = storage_client or GoogleCloudStorageClient(project=project)
-    if not dry_run and _catalog_has_session(client, bucket=bucket, prefix=prefix, symbol=symbol, observation_date=session_iso):
+    if not dry_run and not force and _catalog_has_session(client, bucket=bucket, prefix=prefix, symbol=symbol, observation_date=session_iso):
         return {"status": "already_published", "symbol": symbol.upper(), "observation_date": session_iso}
     pipe = IBKRDataPipe(
         connection=IBKRConnectionConfig(
@@ -119,7 +129,13 @@ def collect_and_publish(*, symbol: str = "SPY", host: str = "127.0.0.1", port: i
             market_data_type=market_data_type,
         )
     )
-    snapshot = pipe.fetch_market_snapshot(IBKROptionChainRequest(symbol=symbol, expiry_count=expiry_count, strike_count=strike_count))
+    snapshot = pipe.fetch_market_snapshot(
+        IBKROptionChainRequest(
+            symbol=symbol,
+            expiry_count=expiry_count,
+            strike_count=strike_count,
+        )
+    )
     observation_time = datetime.combine(session_date, time(hour=16, minute=15), tzinfo=NEW_YORK)
     frame = option_chain_frame(snapshot.to_dict(), observation_time=observation_time)
     if frame.empty:
@@ -129,5 +145,6 @@ def collect_and_publish(*, symbol: str = "SPY", host: str = "127.0.0.1", port: i
             f"({quote_count} option quotes received). Check the IBKR option-market-data entitlement and connection."
         )
     return publish_option_chain(
-        frame, bucket=bucket, prefix=prefix, project=project, dry_run=dry_run, storage_client=client
+        frame, bucket=bucket, prefix=prefix, project=project, dry_run=dry_run, storage_client=client,
+        replace_existing_session=force,
     )

@@ -15,7 +15,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from vol_visualizer.cube import create_iv_curve_figure, create_iv_session_figure, create_iv_surface_stack_figure
+from vol_visualizer.cube import create_atm_monthly_history_figure, create_iv_curve_figure, create_iv_session_figure, create_iv_surface_stack_figure
 from vol_visualizer.reader import DEFAULT_BUCKET, DEFAULT_PREFIX, load_option_chain_history, load_surface_catalog
 
 
@@ -47,7 +47,7 @@ with st.sidebar:
     selected_dates = st.multiselect("Observation dates", available_dates, default=available_dates[-min(10, len(available_dates)):])
     symbol = st.selectbox("Symbol", symbols)
     right_label = st.selectbox("Option right", ("Calls and puts", "Calls", "Puts"))
-    view = st.selectbox("View", ("Single 3D surface", "Stacked 3D surfaces", "IV by strike", "IV by DTE"))
+    view = st.selectbox("View", ("Single 3D surface", "Stacked 3D surfaces", "IV by strike", "IV by DTE", "ATM monthly Call/Put history"))
 
 if not selected_dates:
     st.info("Choose at least one observation date.")
@@ -99,7 +99,12 @@ elif view == "Stacked 3D surfaces":
         st.plotly_chart(create_iv_surface_stack_figure(frame, right=right), use_container_width=True)
 elif view == "IV by strike":
     st.plotly_chart(create_iv_curve_figure(frame, curve_axis="strike", fixed_value=dte, right=right), use_container_width=True)
-else:
+elif view == "IV by DTE":
     st.plotly_chart(create_iv_curve_figure(frame, curve_axis="dte", fixed_value=strike, right=right), use_container_width=True)
+elif frame["observation_date"].nunique() < 2:
+    st.info("ATM Call/Put history appears after at least two published observation dates are selected.")
+else:
+    st.caption("Each date uses its front standard monthly expiry (third Friday) and the strike closest to that session's underlying price.")
+    st.plotly_chart(create_atm_monthly_history_figure(frame), use_container_width=True)
 with st.expander("Loaded observations"):
     st.dataframe(frame.sort_values(["observation_date", "dte", "strike", "right"]), use_container_width=True)

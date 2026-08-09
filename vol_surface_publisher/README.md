@@ -14,10 +14,16 @@ duplicate if that session is already published. A run before the close returns
 for dates IBKR does not retain; those gaps remain visible rather than being
 filled with relabeled current data.
 
+Each new snapshot uses the nearest available expiries, including weeklies, so
+the 3D surface retains its short-dated shape. If you need to replace an
+already-published same-day surface, run once with `--force`; the catalog will
+point to the replacement.
+
 ```powershell
 pip install ib-insync google-cloud-storage pyarrow
 python -m vol_surface_publisher.cli --symbol SPY --port 4001 --dry-run
 python -m vol_surface_publisher.cli --symbol SPY --port 4001
+python -m vol_surface_publisher.cli --symbol SPY --port 4001 --force
 ```
 
 To run the market-price, volatility-regime, and option-surface publishers in

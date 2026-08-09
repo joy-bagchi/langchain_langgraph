@@ -1,6 +1,6 @@
 """IBKR option-chain publication and implied-volatility cube visualization."""
 
-from .cube import build_iv_cube, create_iv_cube_figure, create_iv_curve_figure, create_iv_session_figure, create_iv_surface_stack_figure
+from .cube import build_iv_cube, create_atm_monthly_history_figure, create_iv_cube_figure, create_iv_curve_figure, create_iv_session_figure, create_iv_surface_stack_figure, select_front_monthly_atm, select_monthly_atm
 from .reader import load_option_chain_history, load_surface_catalog
 
 __all__ = [
@@ -9,6 +9,9 @@ __all__ = [
     "create_iv_session_figure",
     "create_iv_surface_stack_figure",
     "create_iv_curve_figure",
+    "select_monthly_atm",
+    "create_atm_monthly_history_figure",
+    "select_front_monthly_atm",
     "load_option_chain_history",
     "load_surface_catalog",
 ]
