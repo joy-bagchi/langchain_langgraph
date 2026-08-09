@@ -546,7 +546,7 @@ def test_daily_regime_hmm_v3_1_agent_completes_with_meta_blend_variant(tmp_path:
     assert "Model Variant Comparison" in result["named_outputs"]["daily_report"]["markdown"]
 
 
-def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> None:
+def test_high_risk_run_completes_without_human_review_and_is_ineligible(tmp_path: Path) -> None:
     input_payload = {
         "market_snapshot": {
             "schema_version": "observation.v1",
@@ -575,19 +575,10 @@ def test_high_risk_run_pauses_for_human_review_and_resumes(tmp_path: Path) -> No
         storage_root=tmp_path / ".workflow_memory",
     )
 
-    assert result["status"] == "awaiting_review"
-    assert result["pending_review"]["step_id"] == "human_review_gate"
-
-    resumed = resume_daily_regime_run(
-        run_id=result["run_id"],
-        decision="approved",
-        notes="reviewed",
-        storage_root=tmp_path / ".workflow_memory",
-    )
-
-    assert resumed["status"] == "completed"
-    assert resumed["named_outputs"]["review_decision"]["decision"] == "approved"
-    assert Path(resumed["named_outputs"]["daily_report"]["report_path"]).exists()
+    assert result["status"] == "completed"
+    assert result["named_outputs"]["critic_review"]["requires_human_review"] is True
+    assert result["named_outputs"]["forecast_publication"]["status"] == "disabled"
+    assert Path(result["named_outputs"]["daily_report"]["report_path"]).exists()
 
 
 def test_daily_regime_workflow_supports_live_ibkr_input(tmp_path: Path) -> None:

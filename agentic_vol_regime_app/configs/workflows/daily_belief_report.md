@@ -107,31 +107,9 @@ type: critic_review
 id: critic_review
 title: Critic Review
 output_key: critic_review
-branches:
-  - when: outputs.critic_review.requires_human_review
-    next: human_review_gate
-  - when: outputs.alert_record.requires_human_review
-    next: human_review_gate
 next: persist_artifacts
 memory:
   enabled: false
-```
-
-## Step: human_review_gate
-```yaml
-type: human_review
-id: human_review_gate
-title: Human Review Gate
-output_key: review_decision
-approved_next: persist_artifacts
-rejected_next: persist_artifacts
-memory:
-  enabled: false
-```
-
-```prompt
-Review the current daily volatility regime assessment before the artifacts and
-report are finalized.
 ```
 
 ## Step: persist_artifacts
@@ -162,6 +140,7 @@ type: produce_daily_report
 id: produce_daily_report
 title: Produce Daily Report
 output_key: daily_report
+next: publish_market_physics_forecast
 memory:
   enabled: false
 guardrails:
@@ -178,4 +157,14 @@ evaluation:
     - "Current regime belief favors"
     - "Predictive Alerts"
     - "Recommended action"
+```
+
+## Step: publish_market_physics_forecast
+```yaml
+type: publish_market_physics_forecast
+id: publish_market_physics_forecast
+title: Publish Market Physics Forecast
+output_key: forecast_publication
+memory:
+  enabled: false
 ```

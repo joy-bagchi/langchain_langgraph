@@ -27,6 +27,8 @@ from agentic_vol_regime_app.pomdp.policy import recommend_policy_action
 from agentic_vol_regime_app.pomdp.transition_model import estimate_transition_probabilities
 from agentic_vol_regime_app.reports.daily_report import render_daily_markdown, write_daily_report
 from agentic_vol_regime_app.features.sector_geometry import SECTOR_ETF_UNIVERSE
+from agentic_vol_regime_app.data.forecast_gcs import ForecastGCSPublisher
+from agentic_vol_regime_app.forecast_contract import build_forecast_artifact
 
 
 def _report_root(state: WorkflowGraphState, app_paths: AppPaths) -> Path:
@@ -1204,6 +1206,25 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             }
         )
 
+    def publish_market_physics_forecast(step: WorkflowStep, state: WorkflowGraphState, _: dict[str, Any]) -> StepExecutionResult:
+        """Publish only finalized records; this deterministic executor never trades."""
+        if not _is_tool_allowed(state, "publish_market_physics_forecast"):
+            raise RuntimeError("Daily regime orchestrator is not allowed to use the 'publish_market_physics_forecast' tool.")
+        payload = dict(state.get("input_payload", {}))
+        enabled = payload.get("forecast_publish_enabled")
+        if enabled is None:
+            import os
+            value = os.getenv("MARKET_PHYSICS_FORECAST_PUBLISH_ENABLED")
+            enabled = value.lower() in {"1", "true", "yes"} if value is not None else False
+        if bool(payload.get("as_of_date")) and not bool(payload.get("forecast_publish_historical", False)):
+            return StepExecutionResult(output={"status": "disabled_historical", "forecast_id": None, "manifest_uri": None, "verified": False, "warnings": ["Historical publication is disabled unless explicitly enabled."]})
+        if not bool(enabled):
+            return StepExecutionResult(output={"status": "disabled", "forecast_id": None, "manifest_uri": None, "verified": False, "warnings": ["Forecast publication disabled by configuration."]})
+        outputs = dict(state.get("named_outputs", {}))
+        artifact = build_forecast_artifact(named_outputs=outputs, run_id=str(state.get("run_id", "")), workflow_id=str(state.get("workflow_id", "")), agent_id=str(state.get("agent_id", "")), agent_metadata=dict(state.get("agent_metadata", {})), observation=dict(outputs.get("observation", {})))
+        result = ForecastGCSPublisher(bucket=payload.get("forecast_gcs_bucket"), prefix=payload.get("forecast_gcs_prefix"), project=payload.get("google_cloud_project")).publish(artifact=artifact, report_markdown=str(dict(outputs["daily_report"])["markdown"]), dry_run=bool(payload.get("forecast_publish_dry_run", False)))
+        return StepExecutionResult(output=result.to_dict(), metadata={"forecast_id": result.forecast_id, "manifest_uri": result.manifest_uri, "verified": result.verified})
+
     return {
         "ingest_market_data": ingest_market_data,
         "validate_data_quality": validate_data_quality,
@@ -1217,4 +1238,5 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         "persist_artifacts": persist_artifacts,
         "write_memory_candidates": write_memory_candidates,
         "produce_daily_report": produce_daily_report,
+        "publish_market_physics_forecast": publish_market_physics_forecast,
     }

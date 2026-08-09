@@ -8,6 +8,7 @@ runtime_profile: durable_research
 memory_namespace: daily_regime_memory
 allowed_tools:
   - ibkr_data_pipeline
+  - publish_market_physics_forecast
 domain: volatility_regime
 guardrails:
   post:

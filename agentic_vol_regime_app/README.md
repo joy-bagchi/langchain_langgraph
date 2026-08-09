@@ -15,7 +15,7 @@ Milestone 1 is implemented:
 - heuristic transition probabilities
 - predictive alerts
 - policy recommendation
-- critic review with optional human gate
+- critic review that machine-labels eligibility without blocking publication
 - artifact persistence
 - candidate memory writes
 - markdown daily regime report generation
@@ -23,6 +23,47 @@ Milestone 1 is implemented:
 
 This slice is decision support only. It does not place trades, train ML models,
 or promote memory into trusted priors automatically.
+
+## Forecast publication
+
+Successful production `run-daily` commands publish immutable artifacts using
+Application Default Credentials (no key files):
+
+`gs://marketphysics-market-manifold-data/market-manifold/forecasts/runs/<forecast_id>/{forecast.json,report.md}`
+
+The atomically advanced pointer is
+`gs://marketphysics-market-manifold-data/market-manifold/forecasts/manifests/latest.json`.
+Forecasts use `market_physics_forecast.v1`; the pointer uses
+`market_physics_forecast_manifest.v1`. `forecast_status=PUBLISHED` means the
+artifact was published, while `decision_eligible=false` and `review_required=true`
+mean a strategy consumer must reject it without parsing prose.
+
+Configuration precedence is workflow input, environment, then defaults:
+`forecast_publish_enabled`, `forecast_gcs_bucket`, `forecast_gcs_prefix`, and
+`google_cloud_project`; environment equivalents are
+`MARKET_PHYSICS_FORECAST_PUBLISH_ENABLED`, `MARKET_PHYSICS_FORECAST_GCS_BUCKET`,
+`MARKET_PHYSICS_FORECAST_GCS_PREFIX`, and `GOOGLE_CLOUD_PROJECT`. The CLI enables
+publication by default. Direct runtime calls are local-safe unless explicitly
+enabled. Historical runs never change production `latest.json` unless
+`forecast_publish_historical=true` is supplied.
+
+Retries reuse byte-identical immutable objects and use GCS generation
+preconditions for `latest.json`; conflicting bytes or a newer pointer fail the
+run. The runtime identity needs only object read/create/update on this forecast
+prefix (for example a bucket-scoped custom role), not project-wide Owner/Editor.
+MarketManifoldPhysics can later read and validate `manifests/latest.json` and its
+two descriptors. No scheduler is present in this repository: schedule the shown
+`run-daily` command on the existing host and alert/retry on its nonzero exit.
+
+Redacted examples (the test fixture produces these fields deterministically):
+
+```json
+{"manifest_schema_version":"market_physics_forecast_manifest.v1","forecast_id":"forecast-2026-08-08T20-00-00Z-heuristic-v1-<hash>","forecast":{"gs_uri":"gs://.../runs/<forecast_id>/forecast.json","sha256":"<sha256>","generation":"1"},"report":{"gs_uri":"gs://.../runs/<forecast_id>/report.md","sha256":"<sha256>","generation":"2"}}
+```
+
+```json
+{"schema_version":"market_physics_forecast.v1","forecast_status":"PUBLISHED","decision_eligible":false,"review_required":true,"review_status":"REQUIRED","model":{"belief_engine":"heuristic","name":"heuristic","version":"v1"}}
+```
 
 ## HMM Agent
 

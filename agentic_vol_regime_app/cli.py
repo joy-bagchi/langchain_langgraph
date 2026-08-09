@@ -33,6 +33,10 @@ def _render_output(result: dict[str, Any], output_mode: str) -> str:
             "alert": dict(result.get("named_outputs", {})).get("alert_record", {}),
             "policy": dict(result.get("named_outputs", {})).get("policy_recommendation", {}),
             "report_path": dict(result.get("named_outputs", {})).get("daily_report", {}).get("report_path"),
+            "publication": {
+                key: dict(result.get("named_outputs", {})).get("forecast_publication", {}).get(key)
+                for key in ("status", "forecast_id", "manifest_uri", "verified")
+            },
         },
         indent=2,
         sort_keys=True,
@@ -107,6 +111,7 @@ def main() -> None:
         input_payload = _load_input(args.input)
         if args.as_of_date:
             input_payload["as_of_date"] = str(args.as_of_date)
+        input_payload.setdefault("forecast_publish_enabled", True)
         result = run_daily_regime_agent(
             input_payload=input_payload,
             agent_path=args.agent,
@@ -116,6 +121,8 @@ def main() -> None:
             langsmith_project=args.langsmith_project,
         )
         print(_render_output(result, args.output))
+        if result.get("status") != "completed":
+            raise SystemExit(1)
         return
 
     if args.command == "fetch-ibkr-snapshot":
@@ -159,6 +166,8 @@ def main() -> None:
         langsmith_project=args.langsmith_project,
     )
     print(_render_output(result, args.output))
+    if result.get("status") != "completed":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
