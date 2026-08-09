@@ -6,7 +6,12 @@ from dataclasses import dataclass
 import pytest
 
 from agentic_vol_regime_app.data.forecast_gcs import ForecastGCSPublisher
-from agentic_vol_regime_app.data.sector_history_gcs import StorageManifestConflictError, StorageObjectConflictError, StorageObjectMetadata
+from agentic_vol_regime_app.data.sector_history_gcs import (
+    BucketMissingError,
+    StorageManifestConflictError,
+    StorageObjectConflictError,
+    StorageObjectMetadata,
+)
 from agentic_vol_regime_app.forecast_contract import build_forecast_artifact, canonical_json_bytes
 
 
@@ -45,7 +50,7 @@ def test_first_publish_retry_and_collision():
     assert result.verified and len(result.uploaded_objects) == 3
     retry = publisher.publish(artifact=artifact(), report_markdown="# report")
     assert retry.verified and len(retry.reused_objects) == 2
-    name = retry.forecast["object_name"]
+    name = retry.forecast.object_name
     storage.objects[("bucket", name)] = (b"wrong", 99, "application/json")
     with pytest.raises(StorageObjectConflictError): publisher.publish(artifact=artifact(), report_markdown="# report")
 
@@ -54,3 +59,35 @@ def test_dry_run_does_not_mutate_storage():
     storage = FakeStorage({})
     result = ForecastGCSPublisher(storage_client=storage, bucket="bucket").publish(artifact=artifact(), report_markdown="# report", dry_run=True)
     assert result.status == "dry_run" and storage.objects == {}
+
+
+def test_manifest_never_replaces_newer_forecast():
+    storage = FakeStorage({})
+    publisher = ForecastGCSPublisher(storage_client=storage, bucket="bucket")
+    newer = artifact()
+    publisher.publish(artifact=newer, report_markdown="# report")
+    older = artifact()
+    older["market_data_as_of"] = "2026-08-07T20:00:00Z"
+    older["generated_at"] = "2026-08-07T20:00:00Z"
+    older["forecast_id"] = "forecast-older"
+    with pytest.raises(StorageManifestConflictError):
+        publisher.publish(artifact=older, report_markdown="# old")
+
+
+def test_missing_bucket_is_typed():
+    with pytest.raises(BucketMissingError):
+        ForecastGCSPublisher(storage_client=FakeStorage({}), bucket="missing").publish(
+            artifact=artifact(), report_markdown="# report"
+        )
+
+
+def test_descriptors_include_paths_hashes_generations_and_types():
+    result = ForecastGCSPublisher(storage_client=FakeStorage({}), bucket="bucket").publish(
+        artifact=artifact(), report_markdown="# report"
+    )
+    assert result.forecast.object_name.endswith("/forecast.json")
+    assert result.report.object_name.endswith("/report.md")
+    assert result.manifest.object_name == "market-manifold/forecasts/manifests/latest.json"
+    assert result.forecast.generation and result.report.generation and result.manifest.generation
+    assert result.forecast.content_type == "application/json"
+    assert result.report.content_type == "text/markdown; charset=utf-8"

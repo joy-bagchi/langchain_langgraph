@@ -1222,7 +1222,10 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
             return StepExecutionResult(output={"status": "disabled", "forecast_id": None, "manifest_uri": None, "verified": False, "warnings": ["Forecast publication disabled by configuration."]})
         outputs = dict(state.get("named_outputs", {}))
         artifact = build_forecast_artifact(named_outputs=outputs, run_id=str(state.get("run_id", "")), workflow_id=str(state.get("workflow_id", "")), agent_id=str(state.get("agent_id", "")), agent_metadata=dict(state.get("agent_metadata", {})), observation=dict(outputs.get("observation", {})))
-        result = ForecastGCSPublisher(bucket=payload.get("forecast_gcs_bucket"), prefix=payload.get("forecast_gcs_prefix"), project=payload.get("google_cloud_project")).publish(artifact=artifact, report_markdown=str(dict(outputs["daily_report"])["markdown"]), dry_run=bool(payload.get("forecast_publish_dry_run", False)))
+        report_path = Path(str(dict(outputs["daily_report"])["report_path"]))
+        if not report_path.is_file():
+            raise RuntimeError("Finalized daily report file is missing; forecast publication is unsafe.")
+        result = ForecastGCSPublisher(bucket=payload.get("forecast_gcs_bucket"), prefix=payload.get("forecast_gcs_prefix"), project=payload.get("google_cloud_project")).publish(artifact=artifact, report_markdown=report_path.read_bytes(), dry_run=bool(payload.get("forecast_publish_dry_run", False)))
         return StepExecutionResult(output=result.to_dict(), metadata={"forecast_id": result.forecast_id, "manifest_uri": result.manifest_uri, "verified": result.verified})
 
     return {
