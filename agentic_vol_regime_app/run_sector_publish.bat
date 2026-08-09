@@ -7,7 +7,7 @@ rem MARKET_MANIFOLD_* environment variables.
 
 set "DEFAULT_PROJECT_ID=marketphysics"
 set "DEFAULT_BUCKET_NAME=marketphysics-market-manifold-data"
-set "DEFAULT_PREFIX=market-manifold"
+set "DEFAULT_PREFIX=market-manifold/sector-prices"
 
 set "RESOLVED_PROJECT_ID=%~1"
 if not defined RESOLVED_PROJECT_ID if defined PROJECT_ID set "RESOLVED_PROJECT_ID=%PROJECT_ID%"

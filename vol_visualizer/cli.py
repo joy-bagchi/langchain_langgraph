@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from .cube import create_iv_cube_figure
-from vol_surface_publisher.publisher import DEFAULT_BUCKET, DEFAULT_PREFIX
+from .reader import DEFAULT_BUCKET, DEFAULT_PREFIX
 
 from .reader import load_option_chain_history
 

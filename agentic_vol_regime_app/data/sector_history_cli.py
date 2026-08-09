@@ -42,6 +42,12 @@ from agentic_vol_regime_app.data.vol_regime_history_gcs import (  # noqa: E402
 )
 
 
+DEFAULT_SECTOR_GCS_PREFIX = os.getenv(
+    "MARKET_MANIFOLD_SECTOR_PRICES_GCS_PREFIX",
+    os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX),
+)
+
+
 def _parse_symbols(value: str | None) -> list[str] | None:
     if not value:
         return None
@@ -164,7 +170,7 @@ def main() -> None:
         "--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET")
     )
     publish_gcs.add_argument(
-        "--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX)
+        "--prefix", default=DEFAULT_SECTOR_GCS_PREFIX
     )
     publish_gcs.add_argument(
         "--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT")
@@ -177,7 +183,7 @@ def main() -> None:
     )
     verify_gcs.add_argument("--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET"))
     verify_gcs.add_argument(
-        "--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX)
+        "--prefix", default=DEFAULT_SECTOR_GCS_PREFIX
     )
     verify_gcs.add_argument(
         "--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT")
@@ -196,7 +202,7 @@ def main() -> None:
         "--bucket", default=os.getenv("MARKET_MANIFOLD_GCS_BUCKET")
     )
     update_publish_gcs.add_argument(
-        "--prefix", default=os.getenv("MARKET_MANIFOLD_GCS_PREFIX", DEFAULT_GCS_PREFIX)
+        "--prefix", default=DEFAULT_SECTOR_GCS_PREFIX
     )
     update_publish_gcs.add_argument(
         "--project", default=os.getenv("MARKET_MANIFOLD_GCP_PROJECT")

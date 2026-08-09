@@ -141,9 +141,9 @@ Create the destination bucket manually before publishing. The publisher does not
 
 Default GCS layout:
 
-- `gs://<bucket>/market-manifold/datasets/<dataset_id>/sector_prices_daily.parquet`
-- `gs://<bucket>/market-manifold/datasets/<dataset_id>/metadata.json`
-- `gs://<bucket>/market-manifold/manifests/latest.json`
+- `gs://<bucket>/market-manifold/sector-prices/datasets/<dataset_id>/sector_prices_daily.parquet`
+- `gs://<bucket>/market-manifold/sector-prices/datasets/<dataset_id>/metadata.json`
+- `gs://<bucket>/market-manifold/sector-prices/manifests/latest.json`
 
 The dataset id is deterministic:
 
@@ -203,7 +203,7 @@ The repository now also provides a combined manual orchestration command:
 python -m agentic_vol_regime_app.data.sector_history_cli update-and-publish-gcs \
   --project marketphysics \
   --bucket <BUCKET_NAME> \
-  --prefix market-manifold
+  --prefix market-manifold/sector-prices
 ```
 
 Prerequisites:

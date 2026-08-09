@@ -35,7 +35,7 @@ function Resolve-Setting([string]$Value, [string[]]$EnvironmentNames, [string]$D
 
 $ProjectId = Resolve-Setting $ProjectId @("PROJECT_ID", "MARKET_MANIFOLD_GCP_PROJECT") "marketphysics"
 $BucketName = Resolve-Setting $BucketName @("BUCKET_NAME", "MARKET_MANIFOLD_GCS_BUCKET") "marketphysics-market-manifold-data"
-$MarketPricePrefix = Resolve-Setting $MarketPricePrefix @("MARKET_MANIFOLD_GCS_PREFIX") "market-manifold"
+$MarketPricePrefix = Resolve-Setting $MarketPricePrefix @("MARKET_MANIFOLD_SECTOR_PRICES_GCS_PREFIX", "MARKET_MANIFOLD_GCS_PREFIX") "market-manifold/sector-prices"
 $VolRegimePrefix = Resolve-Setting $VolRegimePrefix @("MARKET_MANIFOLD_VOL_REGIME_GCS_PREFIX") "market-manifold/vol-regime-history"
 $VolSurfacePrefix = Resolve-Setting $VolSurfacePrefix @("MARKET_MANIFOLD_VOL_SURFACE_GCS_PREFIX") "market-manifold/option-chain-iv"
 $repoRoot = Split-Path -Parent $PSScriptRoot

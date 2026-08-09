@@ -8,13 +8,19 @@ by implied volatility.
 Install optional runtime dependencies:
 
 ```powershell
-pip install ib-insync google-cloud-storage pyarrow plotly
+pip install -r vol_visualizer/requirements.txt
 ```
 
 With TWS or IB Gateway running and ADC configured:
 
 ```powershell
 python -m vol_visualizer.cli render --output iv_cube.html
+```
+
+For the interactive GCS-backed explorer:
+
+```powershell
+streamlit run vol_visualizer/streamlit_app.py
 ```
 
 The default GCS namespace is

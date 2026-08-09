@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, time
 from io import BytesIO
 from typing import Any
 
@@ -12,7 +13,14 @@ import pandas as pd
 from agentic_vol_regime_app.data.ibkr_client import IBKRConnectionConfig, IBKRDataPipe, IBKROptionChainRequest
 from agentic_vol_regime_app.data.sector_history_gcs import GoogleCloudStorageClient, StorageClientProtocol, StorageManifestConflictError
 
-from .contracts import MANIFEST_SCHEMA_VERSION, OPTION_CHAIN_SCHEMA_VERSION, option_chain_frame, validate_option_chain_frame
+from .contracts import (
+    MANIFEST_SCHEMA_VERSION,
+    OPTION_CHAIN_SCHEMA_VERSION,
+    NEW_YORK,
+    latest_completed_option_session,
+    option_chain_frame,
+    validate_option_chain_frame,
+)
 
 DEFAULT_BUCKET = "marketphysics-market-manifold-data"
 DEFAULT_PREFIX = "market-manifold/option-chain-iv"
@@ -30,6 +38,26 @@ def _upload_immutable(client: StorageClientProtocol, bucket: str, object_name: s
         raise RuntimeError(f"Immutable GCS object conflict at `{object_name}`.")
 
 
+def _catalog_has_session(
+    client: StorageClientProtocol, *, bucket: str, prefix: str, symbol: str, observation_date: str
+) -> bool:
+    """Return whether the catalog already has an EOD surface for this symbol/date."""
+    catalog_object = f"{prefix.strip('/')}/manifests/catalog.json"
+    if client.get_object_metadata(bucket, catalog_object) is None:
+        return False
+    catalog = json.loads(client.download_bytes(bucket, catalog_object).decode("utf-8"))
+    if catalog.get("manifest_schema_version") != MANIFEST_SCHEMA_VERSION:
+        raise ValueError("Unexpected option-surface catalog schema version.")
+    for entry in catalog.get("datasets", []):
+        if entry.get("observation_date") != observation_date:
+            continue
+        symbols = {str(item).upper() for item in entry.get("symbols", [])}
+        # Catalogs created before symbols were added contain only SPY snapshots.
+        if not symbols or symbol.upper() in symbols:
+            return True
+    return False
+
+
 def publish_option_chain(frame: pd.DataFrame, *, bucket: str = DEFAULT_BUCKET, prefix: str = DEFAULT_PREFIX,
                          project: str | None = None, dry_run: bool = False, storage_client: StorageClientProtocol | None = None) -> dict[str, Any]:
     """Publish one dated surface and add it to the discoverable catalog."""
@@ -42,6 +70,7 @@ def publish_option_chain(frame: pd.DataFrame, *, bucket: str = DEFAULT_BUCKET, p
     metadata = {"schema_version": OPTION_CHAIN_SCHEMA_VERSION, "dataset_id": dataset_id, "observation_time": observation_time,
                 "observation_date": observation_date, "row_count": len(frame), "symbols": sorted(frame.symbol.unique()), "content_sha256": parquet_sha}
     entry = {"dataset_id": dataset_id, "observation_time": observation_time, "observation_date": observation_date,
+             "symbols": sorted(frame.symbol.unique().tolist()),
              "parquet": {"bucket": bucket, "object": parquet_object, "sha256": parquet_sha}}
     result = {"status": "dry_run" if dry_run else "published", "dataset_id": dataset_id, "row_count": len(frame),
               "parquet_uri": f"gs://{bucket}/{parquet_object}", "catalog_uri": f"gs://{bucket}/{catalog_object}"}
@@ -67,7 +96,38 @@ def publish_option_chain(frame: pd.DataFrame, *, bucket: str = DEFAULT_BUCKET, p
 
 def collect_and_publish(*, symbol: str = "SPY", host: str = "127.0.0.1", port: int = 4001, client_id: int = 74,
                         expiry_count: int = 8, strike_count: int = 25, bucket: str = DEFAULT_BUCKET, prefix: str = DEFAULT_PREFIX,
-                        project: str | None = None, dry_run: bool = False) -> dict[str, Any]:
-    pipe = IBKRDataPipe(connection=IBKRConnectionConfig(host=host, port=port, client_id=client_id))
+                        project: str | None = None, dry_run: bool = False, now: datetime | None = None,
+                        storage_client: StorageClientProtocol | None = None) -> dict[str, Any]:
+    """Publish exactly one frozen end-of-session surface when one is due."""
+    completed = latest_completed_option_session(now)
+    if completed is None:
+        return {
+            "status": "skipped_waiting_for_market_close",
+            "symbol": symbol.upper(),
+            "reason": "The current U.S. equity session has not reached the EOD capture time (16:15 America/New_York).",
+        }
+    session_date, market_data_type = completed
+    session_iso = session_date.isoformat()
+    client = storage_client or GoogleCloudStorageClient(project=project)
+    if not dry_run and _catalog_has_session(client, bucket=bucket, prefix=prefix, symbol=symbol, observation_date=session_iso):
+        return {"status": "already_published", "symbol": symbol.upper(), "observation_date": session_iso}
+    pipe = IBKRDataPipe(
+        connection=IBKRConnectionConfig(
+            host=host,
+            port=port,
+            client_id=client_id,
+            market_data_type=market_data_type,
+        )
+    )
     snapshot = pipe.fetch_market_snapshot(IBKROptionChainRequest(symbol=symbol, expiry_count=expiry_count, strike_count=strike_count))
-    return publish_option_chain(option_chain_frame(snapshot.to_dict()), bucket=bucket, prefix=prefix, project=project, dry_run=dry_run)
+    observation_time = datetime.combine(session_date, time(hour=16, minute=15), tzinfo=NEW_YORK)
+    frame = option_chain_frame(snapshot.to_dict(), observation_time=observation_time)
+    if frame.empty:
+        quote_count = len(snapshot.option_chain.get("option_quotes", []))
+        raise RuntimeError(
+            f"IBKR returned no usable implied-volatility quotes for {symbol.upper()} during a U.S. market session "
+            f"({quote_count} option quotes received). Check the IBKR option-market-data entitlement and connection."
+        )
+    return publish_option_chain(
+        frame, bucket=bucket, prefix=prefix, project=project, dry_run=dry_run, storage_client=client
+    )

@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $defaultProjectId = "marketphysics"
 $defaultBucketName = "marketphysics-market-manifold-data"
-$defaultPrefix = "market-manifold"
+$defaultPrefix = "market-manifold/sector-prices"
 
 if ([string]::IsNullOrWhiteSpace($ProjectId)) {
     $ProjectId = if (-not [string]::IsNullOrWhiteSpace($env:PROJECT_ID)) {

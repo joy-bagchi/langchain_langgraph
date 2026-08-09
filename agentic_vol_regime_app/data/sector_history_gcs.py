@@ -20,7 +20,9 @@ from agentic_vol_regime_app.data.sector_history_store import (
 
 
 SECTOR_PRICE_MANIFEST_SCHEMA_VERSION = "sector_prices_manifest.v1"
-DEFAULT_GCS_PREFIX = "market-manifold"
+# Sector prices have their own namespace; other datasets beneath
+# ``market-manifold`` (such as vol-regime-history) must not share this manifest.
+DEFAULT_GCS_PREFIX = "market-manifold/sector-prices"
 
 
 class StorageError(RuntimeError):
