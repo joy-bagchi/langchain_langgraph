@@ -3,12 +3,13 @@ param(
     [string]$ProjectId = "marketphysics",
     [string]$Region = "us-west1",
     [string]$ServiceName = "market-physics-forecast-publisher",
+    [string]$PublisherServiceAccountId = "market-physics-forecast-pub",
     [string]$BucketName = "marketphysics-market-manifold-data",
     [string]$Prefix = "market-manifold/forecasts"
 )
 
 $ErrorActionPreference = "Stop"
-$PublisherServiceAccount = "market-physics-forecast-publisher@$ProjectId.iam.gserviceaccount.com"
+$PublisherServiceAccount = "$PublisherServiceAccountId@$ProjectId.iam.gserviceaccount.com"
 
 # Read-only preflight: fail rather than guessing an MCP identity or overwriting a
 # naming collision.  Run only after reviewing the resulting plan and IAM policy.
@@ -17,7 +18,11 @@ if ($activeProject -ne $ProjectId) { throw "Active gcloud project '$activeProjec
 $mcpServiceAccount = (& gcloud run services describe market-manifold-mcp --region $Region --project $ProjectId --format="value(spec.template.spec.serviceAccountName)").Trim()
 if ([string]::IsNullOrWhiteSpace($mcpServiceAccount)) { throw "Could not resolve market-manifold-mcp runtime service account." }
 & gcloud storage buckets describe "gs://$BucketName" --project $ProjectId | Out-Null
-& gcloud iam service-accounts describe $PublisherServiceAccount --project $ProjectId | Out-Null
+& gcloud iam service-accounts describe $PublisherServiceAccount --project $ProjectId 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    & gcloud iam service-accounts create $PublisherServiceAccountId --project $ProjectId --display-name "Market Physics Forecast Publisher"
+    if ($LASTEXITCODE -ne 0) { throw "Could not create the dedicated publisher service account." }
+}
 
 & gcloud iam roles describe marketPhysicsForecastPublisherObjects --project $ProjectId 2>$null | Out-Null
 if ($LASTEXITCODE -eq 0) {
@@ -26,6 +31,13 @@ if ($LASTEXITCODE -eq 0) {
     & gcloud iam roles create marketPhysicsForecastPublisherObjects --project $ProjectId --file agentic_vol_regime_app/forecast_publisher_storage_role.yaml
 }
 if ($LASTEXITCODE -ne 0) { throw "Could not create or update the narrow publisher storage role." }
+& gcloud iam roles describe marketPhysicsForecastPublisherBucketAccess --project $ProjectId 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    & gcloud iam roles update marketPhysicsForecastPublisherBucketAccess --project $ProjectId --file agentic_vol_regime_app/forecast_publisher_bucket_role.yaml
+} else {
+    & gcloud iam roles create marketPhysicsForecastPublisherBucketAccess --project $ProjectId --file agentic_vol_regime_app/forecast_publisher_bucket_role.yaml
+}
+if ($LASTEXITCODE -ne 0) { throw "Could not create or update the publisher bucket metadata role." }
 
 $buildCommit = (& git rev-parse HEAD).Trim()
 $image = "gcr.io/$ProjectId/$ServiceName`:$buildCommit"
@@ -42,7 +54,7 @@ if ($LASTEXITCODE -ne 0) { throw "Could not grant the narrow Cloud Run invoker b
 $condition = "expression=resource.name.startsWith('projects/_/buckets/$BucketName/objects/$Prefix/'),title=forecast-publisher-prefix,description=Forecast publisher objects only"
 & gcloud storage buckets add-iam-policy-binding "gs://$BucketName" --member "serviceAccount:$PublisherServiceAccount" --role "projects/$ProjectId/roles/marketPhysicsForecastPublisherObjects" --condition $condition
 if ($LASTEXITCODE -ne 0) { throw "Could not grant prefix-scoped publisher object access." }
-& gcloud storage buckets add-iam-policy-binding "gs://$BucketName" --member "serviceAccount:$PublisherServiceAccount" --role roles/storage.legacyBucketReader
+& gcloud storage buckets add-iam-policy-binding "gs://$BucketName" --member "serviceAccount:$PublisherServiceAccount" --role "projects/$ProjectId/roles/marketPhysicsForecastPublisherBucketAccess" --condition=None
 if ($LASTEXITCODE -ne 0) { throw "Could not grant bucket metadata access required for readiness of the publisher." }
 & gcloud storage buckets get-iam-policy "gs://$BucketName" --format=json | Select-String -SimpleMatch $PublisherServiceAccount | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Could not verify publisher bucket IAM bindings." }

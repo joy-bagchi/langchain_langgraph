@@ -148,10 +148,10 @@ def test_health_is_storage_free_and_readiness_detects_invalid_configuration() ->
         raise AssertionError("health must not construct storage")
 
     app = create_app(settings=PublisherSettings("project", "bucket", "prefix"), publisher_factory=factory)
-    assert TestClient(app).get("/healthz").json() == {"status": "ok"}
+    assert TestClient(app).get("/health").json() == {"status": "ready"}
     assert calls == 0
     invalid = TestClient(create_app(settings=PublisherSettings("", "bucket", "prefix")))
-    assert invalid.get("/readyz").status_code == 503
+    assert invalid.get("/health").status_code == 503
 
 
 def test_compatibility_with_actual_mcp_publisher_client_when_available(monkeypatch) -> None:

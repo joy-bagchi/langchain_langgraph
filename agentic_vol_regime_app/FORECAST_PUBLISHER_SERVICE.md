@@ -20,7 +20,7 @@ uvicorn agentic_vol_regime_app.forecast_publisher_service:create_app --factory -
 python -m pytest agentic_vol_regime_app/tests/test_forecast_publisher_service.py
 ```
 
-`/healthz` is process-only. `/readyz` validates configuration without touching GCS. Non-2xx publish failures are safe JSON errors: 400 malformed JSON, 413 too large, 415 media type, 422 validation, 409 immutable/manifest conflict, 503 storage unavailable, and 500 sanitized unexpected failure. Alert on 409 (investigate a divergent forecast or pointer race), repeated 503, and any 500. Logs never contain payloads, reports, authorization headers, or tokens.
+`/health` is a configuration-readiness check and does not touch GCS. A successful response confirms only that the service is configured to accept requests; it does not verify authenticated publication. Non-2xx publish failures are safe JSON errors: 400 malformed JSON, 413 too large, 415 media type, 422 validation, 409 immutable/manifest conflict, 503 storage unavailable, and 500 sanitized unexpected failure. Alert on 409 (investigate a divergent forecast or pointer race), repeated 503, and any 500. Logs never contain payloads, reports, authorization headers, or tokens.
 
 Identical bytes are safe to retry: the publisher reuses immutable objects and verifies the winning manifest. The forecast identity excludes runtime `generated_at`, so reconstruction does not alter identity; callers should retry the exact artifact bytes to reuse the immutable object.
 
@@ -30,7 +30,7 @@ Deployment is intentionally not automatic. The reviewed custom-role definition i
 .\agentic_vol_regime_app\scripts\deploy_forecast_publisher.ps1
 ```
 
-The script verifies the active project, bucket, publisher account, and actual `market-manifold-mcp` runtime identity before mutation; it deploys private Cloud Run and grants only that resolved identity `roles/run.invoker` on this service. The publisher account receives the custom, prefix-restricted GCS object role plus target-bucket metadata read needed by the existing publisher's bucket-exists check. It prints the canonical origin (without a trailing slash) twice for the MCP settings:
+The script verifies the active project, bucket, publisher account, and actual `market-manifold-mcp` runtime identity before mutation; it deploys private Cloud Run and grants only that resolved identity `roles/run.invoker` on this service. The publisher account receives the custom, prefix-restricted GCS object role plus a separate `storage.buckets.get`-only custom role needed by the existing publisher's bucket-exists check. It prints the canonical origin (without a trailing slash) twice for the MCP settings:
 
 ```text
 FORECAST_PUBLISHER_URL=https://...run.app

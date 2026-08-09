@@ -192,11 +192,7 @@ def create_app(
         logger.info("forecast_publisher_http request_id=%s method=%s path=%s status=%s latency_ms=%d", request.state.request_id, request.method, request.url.path, response.status_code, (time.monotonic() - started) * 1000)
         return response
 
-    @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/readyz")
+    @app.get("/health")
     async def readyz(request: Request):
         if app.state.settings_error:
             return _error(503, "not_ready", "Publisher configuration is invalid.", request.state.request_id)
