@@ -245,9 +245,11 @@ def _validate_manifest_payload(payload: dict[str, Any]) -> None:
 
 
 class GoogleCloudStorageClient:
-    def __init__(self, *, project: str | None = None, client: Any | None = None) -> None:
+    def __init__(self, *, project: str | None = None, client: Any | None = None,
+                 timeout: float | None = None) -> None:
         self.project = project
         self._client = client
+        self.timeout = timeout
 
     @property
     def client(self) -> Any:
@@ -288,7 +290,7 @@ class GoogleCloudStorageClient:
 
     def bucket_exists(self, bucket: str) -> bool:
         try:
-            return bool(self.client.bucket(bucket).exists())
+            return bool(self.client.bucket(bucket).exists(timeout=self.timeout))
         except Exception as exc:  # pragma: no cover - depends on external runtime
             mapped = self._map_exception(exc)
             if isinstance(mapped, StorageNotFoundError):
@@ -298,9 +300,9 @@ class GoogleCloudStorageClient:
     def get_object_metadata(self, bucket: str, object_name: str) -> StorageObjectMetadata | None:
         try:
             blob = self.client.bucket(bucket).blob(object_name)
-            if not blob.exists():
+            if not blob.exists(timeout=self.timeout):
                 return None
-            blob.reload()
+            blob.reload(timeout=self.timeout)
             return StorageObjectMetadata(
                 bucket=bucket,
                 object_name=object_name,
@@ -327,8 +329,8 @@ class GoogleCloudStorageClient:
             kwargs: dict[str, Any] = {"content_type": content_type}
             if if_generation_match is not None:
                 kwargs["if_generation_match"] = int(if_generation_match)
-            blob.upload_from_string(data, **kwargs)
-            blob.reload()
+            blob.upload_from_string(data, timeout=self.timeout, **kwargs)
+            blob.reload(timeout=self.timeout)
             return StorageObjectMetadata(
                 bucket=bucket,
                 object_name=object_name,
@@ -344,7 +346,7 @@ class GoogleCloudStorageClient:
     def download_bytes(self, bucket: str, object_name: str) -> bytes:
         try:
             blob = self.client.bucket(bucket).blob(object_name)
-            return bytes(blob.download_as_bytes())
+            return bytes(blob.download_as_bytes(timeout=self.timeout))
         except Exception as exc:  # pragma: no cover - depends on external runtime
             raise self._map_exception(exc)
 

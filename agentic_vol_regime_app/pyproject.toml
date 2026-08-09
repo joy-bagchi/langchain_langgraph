@@ -14,6 +14,12 @@ ibkr = ["ib-insync>=0.9.86"]
 ui = ["streamlit>=1.45.0"]
 hmm = ["hmmlearn>=0.3.2", "scikit-learn>=1.5.0", "numpy>=1.26.0"]
 gcs = ["google-cloud-storage>=2.18.0"]
+publisher-service = [
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+    "google-cloud-storage>=2.18.0",
+    "pandas>=2.0.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

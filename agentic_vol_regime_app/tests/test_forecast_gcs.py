@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import pytest
 
@@ -34,7 +35,7 @@ class FakeStorage:
 
 def artifact(review=False):
     outputs = {"daily_report": {"markdown": "# report"}, "belief_state": {"as_of": "2026-08-08T20:00:00Z", "model_version": "v1", "beliefs": {"A": .9}}, "transition_probabilities": {}, "alert_record": {"requires_human_review": False}, "policy_recommendation": {}, "critic_review": {"requires_human_review": review}, "data_quality": {"is_complete": True}, "feature_record": {"schema_version": "features.v1"}}
-    return build_forecast_artifact(named_outputs=outputs, run_id="run", workflow_id="daily_vol_regime_report", agent_id="agent", agent_metadata={}, observation={"as_of": "2026-08-08T20:00:00Z", "source": "test", "symbols": {"SPY": {}}, "schema_version": "observation.v1"})
+    return build_forecast_artifact(named_outputs=outputs, run_id="run", workflow_id="daily_vol_regime_report", agent_id="agent", agent_metadata={}, observation={"as_of": "2026-08-08T20:00:00Z", "source": "test", "symbols": {"SPY": {}}, "schema_version": "observation.v1"}, now=lambda: datetime(2026, 8, 9, tzinfo=timezone.utc))
 
 
 def test_contract_is_deterministic_and_review_is_ineligible():
@@ -42,6 +43,15 @@ def test_contract_is_deterministic_and_review_is_ineligible():
     flagged = artifact(True)
     assert flagged["decision_eligible"] is False and flagged["review_status"] == "REQUIRED"
     with pytest.raises(ValueError): canonical_json_bytes({"bad": float("nan")})
+
+
+def test_generation_time_is_runtime_but_not_forecast_identity():
+    outputs = {"daily_report": {"markdown": "# report"}, "belief_state": {"as_of": "2026-08-08T20:00:00Z", "model_version": "v1", "beliefs": {"A": .9}}, "transition_probabilities": {}, "alert_record": {"requires_human_review": False}, "policy_recommendation": {}, "critic_review": {"requires_human_review": False}, "data_quality": {"is_complete": True}, "feature_record": {"schema_version": "features.v1"}}
+    args = {"named_outputs": outputs, "run_id": "run", "workflow_id": "daily_vol_regime_report", "agent_id": "agent", "agent_metadata": {}, "observation": {"as_of": "2026-08-08T20:00:00Z", "source": "test", "symbols": {"SPY": {}}, "schema_version": "observation.v1"}}
+    first = build_forecast_artifact(**args, now=lambda: datetime(2026, 8, 9, 0, 0, tzinfo=timezone.utc))
+    second = build_forecast_artifact(**args, now=lambda: datetime(2026, 8, 9, 0, 1, tzinfo=timezone.utc))
+    assert first["generated_at"] != second["generated_at"]
+    assert first["forecast_id"] == second["forecast_id"]
 
 
 def test_first_publish_retry_and_collision():

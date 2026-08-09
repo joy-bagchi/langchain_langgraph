@@ -93,11 +93,12 @@ class ForecastGCSPublisher:
 
     def __init__(self, *, storage_client: StorageClientProtocol | None = None,
                  bucket: str | None = None, prefix: str | None = None,
-                 project: str | None = None) -> None:
+                 project: str | None = None, storage_timeout_seconds: float | None = None) -> None:
         self.bucket = _configured(bucket, "MARKET_PHYSICS_FORECAST_GCS_BUCKET", DEFAULT_BUCKET)
         self.prefix = _configured(prefix, "MARKET_PHYSICS_FORECAST_GCS_PREFIX", DEFAULT_PREFIX).strip("/")
         self.storage_client = storage_client or GoogleCloudStorageClient(
-            project=_configured(project, "GOOGLE_CLOUD_PROJECT", "marketphysics")
+            project=_configured(project, "GOOGLE_CLOUD_PROJECT", "marketphysics"),
+            timeout=storage_timeout_seconds,
         )
         if not self.bucket or not self.prefix:
             raise ValueError("Forecast GCS bucket and prefix must be non-empty.")
