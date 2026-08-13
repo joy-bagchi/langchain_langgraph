@@ -13,6 +13,13 @@ from typing import Any
 
 FORECAST_SCHEMA_VERSION = "market_physics_forecast.v1"
 FORECAST_MANIFEST_SCHEMA_VERSION = "market_physics_forecast_manifest.v1"
+MPF_NATIVE_SCHEMA_VERSION = "mpf_native_forecast.v1"
+MPF_INTEGRITY_SCHEMA_VERSION = "mpf_finalization_integrity.v1"
+MPF_BELIEF_REPRESENTATION = "market_physics.mpf_belief_state.v1"
+MPF_TRANSITION_REPRESENTATION = "market_physics.mpf_transition_probabilities.v1"
+MPF_POLICY_REPRESENTATION = "market_physics.mpf_policy_recommendation.v1"
+MPF_FEATURE_REPRESENTATION = "market_physics.mpf_feature_record.v1"
+MPF_DATA_QUALITY_REPRESENTATION = "market_physics.mpf_data_quality.v1"
 
 
 def canonical_json_bytes(payload: dict[str, Any]) -> bytes:
@@ -30,6 +37,103 @@ def canonical_json_bytes(payload: dict[str, Any]) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def canonical_envelope_sha256(envelope: dict[str, Any]) -> str:
+    """Hash canonical envelope bytes with only its self-referential digest omitted."""
+    snapshot = json.loads(canonical_json_bytes(envelope))
+    finalization = snapshot.get("forecast", {}).get("provenance", {}).get("finalization")
+    if isinstance(finalization, dict):
+        finalization.pop("canonical_envelope_sha256", None)
+    return sha256_bytes(canonical_json_bytes(snapshot))
+
+
+def _require_text(value: Any, path: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{path} must be a non-empty string.")
+
+
+def _validate_mpf_section(value: Any, *, representation: str, path: str, allow_not_applicable: bool = False, requires_context: bool = False) -> None:
+    if not isinstance(value, dict) or value.get("representation") != representation:
+        raise ValueError(f"{path}.representation is unsupported.")
+    status = value.get("status")
+    if status == "present":
+        if set(value) != {"representation", "status", "scientific"}:
+            raise ValueError(f"{path} has contradictory or unknown fields.")
+        scientific = value.get("scientific")
+        if not isinstance(scientific, dict) or not scientific:
+            raise ValueError(f"{path}.scientific is required when status is present.")
+        return
+    if status == "unavailable":
+        if set(value) != {"representation", "status", "reason", "missing_evidence"}:
+            raise ValueError(f"{path} has contradictory or unknown fields.")
+        _require_text(value.get("reason"), f"{path}.reason")
+        missing = value.get("missing_evidence")
+        if not isinstance(missing, list) or not missing or not all(isinstance(item, str) and item.strip() for item in missing):
+            raise ValueError(f"{path}.missing_evidence is required when status is unavailable.")
+        return
+    if allow_not_applicable and status == "not_applicable":
+        allowed = {"representation", "status", "reason", "scientific_context"} if requires_context else {"representation", "status", "reason"}
+        if set(value) != allowed:
+            raise ValueError(f"{path} has contradictory or unknown fields.")
+        _require_text(value.get("reason"), f"{path}.reason")
+        if requires_context:
+            context = value.get("scientific_context")
+            if not isinstance(context, dict) or set(context) != {"transmission_stages"}:
+                raise ValueError(f"{path}.scientific_context is invalid.")
+            stages = context["transmission_stages"]
+            if not isinstance(stages, list) or not stages or not all(isinstance(stage, str) and stage.strip() for stage in stages):
+                raise ValueError(f"{path}.scientific_context.transmission_stages is invalid.")
+        return
+    raise ValueError(f"{path}.status is unsupported.")
+
+
+def validate_mpf_canonical_semantics(artifact: dict[str, Any]) -> None:
+    """Validate additive MPF tagged sections without changing legacy HMM envelopes."""
+    provenance = artifact.get("provenance")
+    representations = {MPF_BELIEF_REPRESENTATION, MPF_TRANSITION_REPRESENTATION, MPF_POLICY_REPRESENTATION, MPF_FEATURE_REPRESENTATION, MPF_DATA_QUALITY_REPRESENTATION}
+    model = artifact.get("model") if isinstance(artifact.get("model"), dict) else {}
+    mpf_marked = (
+        "scientific_payload" in artifact
+        or isinstance(provenance, dict) and any(key in provenance for key in ("finalization", "native_forecast_id", "native_schema_version"))
+        or any(isinstance(artifact.get(key), dict) and artifact[key].get("representation") in representations for key in ("belief_state", "transition_probabilities", "policy_recommendation", "features", "data_quality"))
+        or str(model.get("belief_engine", "")).lower() in {"market_physics", "mpf"}
+        or str(model.get("family", "")).lower() in {"market_physics", "mpf"}
+    )
+    if not mpf_marked:
+        return
+    if not isinstance(provenance, dict) or provenance.get("native_schema_version") != MPF_NATIVE_SCHEMA_VERSION:
+        raise ValueError("forecast.provenance.native_schema_version is unsupported for an MPF artifact.")
+    _validate_mpf_section(artifact.get("belief_state"), representation=MPF_BELIEF_REPRESENTATION, path="forecast.belief_state")
+    _validate_mpf_section(artifact.get("transition_probabilities"), representation=MPF_TRANSITION_REPRESENTATION, path="forecast.transition_probabilities", allow_not_applicable=True, requires_context=True)
+    _validate_mpf_section(artifact.get("policy_recommendation"), representation=MPF_POLICY_REPRESENTATION, path="forecast.policy_recommendation", allow_not_applicable=True)
+    _validate_mpf_section(artifact.get("features"), representation=MPF_FEATURE_REPRESENTATION, path="forecast.features")
+    _validate_mpf_section(artifact.get("data_quality"), representation=MPF_DATA_QUALITY_REPRESENTATION, path="forecast.data_quality")
+    quality = artifact["data_quality"]
+    if quality["status"] == "present" and set(quality["scientific"]) != {"source", "source_schema_version"}:
+        raise ValueError("forecast.data_quality.scientific is invalid.")
+    finalization = provenance.get("finalization")
+    if not isinstance(finalization, dict) or finalization.get("schema_version") != MPF_INTEGRITY_SCHEMA_VERSION:
+        raise ValueError("forecast.provenance.finalization is unsupported.")
+    for key in ("native_forecast_sha256", "report_markdown_sha256", "canonical_envelope_sha256"):
+        value = finalization.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError(f"forecast.provenance.finalization.{key} is invalid.")
+    if sha256_bytes(canonical_json_bytes(artifact.get("scientific_payload"))) != finalization["native_forecast_sha256"]:
+        raise ValueError("forecast.provenance.finalization.native_forecast_sha256 does not bind scientific_payload.")
+
+
+def validate_mpf_envelope_integrity(envelope: dict[str, Any]) -> None:
+    """Verify all MPF finalization digests against the received transport bytes."""
+    artifact, report = envelope["forecast"], envelope["report_markdown"]
+    provenance = artifact.get("provenance", {})
+    if provenance.get("native_schema_version") != MPF_NATIVE_SCHEMA_VERSION:
+        return
+    finalization = provenance["finalization"]
+    if sha256_bytes(str(report).encode("utf-8")) != finalization["report_markdown_sha256"]:
+        raise ValueError("forecast.provenance.finalization.report_markdown_sha256 does not bind report_markdown.")
+    if canonical_envelope_sha256(envelope) != finalization["canonical_envelope_sha256"]:
+        raise ValueError("forecast.provenance.finalization.canonical_envelope_sha256 does not bind envelope.")
 
 
 def _utc(value: Any) -> str:

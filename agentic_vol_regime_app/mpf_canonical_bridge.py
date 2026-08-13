@@ -9,10 +9,15 @@ import copy
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 
-from agentic_vol_regime_app.forecast_contract import build_forecast_artifact, canonical_json_bytes
-from agentic_vol_regime_app.forecast_publisher_service import ServiceValidationError, validate_envelope
+from agentic_vol_regime_app.forecast_contract import (
+    MPF_BELIEF_REPRESENTATION, MPF_DATA_QUALITY_REPRESENTATION,
+    MPF_FEATURE_REPRESENTATION, MPF_INTEGRITY_SCHEMA_VERSION,
+    MPF_POLICY_REPRESENTATION, MPF_TRANSITION_REPRESENTATION,
+    build_forecast_artifact, canonical_envelope_sha256, canonical_json_bytes,
+)
 
 NATIVE_SCHEMA_VERSION = "mpf_native_forecast.v1"
 
@@ -79,6 +84,7 @@ def prepare_mpf_publication_envelope(
     alert_record: dict[str, Any],
     critic_review: dict[str, Any],
     agent_metadata: dict[str, Any],
+    scientific_semantics: dict[str, Any],
     finalization_hashes: dict[str, Any],
 ) -> ValidatedMPFPublicationEnvelope:
     """Build and validate one immutable MPF publication snapshot without transport.
@@ -92,9 +98,11 @@ def prepare_mpf_publication_envelope(
     observation_value = _required_mapping(observation, "observation", failures)
     model_value = _required_mapping(scientific_model, "scientific_model", failures)
     context = _required_mapping(run_context, "run_context", failures)
+    lineage = _required_mapping(context.get("source_data_lineage"), "run_context.source_data_lineage", failures)
     alert = _required_mapping(alert_record, "alert_record", failures)
     critic = _required_mapping(critic_review, "critic_review", failures)
     metadata = _required_mapping(agent_metadata, "agent_metadata", failures)
+    semantics = _required_mapping(scientific_semantics, "scientific_semantics", failures)
     hashes = _required_mapping(finalization_hashes, "finalization_hashes", failures)
 
     for path, value in (
@@ -133,15 +141,54 @@ def prepare_mpf_publication_envelope(
         **metadata,
         "belief_engine": model_value["family"],
     }
+    def section(rep: str, fields: tuple[str, ...]) -> dict[str, Any]:
+        scientific = {field: copy.deepcopy(native_snapshot[field]) for field in fields if field in native_snapshot}
+        if scientific:
+            return {"representation": rep, "status": "present", "scientific": scientific}
+        return {"representation": rep, "status": "unavailable", "reason": "Authoritative MPF evidence was not supplied.", "missing_evidence": list(fields)}
+
+    belief_state = section(MPF_BELIEF_REPRESENTATION, ("belief_state", "posterior_distributions", "force_field", "law_assessment", "scenarios", "observables", "evidence", "uncertainty"))
+    transition = copy.deepcopy(native_snapshot.get("transition_probabilities"))
+    transition_semantics = semantics.get("transition_probabilities")
+    policy_semantics = semantics.get("policy_recommendation")
+    if isinstance(transition, dict) and transition:
+        transition = {"representation": MPF_TRANSITION_REPRESENTATION, "status": "present", "scientific": transition}
+    else:
+        if not isinstance(transition_semantics, dict):
+            failures.append("scientific_semantics.transition_probabilities is required when native transition probabilities are absent.")
+            transition = {}
+        elif transition_semantics.get("status") == "not_applicable":
+            transition = {"representation": MPF_TRANSITION_REPRESENTATION, "status": "not_applicable", "reason": transition_semantics.get("reason"), "scientific_context": copy.deepcopy(transition_semantics.get("scientific_context"))}
+        elif transition_semantics.get("status") == "unavailable":
+            transition = {"representation": MPF_TRANSITION_REPRESENTATION, "status": "unavailable", "reason": transition_semantics.get("reason"), "missing_evidence": copy.deepcopy(transition_semantics.get("missing_evidence"))}
+        else:
+            failures.append("scientific_semantics.transition_probabilities.status must be not_applicable or unavailable when native transition probabilities are absent.")
+            transition = {}
+    policy = copy.deepcopy(native_snapshot.get("policy_recommendation"))
+    if isinstance(policy, dict) and policy:
+        policy = {"representation": MPF_POLICY_REPRESENTATION, "status": "present", "scientific": policy}
+    else:
+        if not isinstance(policy_semantics, dict):
+            failures.append("scientific_semantics.policy_recommendation is required when native policy recommendation is absent.")
+            policy = {}
+        elif policy_semantics.get("status") in {"not_applicable", "unavailable"}:
+            policy = {"representation": MPF_POLICY_REPRESENTATION, "status": policy_semantics["status"], "reason": policy_semantics.get("reason")}
+            if policy_semantics["status"] == "unavailable":
+                policy["missing_evidence"] = copy.deepcopy(policy_semantics.get("missing_evidence"))
+        else:
+            failures.append("scientific_semantics.policy_recommendation.status must be not_applicable or unavailable when native policy recommendation is absent.")
+            policy = {}
+    if failures:
+        raise MPFCanonicalizationError(failures)
     named_outputs = {
         "daily_report": {"markdown": report},
-        "belief_state": {"as_of": observation_value["as_of"], "model_version": model_value["version"], "beliefs": {}},
-        "transition_probabilities": {},
+        "belief_state": belief_state,
+        "transition_probabilities": transition,
         "alert_record": {"requires_human_review": alert_review},
-        "policy_recommendation": {},
+        "policy_recommendation": policy,
         "critic_review": {"requires_human_review": critic_review_required},
-        "data_quality": {"source_schema_version": observation_value["schema_version"]},
-        "feature_record": {"schema_version": "mpf_finalization.v1"},
+        "data_quality": {"representation": MPF_DATA_QUALITY_REPRESENTATION, "status": "present", "scientific": {"source_schema_version": observation_value["schema_version"], "source": observation_value["source"]}},
+        "feature_record": section(MPF_FEATURE_REPRESENTATION, ("observables", "evidence", "uncertainty", "pending_confirmations", "sources")),
         "hmm_belief": {"model_name": model_value["name"], "model_version": model_value["version"], "variant_id": model_value.get("variant")},
     }
     artifact = build_forecast_artifact(
@@ -161,13 +208,51 @@ def prepare_mpf_publication_envelope(
     artifact.update({
         "forecast_id": native_forecast_id,
         "model": {"belief_engine": model_value["family"], "name": model_value["name"], "version": model_value["version"], **({"variant": model_value["variant"]} if model_value.get("variant") else {}), **({"configuration_id": model_value["configuration_id"]} if model_value.get("configuration_id") else {}), **({"parameter_version": model_value["parameter_version"]} if model_value.get("parameter_version") else {})},
-        "provenance": {**artifact["provenance"], "repository_commit_sha": context["repository_commit"], "native_forecast_id": native_forecast_id, "source_data_lineage": copy.deepcopy(context.get("source_data_lineage", {})), "native_schema_version": NATIVE_SCHEMA_VERSION},
+        "provenance": {**artifact["provenance"], "repository_commit_sha": context["repository_commit"], "producer_version": context.get("producer_version"), "native_forecast_id": native_forecast_id, "source_data_lineage": copy.deepcopy(lineage), "native_schema_version": NATIVE_SCHEMA_VERSION, "finalization": {"schema_version": MPF_INTEGRITY_SCHEMA_VERSION, "native_forecast_sha256": hashes["native_forecast_sha256"], "report_markdown_sha256": hashes["report_markdown_sha256"]}},
         "scientific_payload": native_snapshot,
     })
     snapshot = {"forecast": artifact, "report_markdown": report}
-    snapshot_hash = hashlib.sha256(canonical_json_bytes(snapshot)).hexdigest()
+    snapshot["forecast"]["provenance"]["finalization"]["canonical_envelope_sha256"] = canonical_envelope_sha256(snapshot)
+    snapshot_hash = snapshot["forecast"]["provenance"]["finalization"]["canonical_envelope_sha256"]
+    # Delayed import avoids a service/bridge import cycle while retaining the
+    # deployed service's validator as the only final authority.
+    from agentic_vol_regime_app.forecast_publisher_service import ServiceValidationError, validate_envelope
     try:
         validate_envelope(snapshot)
     except ServiceValidationError as exc:
         raise MPFCanonicalizationError([f"canonical validator rejected envelope: {exc}"]) from exc
     return ValidatedMPFPublicationEnvelope(envelope=copy.deepcopy(snapshot), finalization_sha256=snapshot_hash)
+
+
+def finalize_mpf_publication_envelope(
+    *,
+    native_forecast: dict[str, Any],
+    report_markdown: str,
+    observation: dict[str, Any],
+    scientific_model: dict[str, Any],
+    run_context: dict[str, Any],
+    alert_record: dict[str, Any],
+    critic_review: dict[str, Any],
+    agent_metadata: dict[str, Any],
+    scientific_semantics: dict[str, Any],
+    now: Callable[[], datetime] | None = None,
+) -> ValidatedMPFPublicationEnvelope:
+    """Server-side MPF finalization boundary; callers never supply hashes or time."""
+    final_native = copy.deepcopy(native_forecast)
+    final_report = report_markdown if isinstance(report_markdown, str) else report_markdown
+    return prepare_mpf_publication_envelope(
+        native_forecast=final_native,
+        report_markdown=final_report,
+        finalized_at=(now or (lambda: datetime.now(timezone.utc)))(),
+        observation=observation,
+        scientific_model=scientific_model,
+        run_context=run_context,
+        alert_record=alert_record,
+        critic_review=critic_review,
+        agent_metadata=agent_metadata,
+        scientific_semantics=scientific_semantics,
+        finalization_hashes={
+            "native_forecast_sha256": canonical_native_sha256(final_native) if isinstance(final_native, dict) else None,
+            "report_markdown_sha256": report_markdown_sha256(final_report) if isinstance(final_report, str) else None,
+        },
+    )

@@ -1,9 +1,9 @@
 {
-  "content_sha256": "d108da070202b70c95ef42a0f3dea66f56f766c4705e9f503e493a205822d989",
-  "file_sha256": "a50ffc7b480cbf478349cb5c008f7fda722ed81bfd52d3592ff49f0f65e49a1e",
+  "content_sha256": "3d70c22c345ee6e895775a5478d9b709726f88b124ff9955e23ee5f7d31ceea9",
+  "file_sha256": "8e2f488af0a939572fe6c4ee9f4e3d9dc0e3473a6677edb94f414f3187ee34b6",
   "first_date": "2015-01-02",
-  "generated_at": "2026-08-12T02:20:17.388963Z",
-  "last_date": "2026-08-11",
+  "generated_at": "2026-08-13T01:06:41.913036Z",
+  "last_date": "2026-08-12",
   "mode": "update",
   "per_symbol": {
     "SPY": {
@@ -12,11 +12,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLB": {
@@ -25,11 +25,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLE": {
@@ -38,11 +38,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLF": {
@@ -51,11 +51,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLI": {
@@ -64,11 +64,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLK": {
@@ -77,11 +77,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLP": {
@@ -90,11 +90,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLRE": {
@@ -103,11 +103,11 @@
       "first_valid_date": "2015-10-08",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2725,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2726,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLU": {
@@ -116,11 +116,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLV": {
@@ -129,11 +129,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     },
     "XLY": {
@@ -142,11 +142,11 @@
       "first_valid_date": "2015-01-02",
       "inserted_count": 1,
       "internal_gap_count": 0,
-      "last_valid_date": "2026-08-11",
-      "non_null_count": 2918,
+      "last_valid_date": "2026-08-12",
+      "non_null_count": 2919,
       "received_bar_count": 7,
-      "requested_end": "2026-08-11",
-      "requested_start": "2026-08-03",
+      "requested_end": "2026-08-12",
+      "requested_start": "2026-08-04",
       "revised_count": 0
     }
   },
@@ -157,7 +157,7 @@
     "repair_horizon_trading_days": 10,
     "use_rth": true
   },
-  "row_count": 2918,
+  "row_count": 2919,
   "schema_version": "sector_prices.v1",
   "source": "IBKR",
   "symbols": [

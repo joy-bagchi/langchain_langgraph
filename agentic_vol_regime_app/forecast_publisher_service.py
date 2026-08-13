@@ -30,7 +30,14 @@ from agentic_vol_regime_app.data.sector_history_gcs import (
     StorageObjectConflictError,
     StoragePermissionError,
 )
-from agentic_vol_regime_app.forecast_contract import FORECAST_SCHEMA_VERSION
+from agentic_vol_regime_app.forecast_contract import (
+    FORECAST_SCHEMA_VERSION, validate_mpf_canonical_semantics,
+    validate_mpf_envelope_integrity,
+)
+from agentic_vol_regime_app.mpf_canonical_bridge import (
+    MPFCanonicalizationError,
+    finalize_mpf_publication_envelope,
+)
 
 logger = logging.getLogger(__name__)
 DEFAULT_MAX_REQUEST_BYTES = 2 * 1024 * 1024
@@ -42,12 +49,19 @@ class ServiceValidationError(ValueError):
     """An unsafe or malformed caller payload."""
 
 
+class RequestBodyError(ValueError):
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        self.status_code, self.code = status_code, code
+        super().__init__(message)
+
+
 @dataclass(frozen=True, slots=True)
 class PublisherSettings:
     project: str
     bucket: str
     prefix: str
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
+    finalization_max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
     storage_timeout_seconds: int = 30
 
     @classmethod
@@ -57,6 +71,7 @@ class PublisherSettings:
             bucket=os.getenv("MARKET_PHYSICS_FORECAST_GCS_BUCKET", "marketphysics-market-manifold-data").strip(),
             prefix=os.getenv("MARKET_PHYSICS_FORECAST_GCS_PREFIX", "market-manifold/forecasts").strip("/"),
             max_request_bytes=_integer_environment("FORECAST_PUBLISHER_MAX_REQUEST_BYTES", DEFAULT_MAX_REQUEST_BYTES),
+            finalization_max_request_bytes=_integer_environment("MARKET_PHYSICS_FINALIZATION_MAX_REQUEST_BYTES", DEFAULT_MAX_REQUEST_BYTES),
             storage_timeout_seconds=_integer_environment("FORECAST_PUBLISHER_STORAGE_TIMEOUT_SECONDS", 30),
         )
 
@@ -65,6 +80,8 @@ class PublisherSettings:
             raise ValueError("Publisher configuration is incomplete.")
         if not 1024 <= self.max_request_bytes <= MAX_ALLOWED_REQUEST_BYTES:
             raise ValueError("Publisher request size configuration is outside safe bounds.")
+        if not 1024 <= self.finalization_max_request_bytes <= MAX_ALLOWED_REQUEST_BYTES:
+            raise ValueError("Finalization request size configuration is outside safe bounds.")
         if not 1 <= self.storage_timeout_seconds <= 120:
             raise ValueError("Publisher storage timeout configuration is outside safe bounds.")
 
@@ -81,6 +98,29 @@ def _integer_environment(name: str, default: int) -> int:
 
 def _reject_non_finite(value: str) -> None:
     raise ServiceValidationError("JSON numbers must be finite.")
+
+
+async def _bounded_json_body(request: Request, limit: int) -> Any:
+    """Read untrusted request streams with a strict decoded-byte ceiling."""
+    encoding = request.headers.get("content-encoding", "identity").strip().lower()
+    if encoding not in {"", "identity"}:
+        raise RequestBodyError(415, "unsupported_content_encoding", "Content-Encoding is unsupported.")
+    try:
+        content_length = request.headers.get("content-length")
+        declared_length = int(content_length) if content_length is not None else None
+    except ValueError as exc:
+        raise RequestBodyError(400, "invalid_request", "Invalid request length.") from exc
+    if declared_length is not None and declared_length > limit:
+        raise RequestBodyError(413, "request_too_large", "Request exceeds the maximum size.")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise RequestBodyError(413, "request_too_large", "Request exceeds the maximum size.")
+    try:
+        return json.loads(bytes(body), parse_constant=_reject_non_finite)
+    except (json.JSONDecodeError, UnicodeDecodeError, ServiceValidationError) as exc:
+        raise RequestBodyError(400, "invalid_request", "Request body must be valid JSON.") from exc
 
 
 def _utc_timestamp(value: Any, field: str) -> None:
@@ -124,6 +164,11 @@ def validate_envelope(payload: Any) -> tuple[dict[str, Any], str]:
     _utc_timestamp(artifact["generated_at"], "generated_at")
     _utc_timestamp(artifact["market_data_as_of"], "market_data_as_of")
     _assert_finite(artifact)
+    try:
+        validate_mpf_canonical_semantics(artifact)
+        validate_mpf_envelope_integrity(payload)
+    except ValueError as exc:
+        raise ServiceValidationError(str(exc)) from exc
     return artifact, report_markdown
 
 
@@ -207,18 +252,9 @@ def create_app(
         if content_type != "application/json":
             return _error(415, "unsupported_media_type", "Content-Type must be application/json.", request_id)
         try:
-            content_length = int(request.headers.get("content-length", "0"))
-        except ValueError:
-            return _error(400, "invalid_request", "Invalid request length.", request_id)
-        if content_length > app.state.settings.max_request_bytes:
-            return _error(413, "request_too_large", "Request exceeds the maximum size.", request_id)
-        body = await request.body()
-        if len(body) > app.state.settings.max_request_bytes:
-            return _error(413, "request_too_large", "Request exceeds the maximum size.", request_id)
-        try:
-            payload = json.loads(body, parse_constant=_reject_non_finite)
-        except (json.JSONDecodeError, UnicodeDecodeError, ServiceValidationError):
-            return _error(400, "invalid_request", "Request body must be valid JSON.", request_id)
+            payload = await _bounded_json_body(request, app.state.settings.max_request_bytes)
+        except RequestBodyError as exc:
+            return _error(exc.status_code, exc.code, str(exc), request_id)
         try:
             artifact, report_markdown = validate_envelope(payload)
         except ServiceValidationError as exc:
@@ -234,5 +270,36 @@ def create_app(
         except Exception:
             logger.error("forecast_publisher_failure request_id=%s forecast_id=%s category=unexpected", request_id, artifact["forecast_id"])
             return _error(500, "internal_error", "Forecast publication failed unexpectedly.", request_id)
+
+    @app.post("/v1/mpf-finalizations:prepare")
+    async def prepare_mpf_finalization(request: Request):
+        """Canonicalize MPF input only; this endpoint never constructs storage."""
+        request_id = request.state.request_id
+        if app.state.settings_error:
+            return _error(503, "not_ready", "Publisher configuration is invalid.", request_id)
+        if request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+            return _error(415, "unsupported_media_type", "Content-Type must be application/json.", request_id)
+        try:
+            payload = await _bounded_json_body(request, app.state.settings.finalization_max_request_bytes)
+        except RequestBodyError as exc:
+            return _error(exc.status_code, exc.code, str(exc), request_id)
+        if not isinstance(payload, dict):
+            return _error(422, "mpf_finalization_validation_failed", "MPF finalization input must be an object.", request_id)
+        try:
+            prepared = finalize_mpf_publication_envelope(
+                native_forecast=payload.get("native_forecast"),
+                report_markdown=payload.get("report_markdown"),
+                observation=payload.get("observation"),
+                scientific_model=payload.get("scientific_model"),
+                run_context=payload.get("run_context"),
+                alert_record=payload.get("alert_record"),
+                critic_review=payload.get("critic_review"),
+                agent_metadata=payload.get("agent_metadata"),
+                scientific_semantics=payload.get("scientific_semantics"),
+                now=app.state.clock,
+            )
+        except MPFCanonicalizationError as exc:
+            return JSONResponse(status_code=422, content={"error": {"code": "mpf_finalization_validation_failed", "message": "MPF finalization preflight failed.", "request_id": request_id, "failures": list(exc.failures)}})
+        return {"envelope": prepared.envelope, "finalization_sha256": prepared.finalization_sha256}
 
     return app
