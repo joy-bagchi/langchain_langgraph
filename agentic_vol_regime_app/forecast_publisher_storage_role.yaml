@@ -1,7 +1,0 @@
-title: Market Physics Forecast Publisher Objects
-description: Read, create, and update forecast objects only when bound with the forecast-prefix condition.
-stage: GA
-includedPermissions:
-  - storage.objects.create
-  - storage.objects.get
-  - storage.objects.update

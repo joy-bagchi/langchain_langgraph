@@ -1,5 +1,0 @@
-title: Market Physics Forecast Publisher Bucket Metadata
-description: Read bucket metadata needed by ForecastGCSPublisher bucket-existence verification.
-stage: GA
-includedPermissions:
-  - storage.buckets.get
