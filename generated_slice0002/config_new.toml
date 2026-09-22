@@ -1,0 +1,33 @@
+instrument = "SPY"
+metric_id = "spy_iv_skew_vix_scaled"
+methodology_version = "v2"
+market_timezone = "America/New_York"
+exchange_calendar = "XNYS"
+trading_session_dte = [1, 2]
+sigma_multiplier = 0.5
+annualization_trading_sessions = 252
+strike_distance_policy = "vix_horizon_scaled_half_volatility"
+iv_output_units = "percentage_points"
+rolling_window_sessions = 26
+snapshot_selection_policy = "one_consistent_daily_snapshot"
+allow_strike_interpolation = true
+allow_strike_extrapolation = false
+
+[inputs]
+gcp_project = "marketphysics"
+gcs_bucket = "marketphysics-market-manifold-data"
+option_catalog_object = "market-manifold/option-chain-iv/manifests/catalog.json"
+volatility_history_manifest_object = "market-manifold/vol-regime-history/manifests/latest.json"
+
+[outputs]
+local_history_path = "./outputs/baseline-history"
+gcs_results_bucket = "marketphysics-market-manifold-data"
+gcs_results_prefix = "market-physics-results/skew-baseline-history"
+
+[operations]
+minimum_usable_count = 18
+schedule_timezone = "America/New_York"
+schedule = "30 22 * * FRI"
+readiness_deadline_hours = 36
+max_attempts = 3
+retry_backoff_seconds = 1800

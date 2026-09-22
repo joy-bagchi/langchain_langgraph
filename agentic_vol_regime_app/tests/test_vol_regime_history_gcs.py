@@ -144,3 +144,54 @@ def test_daily_index_history_uses_index_contract(monkeypatch) -> None:
 
     assert calls == [("VIX", "CBOE")]
     assert result.bars[0].close == 18.0
+
+
+def test_svrpo_daily_history_uses_index_contract_while_spy_remains_stock(monkeypatch) -> None:
+    client = IBKRLiveClient(IBKRConnectionConfig())
+    index_calls: list[tuple[str, str]] = []
+    stock_calls: list[tuple[str, str]] = []
+
+    class FakeIB:
+        def disconnect(self) -> None:
+            pass
+
+    monkeypatch.setattr(client, "_connect", lambda: FakeIB())
+    monkeypatch.setattr(
+        IBKRLiveClient,
+        "_qualify_index_contract",
+        staticmethod(
+            lambda _ib, *, symbol, exchange, currency: index_calls.append(
+                (symbol, exchange)
+            )
+            or type("Contract", (), {"secType": "IND"})()
+        ),
+    )
+    monkeypatch.setattr(
+        IBKRLiveClient,
+        "_qualify_stock_contract",
+        staticmethod(
+            lambda _ib, *, symbol, exchange, currency: stock_calls.append(
+                (symbol, exchange)
+            )
+            or type("Contract", (), {"secType": "STK"})()
+        ),
+    )
+    monkeypatch.setattr(
+        client,
+        "_request_daily_history_bars",
+        lambda *_args, **kwargs: (
+            [
+                IBKRDailyBar(
+                    kwargs["symbol"], date(2026, 9, 14), 100.0, "TRADES"
+                )
+            ],
+            "TRADES",
+            [],
+        ),
+    )
+
+    client.request_daily_bars(IBKRDailyHistoryRequest(symbol="SVRPO"))
+    client.request_daily_bars(IBKRDailyHistoryRequest(symbol="SPY"))
+
+    assert index_calls == [("SVRPO", "CBOE")]
+    assert stock_calls == [("SPY", "SMART")]

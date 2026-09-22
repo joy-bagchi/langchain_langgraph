@@ -10,6 +10,7 @@ set "DEFAULT_BUCKET_NAME=marketphysics-market-manifold-data"
 set "DEFAULT_MARKET_PRICE_PREFIX=market-manifold/sector-prices"
 set "DEFAULT_VOL_REGIME_PREFIX=market-manifold/vol-regime-history"
 set "DEFAULT_VOL_SURFACE_PREFIX=market-manifold/option-chain-iv"
+set "DEFAULT_SVRPO_PREFIX=market-manifold/svrpo-history"
 
 set "RESOLVED_PROJECT_ID=%~1"
 if not defined RESOLVED_PROJECT_ID if defined PROJECT_ID set "RESOLVED_PROJECT_ID=%PROJECT_ID%"
@@ -34,16 +35,23 @@ set "RESOLVED_VOL_SURFACE_PREFIX=%~5"
 if not defined RESOLVED_VOL_SURFACE_PREFIX if defined MARKET_MANIFOLD_VOL_SURFACE_GCS_PREFIX set "RESOLVED_VOL_SURFACE_PREFIX=%MARKET_MANIFOLD_VOL_SURFACE_GCS_PREFIX%"
 if not defined RESOLVED_VOL_SURFACE_PREFIX set "RESOLVED_VOL_SURFACE_PREFIX=%DEFAULT_VOL_SURFACE_PREFIX%"
 
+set "RESOLVED_SVRPO_PREFIX=%MARKET_MANIFOLD_SVRPO_GCS_PREFIX%"
+if not defined RESOLVED_SVRPO_PREFIX set "RESOLVED_SVRPO_PREFIX=%DEFAULT_SVRPO_PREFIX%"
+
 set "DRY_RUN=%~6"
 set "PRICE_DRY_RUN_FLAG="
 set "REGIME_DRY_RUN_FLAG="
 set "SURFACE_DRY_RUN_FLAG="
+set "SVRPO_DRY_RUN_FLAG="
 if "%DRY_RUN%"=="1" set "PRICE_DRY_RUN_FLAG=--dry-run-publish"
 if "%DRY_RUN%"=="1" set "REGIME_DRY_RUN_FLAG=--dry-run"
 if "%DRY_RUN%"=="1" set "SURFACE_DRY_RUN_FLAG=--dry-run"
+if "%DRY_RUN%"=="1" set "SVRPO_DRY_RUN_FLAG=--dry-run"
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "REPO_ROOT=%%~fI"
 cd /d "%REPO_ROOT%" || ( echo Failed to switch to repo root & exit /b 1 )
+set "SVRPO_PARQUET=%REPO_ROOT%\agentic_vol_regime_app\data\market_history\svrpo_history_daily.parquet"
+set "SVRPO_METADATA=%REPO_ROOT%\agentic_vol_regime_app\data\market_history\svrpo_history_daily.metadata.json"
 
 echo === Market-price delta publisher (existing sector store, including SPY) ===
 python -m agentic_vol_regime_app.data.sector_history_cli update-and-publish-gcs --project "%RESOLVED_PROJECT_ID%" --bucket "%RESOLVED_BUCKET_NAME%" --prefix "%RESOLVED_MARKET_PRICE_PREFIX%" --host "127.0.0.1" --port 4001 --client-id 73 %PRICE_DRY_RUN_FLAG%
@@ -55,4 +63,8 @@ if errorlevel 1 exit /b %errorlevel%
 
 echo === Option IV-surface publisher (SPY) ===
 python -m vol_surface_publisher.cli --project "%RESOLVED_PROJECT_ID%" --bucket "%RESOLVED_BUCKET_NAME%" --prefix "%RESOLVED_VOL_SURFACE_PREFIX%" --host "127.0.0.1" --port 4001 --client-id 74 --symbol SPY %SURFACE_DRY_RUN_FLAG%
+if errorlevel 1 exit /b %errorlevel%
+
+echo === SVRPO daily index-history publisher ===
+python -m agentic_vol_regime_app.data.cboe_svrpo_history --output "%SVRPO_PARQUET%" --metadata-output "%SVRPO_METADATA%" --project "%RESOLVED_PROJECT_ID%" --bucket "%RESOLVED_BUCKET_NAME%" --prefix "%RESOLVED_SVRPO_PREFIX%" %SVRPO_DRY_RUN_FLAG%
 if errorlevel 1 exit /b %errorlevel%

@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY configs ./configs
+COPY container/git /usr/local/bin/git
+RUN chmod 0555 /usr/local/bin/git && pip install --no-cache-dir .
+ENTRYPOINT ["market-physics-core"]
+CMD ["skew-baseline", "publish", "--config", "configs/skew_baseline.example.toml"]

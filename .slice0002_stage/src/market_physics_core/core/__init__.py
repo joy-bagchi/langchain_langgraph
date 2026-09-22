@@ -1,0 +1,1 @@
+"""Pure, reusable calculation capabilities."""

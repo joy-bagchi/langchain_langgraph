@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "market-physics-core"
+version = "0.1.0"
+description = "Deterministic analytics, forecast evaluation, and Bayesian updating for Market Physics."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "exchange-calendars>=4.5",
+  "google-cloud-storage>=2.18",
+  "pandas>=2.2",
+  "pyarrow>=17",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+market-physics-core = "market_physics_core.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
