@@ -254,7 +254,7 @@ def _default_executors(services: PlatformServiceBundle) -> dict[str, Executor]:
             metadata=_trace_state_metadata(state),
         ) as prompt_span:
             response = services.cognitive.execute_prompt(
-                PromptExecutionRequest(prompt=prompt_text, step=step, state=state)
+                PromptExecutionRequest(prompt=prompt_text, step=step, state=state, tool_service=services.tools)
             )
             if hasattr(prompt_span, "end"):
                 prompt_span.end(
@@ -520,7 +520,7 @@ def compile_workflow(
                     output=None,
                     next_step=step_id if should_retry else None,
                     attempt=attempt,
-                    metadata={"error": str(exc)},
+                    metadata={"error": str(exc), **getattr(exc, "metadata", {})},
                 ).to_dict()
             )
             events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
@@ -1420,6 +1420,12 @@ def run_agent_workflow(
             provider=agent_definition.llm_provider,
             model=agent_definition.model,
             temperature=agent_definition.temperature,
+            api=agent_definition.openai_api,
+            reasoning_effort=agent_definition.reasoning_effort,
+            max_tool_rounds=agent_definition.max_tool_rounds,
+            max_tool_calls=agent_definition.max_tool_calls,
+            request_timeout_seconds=agent_definition.request_timeout_seconds,
+            max_request_retries=agent_definition.max_request_retries,
         )
         bound_services = build_platform_services(
             storage_root=storage_root,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from agentic_harness.shared.services import ServiceDescriptor
@@ -211,11 +212,13 @@ class RegisteredToolService:
         ]
 
         def web_search_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:
+            retrieved_at = datetime.now(timezone.utc).isoformat()
             query = str(request.arguments.get("query", "")).strip()
             if not query:
                 return ToolExecutionResponse(
                     status="error",
-                    metadata={"reason": "query is required"},
+                    metadata={"reason": "query is required", "query": query,
+                              "retrieved_at": retrieved_at},
                 )
 
             client = web_search_client
@@ -225,7 +228,8 @@ class RegisteredToolService:
                 except (ImportError, ValueError) as exc:
                     return ToolExecutionResponse(
                         status="unavailable",
-                        metadata={"reason": str(exc)},
+                        metadata={"reason": str(exc), "query": query,
+                                  "retrieved_at": retrieved_at},
                     )
 
             try:
@@ -238,12 +242,21 @@ class RegisteredToolService:
             except Exception as exc:
                 return ToolExecutionResponse(
                     status="error",
-                    metadata={"reason": str(exc), "tool_id": "web_search"},
+                    metadata={"reason": str(exc), "tool_id": "web_search",
+                              "query": query, "retrieved_at": retrieved_at},
                 )
+            sources = []
+            if isinstance(result, dict):
+                for item in result.get("results", []):
+                    if isinstance(item, dict):
+                        sources.append({key: item[key] for key in
+                                        ("url", "title", "published_date", "source_timestamp", "quote_timestamp")
+                                        if item.get(key) is not None})
             return ToolExecutionResponse(
                 status="succeeded",
                 output=result,
-                metadata={"tool_id": "web_search"},
+                metadata={"tool_id": "web_search", "query": query,
+                          "retrieved_at": retrieved_at, "sources": sources},
             )
 
         def ibkr_data_pipeline_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:

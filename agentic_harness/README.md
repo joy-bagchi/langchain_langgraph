@@ -35,10 +35,32 @@ Set your provider credentials first, for example `OPENAI_API_KEY` for OpenAI, th
 python -m agentic_harness run --workflow examples/workflows/research_brief.md --input examples/workflows/research_brief_input.json --llm-provider openai --model gpt-4o-mini
 ```
 
+The existing `openai` setting continues to use ChatOpenAI. Opt into the Responses API for reasoning models:
+
+```bash
+python -m agentic_harness run --workflow examples/workflows/research_brief.md --input examples/workflows/research_brief_input.json --llm-provider openai --openai-api responses --model gpt-6-astra --reasoning-effort low
+```
+
+`gpt-6-astra` supports `low` reasoning effort. Responses mode omits `temperature` for reasoning models. Function tools are advertised only when their IDs are both registered in the Harness tool service and present in the agent's `allowed_tools`; `run` has no agent allowlist, so it cannot call tools. An agent YAML can opt in with:
+
+```yaml
+llm_provider: openai
+openai_api: responses
+model: gpt-6-astra
+reasoning_effort: low
+max_tool_rounds: 4
+allowed_tools: [web_search]
+```
+
+The tool service remains responsible for execution. A model-requested function outside the allowlist, an unavailable tool, malformed JSON arguments, a failed tool result, or too many rounds fails the prompt step. The configured maximum counts function-call response rounds; its default is four.
+Responses mode also defaults to twelve total tool calls, a 30-second SDK request timeout, and one SDK request retry. Agent YAML may override `max_tool_calls`, `request_timeout_seconds`, and `max_request_retries`. The SDK owns request retry timing; Harness never repeats a completed tool call inside a turn.
+
+See the official OpenAI [Responses function-calling guide](https://developers.openai.com/api/docs/guides/function-calling) and [conversation-state guide](https://developers.openai.com/api/docs/guides/conversation-state) for the typed items and replay pattern used here.
+
 Configuration sources, in priority order:
 
-- CLI flags: `--llm-provider`, `--model`, `--temperature`
-- environment variables: `AGENTIC_HARNESS_LLM_PROVIDER`, `AGENTIC_HARNESS_MODEL`, `AGENTIC_HARNESS_TEMPERATURE`
+- CLI flags: `--llm-provider`, `--model`, `--temperature`, `--openai-api`, `--reasoning-effort`, `--max-tool-rounds` (the last three on `run` and `resume`)
+- environment variables: `AGENTIC_HARNESS_LLM_PROVIDER`, `AGENTIC_HARNESS_MODEL`, `AGENTIC_HARNESS_TEMPERATURE`, `AGENTIC_HARNESS_OPENAI_API`, `AGENTIC_HARNESS_REASONING_EFFORT`, `AGENTIC_HARNESS_MAX_TOOL_ROUNDS`
 - workflow frontmatter: `default_model`
 
 If no provider is enabled, the runtime stays in no-LLM mode.
@@ -52,6 +74,10 @@ The harness now persists runtime state to a database ledger by default.
 - optional CLI override: pass `--db-url`
 
 The JSON files under `.workflow_memory/` are still written as compatibility/debug mirrors, but the database ledger is the authoritative runtime store.
+
+Responses mode uses stateless requests (`store=False`) and manually replays a conversation from the latest prompt step's `step_history[*].metadata.responses.transcript` in that ledger. The transcript contains the user request, every typed output item (including encrypted reasoning when returned, message phase, and function calls), and each `function_call_output` with its matching `call_id`. The step also records model, reasoning effort, tool schemas and limits, response IDs, request and response timestamps, status, usage, tool-round and call counts, and final text. `web_search` tool metadata records query, retrieved-at time, and source URLs, titles, and timestamps when supplied by Tavily. The next prompt step appends its user message to this transcript. Failed steps retain their partial transcript and turn metadata for diagnosis. Credential-shaped object fields are redacted before persistence and replay; keep secrets out of free-text prompts and tool output strings. Ledger access controls should protect the stored prompts and tool data. A resumed run needs the same Responses configuration because the existing run manifest does not configure a model automatically.
+
+`inspect_run(run_id)` is the record-only replay surface for completed runs: it reads ledger events, tool results, and outputs without invoking a model or external tool. `resume_workflow` continues an unfinished or review-paused workflow and may execute its next step; it is not a side-effect-free re-execution of completed turns. Existing `0.1.0` ledger records remain readable because this slice adds metadata without changing the stored state schema. Version `0.2.0` adds the Responses adapter; existing consumers remain on the ChatOpenAI default until they select `openai_api: responses` or `--openai-api responses`. To roll back, restore the previous package revision and consumer pin together, then use the prior model configuration.
 
 One-shot local Postgres smoke test:
 

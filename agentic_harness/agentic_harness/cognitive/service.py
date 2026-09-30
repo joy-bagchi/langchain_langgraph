@@ -17,6 +17,7 @@ class PromptExecutionRequest:
     step: WorkflowStep
     state: WorkflowGraphState
     metadata: dict[str, Any] = field(default_factory=dict)
+    tool_service: Any = None
 
 
 @dataclass(slots=True)
@@ -53,6 +54,14 @@ class DefaultCognitiveService:
             return PromptExecutionResponse(
                 output=request.prompt,
                 metadata={"mode": "deterministic"},
+            )
+        if hasattr(self.model_callable, "execute_prompt"):
+            result = self.model_callable.execute_prompt(
+                request.prompt, request.step, request.state, request.tool_service
+            )
+            return PromptExecutionResponse(
+                output=result.output,
+                metadata={"mode": "llm", **result.metadata},
             )
         output = self.model_callable(request.prompt, request.step, request.state)
         return PromptExecutionResponse(

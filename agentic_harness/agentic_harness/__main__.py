@@ -98,6 +98,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--llm-provider", choices=["none", "openai"], help="Prompt-step LLM provider.")
     run_parser.add_argument("--model", help="Model name for prompt-step execution.")
     run_parser.add_argument("--temperature", type=float, help="Sampling temperature for prompt-step execution.")
+    run_parser.add_argument("--openai-api", choices=["chat", "responses"], help="OpenAI execution API.")
+    run_parser.add_argument("--reasoning-effort", help="Responses reasoning.effort.")
+    run_parser.add_argument("--max-tool-rounds", type=int, help="Maximum Responses function-call rounds.")
 
     agent_parser = subparsers.add_parser("run-agent", help="Start a new agent-bound workflow run.")
     _add_output_arguments(agent_parser)
@@ -154,6 +157,9 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("--llm-provider", choices=["none", "openai"], help="Prompt-step LLM provider.")
     resume_parser.add_argument("--model", help="Model name for prompt-step execution.")
     resume_parser.add_argument("--temperature", type=float, help="Sampling temperature for prompt-step execution.")
+    resume_parser.add_argument("--openai-api", choices=["chat", "responses"], help="OpenAI execution API.")
+    resume_parser.add_argument("--reasoning-effort", help="Responses reasoning.effort.")
+    resume_parser.add_argument("--max-tool-rounds", type=int, help="Maximum Responses function-call rounds.")
 
     inspect_parser = subparsers.add_parser("inspect", help="Inspect a saved workflow run.")
     _add_output_arguments(inspect_parser)
@@ -174,6 +180,9 @@ def main() -> None:
             provider=args.llm_provider,
             model=args.model,
             temperature=args.temperature,
+            api=args.openai_api,
+            reasoning_effort=args.reasoning_effort,
+            max_tool_rounds=args.max_tool_rounds,
         )
         _amp.track("Workflow Run Started", {
             "workflow_id": definition.workflow_id,
@@ -277,6 +286,9 @@ def main() -> None:
             provider=args.llm_provider,
             model=args.model,
             temperature=args.temperature,
+            api=args.openai_api,
+            reasoning_effort=args.reasoning_effort,
+            max_tool_rounds=args.max_tool_rounds,
         )
         result = resume_workflow(
             args.run_id,

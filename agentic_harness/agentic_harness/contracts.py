@@ -256,6 +256,12 @@ class AgentDefinition:
     allowed_tools: list[str] = field(default_factory=list)
     memory_namespace: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    openai_api: str = "chat"
+    reasoning_effort: str | None = None
+    max_tool_rounds: int = 4
+    max_tool_calls: int = 12
+    request_timeout_seconds: float = 30.0
+    max_request_retries: int = 1
 
 
 @dataclass(slots=True)
