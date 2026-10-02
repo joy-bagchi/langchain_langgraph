@@ -611,11 +611,14 @@ def build_executor_registry(*, app_paths: AppPaths, services) -> dict[str, Any]:
         input_payload = dict(state.get("input_payload", {}))
         provider = str(input_payload.get("data_provider", "")).strip().lower()
         if provider == "ibkr":
+            raise RuntimeError(
+                "IBKR full-regime ingestion is disabled: the Harness ibkr_data_reader "
+                "contract provides single-date daily data and exact option contracts, "
+                "not the multi-symbol historical snapshot required by this workflow."
+            )
+            # Retained below for historical reference until this workflow has a
+            # provider contract that supplies its multi-symbol history window.
             tool_id = "ibkr_data_pipeline"
-            if not _is_tool_allowed(state, tool_id):
-                raise RuntimeError(
-                    "Daily regime orchestrator is not allowed to use the 'ibkr_data_pipeline' tool."
-                )
             ibkr_payload = dict(input_payload.get("ibkr", {}))
             requested_as_of_date = str(input_payload.get("as_of_date", "")).strip() or None
             requested_history_days = max(int(ibkr_payload.get("history_days", 252)), 0)

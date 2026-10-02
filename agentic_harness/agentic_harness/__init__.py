@@ -29,6 +29,15 @@ from agentic_harness.agentic_os.tool_service import (
     ToolExecutionResponse,
 )
 from agentic_harness.cognitive.service import DefaultCognitiveService
+from agentic_harness.ibkr_data_reader import (
+    IBKR_ACTIONS,
+    IBKRAuthorizationRequired,
+    IBKRCredentials,
+    IBKRDataProvider,
+    ProviderResult,
+    SecretManagerIBKRCredentialStore,
+)
+from agentic_harness.notifications import HarnessNotificationService, WorkflowNotification
 from agentic_harness.contracts import (
     AgentDefinition,
     AgentInvocation,
@@ -88,6 +97,14 @@ from agentic_harness.runtime import (
 from agentic_harness.stores import FilesystemMemoryStore, RuntimeLedger, WorkflowRunStore
 
 __all__ = [
+    "IBKR_ACTIONS",
+    "IBKRAuthorizationRequired",
+    "IBKRCredentials",
+    "IBKRDataProvider",
+    "ProviderResult",
+    "SecretManagerIBKRCredentialStore",
+    "HarnessNotificationService",
+    "WorkflowNotification",
     "AgentDefinition",
     "AgentInvocation",
     "AgentRuntimeProfile",

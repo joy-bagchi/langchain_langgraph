@@ -3,101 +3,84 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentic_harness.agentic_os.platform import build_platform_services
+from agentic_harness.ibkr_data_reader import IBKRCredentials, ProviderResult, READ_ONLY_SCOPE
 from agentic_harness.runtime import run_agent_workflow
 
 
-class FakeIBKRPipe:
-    def fetch_market_snapshot(self, request) -> object:
-        class Snapshot:
-            def to_dict(self_inner) -> dict:
-                return {
-                    "schema_version": "observation.v1",
-                    "as_of": "2026-06-03T20:00:00Z",
-                    "source": "IBKR",
-                    "symbols": {
-                        request.symbol: {
-                            "last": 603.12,
-                            "close": 602.44,
-                            "bid": 603.1,
-                            "ask": 603.2,
-                            "volume": 71234000,
-                        }
-                    },
-                    "history": {},
-                    "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
-                    "option_chain": {
-                        "underlying_symbol": request.symbol,
-                        "underlying_price": 603.12,
-                        "fetched_at": "2026-06-03T20:00:00Z",
-                        "exchange": "SMART",
-                        "currency": "USD",
-                        "expirations": ["20260620"],
-                        "strikes": [600.0],
-                        "rights": ["C", "P"],
-                        "option_quotes": [
-                            {
-                                "symbol": "SPY   260620C00600000",
-                                "expiry": "20260620",
-                                "strike": 600.0,
-                                "right": "C",
-                                "exchange": "SMART",
-                                "currency": "USD",
-                                "bid": 11.1,
-                                "ask": 11.4,
-                                "last": 11.25,
-                                "close": 10.9,
-                                "mark": 11.25,
-                                "volume": 1620,
-                                "open_interest": 13234,
-                                "bid_size": 12,
-                                "ask_size": 15,
-                                "last_size": 4,
-                                "multiplier": "100",
-                                "greeks": {
-                                    "delta": 0.51,
-                                    "gamma": 0.03,
-                                    "theta": -0.16,
-                                    "vega": 0.12,
-                                    "implied_vol": 0.171,
-                                },
-                            }
-                        ],
-                    },
-                    "provider_metadata": {"port": 4001},
-                }
+class FakeCredentialStore:
+    def __init__(self) -> None:
+        self.credentials = IBKRCredentials(
+            client_info={"client_id": "fake"},
+            tokens={"scope": READ_ONLY_SCOPE, "access_token": "fake-token"},
+        )
 
-        return Snapshot()
+    def load(self):
+        return self.credentials
+
+    def persist(self, credentials):
+        self.credentials = credentials
 
 
-def test_ibkr_market_data_agent_uses_ibkr_tool(tmp_path: Path) -> None:
+class FakeIBKRProvider:
+    def __init__(self) -> None:
+        self.actions: list[str] = []
+
+    def refresh_credentials(self, credentials):
+        return credentials
+
+    def invoke(self, action, arguments, credentials):
+        self.actions.append(action)
+        if action == "get_symbol_daily_data":
+            return ProviderResult({
+                "symbol": arguments["symbol"], "trading_date": arguments["trading_date"],
+                "fields": {"open": 602.1, "high": 604.0, "low": 601.4, "close": 603.12, "volume": 71234000},
+                "units": {"open": "USD/share", "volume": "shares"},
+                "observation_time": "2026-06-03T20:00:00Z",
+                "quality": "live",
+            })
+        if action == "list_option_contracts":
+            return ProviderResult({
+                "contracts": [{"exact_contract_id": "conid-600c", "right": "C", "strike": 600,
+                               "expiry": "20260620"}],
+                "pagination": {"has_more": False},
+                "observation_time": "2026-06-03T20:00:00Z",
+                "quality": "delayed",
+            })
+        return ProviderResult({
+            "exact_contract_id": arguments["exact_contract_id"],
+            "fields": {"price": 11.25, "bid": 11.1, "ask": 11.4, "iv": 0.171, "volume": 1620},
+            "units": {"price": "USD/contract", "iv": "fraction", "volume": "contracts"},
+            "observation_time": "2026-06-03T20:00:00Z",
+            "quality": "delayed",
+        })
+
+
+def test_ibkr_market_data_agent_uses_only_the_bounded_harness_actions(tmp_path: Path) -> None:
+    provider = FakeIBKRProvider()
     services = build_platform_services(
         storage_root=tmp_path / "runtime_store",
         memory_service_type="ephemeral",
-        ibkr_data_pipe=FakeIBKRPipe(),
+        langsmith_tracing=False,
+        ibkr_data_reader_provider=provider,
+        ibkr_credential_store=FakeCredentialStore(),
     )
 
     result = run_agent_workflow(
         Path("agentic_vol_regime_app/configs/agents/ibkr_market_data_agent.yaml"),
         {
             "symbol": "SPY",
-            "host": "127.0.0.1",
-            "port": 4001,
-            "client_id": 73,
-            "market_data_type": 1,
-            "exchange": "SMART",
-            "option_exchange": "SMART",
-            "currency": "USD",
-            "expiry_count": 2,
-            "strike_count": 8,
-            "min_days_to_expiry": 0,
+            "trading_date": "2026-06-03",
+            "exact_contract_id": "conid-600c",
         },
         storage_root=tmp_path / ".workflow_memory",
         services=services,
     )
 
     assert result["status"] == "completed"
-    assert result["named_outputs"]["requested_symbol"] == "SPY"
-    assert result["named_outputs"]["ibkr_snapshot"]["source"] == "IBKR"
-    assert result["named_outputs"]["ibkr_snapshot"]["provider_metadata"]["port"] == 4001
-    assert result["named_outputs"]["ibkr_snapshot"]["option_chain"]["option_quotes"][0]["greeks"]["delta"] == 0.51
-    assert result["agent"]["allowed_tools"] == ["ibkr_data_pipeline"]
+    assert result["named_outputs"]["daily_data"]["fields"]["close"] == 603.12
+    assert result["named_outputs"]["option_contracts"]["contracts"][0]["exact_contract_id"] == "conid-600c"
+    assert result["named_outputs"]["option_data"]["fields"]["iv"] == 0.171
+    assert result["agent"]["allowed_tools"] == [
+        "get_symbol_daily_data", "list_option_contracts", "get_option_data"
+    ]
+    assert provider.actions == ["get_symbol_daily_data", "list_option_contracts", "get_option_data"]

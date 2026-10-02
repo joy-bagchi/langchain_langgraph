@@ -17,6 +17,7 @@ from agentic_harness.agentic_os.observability_service import ObservabilityReques
 from agentic_harness.agentic_os.platform import PlatformServiceBundle, build_platform_services
 from agentic_harness.agentic_os.security_service import AuthorizationRequest
 from agentic_harness.agentic_os.tool_service import ToolExecutionRequest
+from agentic_harness.ibkr_data_reader import IBKRAuthorizationRequired, IBKR_ACTIONS
 from agentic_harness.cognitive.service import PromptExecutionRequest
 from agentic_harness.context import render_template, to_namespace
 from agentic_harness.contracts import (
@@ -320,6 +321,8 @@ def _default_executors(services: PlatformServiceBundle) -> dict[str, Executor]:
                     }
                 )
         if response.status != "succeeded":
+            if response.status == "authorization_required":
+                raise IBKRAuthorizationRequired("read_only_consent_required")
             reason = response.metadata.get("reason", f"tool '{tool_id}' returned {response.status}")
             raise RuntimeError(str(reason))
         return StepExecutionResult(
@@ -419,9 +422,12 @@ def compile_workflow(
             tags=["agentic_harness", "memory", "retrieve", step.step_id],
             metadata=_trace_state_metadata(state),
         ) as memory_span:
-            results = services.memory.recall(
-                MemoryQuery(namespace=namespace, text=query_text, max_results=5)
-            )
+            if state.get("authorization_resume_fresh"):
+                results = []
+            else:
+                results = services.memory.recall(
+                    MemoryQuery(namespace=namespace, text=query_text, max_results=5)
+                )
             if hasattr(memory_span, "end"):
                 memory_span.end(
                     outputs={
@@ -510,6 +516,46 @@ def compile_workflow(
         attempt = retry_counts.get(step_id, 0) + 1
 
         def _failure_state(exc: Exception, *, retryable: bool) -> WorkflowGraphState:
+            if isinstance(exc, IBKRAuthorizationRequired):
+                retry_counts[step_id] = attempt
+                history = list(state.get("step_history", []))
+                history.append(
+                    StepHistoryEntry(
+                        step_id=step_id,
+                        status="authorization_required",
+                        output=None,
+                        next_step=step_id,
+                        attempt=attempt,
+                        metadata={"tool_type": "ibkr_data_reader", "fresh_market_data_required": True},
+                    ).to_dict()
+                )
+                events.append(services.observability.record(ObservabilityRequest(event=ServiceEvent(
+                    event_type="authorization_required",
+                    payload={
+                        "timestamp": utc_now(),
+                        "step_id": step_id,
+                        "tool_type": "ibkr_data_reader",
+                        "actions": list(IBKR_ACTIONS),
+                        "notification_type": "ibkr_authorization_required",
+                    },
+                ))))
+                return {
+                    "retry_counts": retry_counts,
+                    "step_history": history,
+                    "events": events,
+                    "execution_outcome": {"route": "checkpoint", "completed_step_id": step_id},
+                    "status": "authorization_required",
+                    "current_step": step_id,
+                    "pending_authorization": {
+                        "status": "authorization_required",
+                        "step_id": step_id,
+                        "tool_type": "ibkr_data_reader",
+                        "fresh_market_data_required": True,
+                        "instructions": "Complete the Harness IBKR read-only authorization, then resume this run.",
+                    },
+                    "last_error": "IBKR read-only authorization is required.",
+                    "review_responses": review_responses,
+                }
             should_retry = retryable and attempt <= step.max_retries
             retry_counts[step_id] = attempt
             history = list(state.get("step_history", []))
@@ -1015,7 +1061,10 @@ def compile_workflow(
                 "current_step": state.get("current_step"),
             },
         ))))
-        return {"checkpoint_index": next_index, "events": events}
+        updates = {"checkpoint_index": next_index, "events": events}
+        if state.get("status") != "running":
+            updates["authorization_resume_fresh"] = False
+        return updates
 
     def route_after_execute(state: WorkflowGraphState) -> str:
         if state.get("execution_outcome", {}).get("route") == "write_memory":
@@ -1144,6 +1193,7 @@ class WorkflowRunner:
             memory_hits=[],
             step_history=[],
             pending_review=None,
+            pending_authorization=None,
             review_responses=_deepcopy_dict(review_responses),
             retry_counts={},
             events=[],
@@ -1228,6 +1278,42 @@ class WorkflowRunner:
         notes: str | None = None,
     ) -> dict[str, Any]:
         state = self.run_store.load_state(run_id)
+        if state.get("status") == "authorization_required":
+            pending = dict(state.get("pending_authorization") or {})
+            blocked_step = str(pending.get("step_id") or state.get("current_step") or "")
+            ordered_steps = list(self.definition.steps.values())
+            positions = {step.step_id: index for index, step in enumerate(ordered_steps)}
+            blocked_index = positions.get(blocked_step, 0)
+            data_indices = [
+                index for index, step in enumerate(ordered_steps[: blocked_index + 1])
+                if step.step_type == "tool"
+                and str(step.metadata.get("tool_id", "")) in IBKR_ACTIONS
+            ]
+            restart_index = min(data_indices) if data_indices else blocked_index
+            restart_ids = {step.step_id for step in ordered_steps[restart_index:]}
+            step_outputs = dict(state.get("step_outputs", {}))
+            named_outputs = dict(state.get("named_outputs", {}))
+            for step in ordered_steps[restart_index:]:
+                step_outputs.pop(step.step_id, None)
+                if step.output_key:
+                    named_outputs.pop(step.output_key, None)
+            state["step_outputs"] = step_outputs
+            state["named_outputs"] = named_outputs
+            state["step_history"] = [
+                entry for entry in state.get("step_history", [])
+                if entry.get("step_id") not in restart_ids
+            ]
+            retry_counts = dict(state.get("retry_counts", {}))
+            for step_id in restart_ids:
+                retry_counts.pop(step_id, None)
+            state["retry_counts"] = retry_counts
+            state["status"] = "running"
+            state["current_step"] = ordered_steps[restart_index].step_id
+            state["pending_authorization"] = None
+            state["active_context"] = {}
+            state["memory_hits"] = []
+            state["working_notes"] = []
+            state["authorization_resume_fresh"] = True
         if decision:
             pending_review = state.get("pending_review") or {}
             step_id = pending_review.get("step_id") or state.get("current_step")

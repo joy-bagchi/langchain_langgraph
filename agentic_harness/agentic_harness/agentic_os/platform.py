@@ -23,6 +23,8 @@ from agentic_harness.agentic_os.observability_service import (
 )
 from agentic_harness.agentic_os.security_service import PermissiveSecurityService
 from agentic_harness.agentic_os.tool_service import RegisteredToolService
+from agentic_harness.ibkr_data_reader import IBKRCredentialStore, IBKRDataProvider
+from agentic_harness.notifications import HarnessNotificationService, NotificationService
 from agentic_harness.cognitive.service import DefaultCognitiveService
 from agentic_harness.definitions.agent_service import YamlAgentDefinitionService
 from agentic_harness.definitions.workflow_service import (
@@ -50,6 +52,7 @@ class PlatformServiceBundle:
     tools: RegisteredToolService
     evaluation: BasicEvaluationService
     security: PermissiveSecurityService
+    notifications: NotificationService
 
 
 def build_platform_services(
@@ -58,7 +61,9 @@ def build_platform_services(
     model_callable=None,
     memory_service_type: str = "filesystem",
     web_search_client=None,
-    ibkr_data_pipe=None,
+    ibkr_data_reader_provider: IBKRDataProvider | None = None,
+    ibkr_credential_store: IBKRCredentialStore | None = None,
+    notification_handler=None,
     database_url: str | None = None,
     langsmith_tracing: bool | None = None,
     langsmith_api_key: str | None = None,
@@ -95,6 +100,7 @@ def build_platform_services(
         project=langsmith_project,
         workspace_id=langsmith_workspace_id,
     )
+    notifications = HarnessNotificationService(notification_handler)
 
     return PlatformServiceBundle(
         agent_definitions=YamlAgentDefinitionService(),
@@ -111,9 +117,12 @@ def build_platform_services(
             langsmith_config=langsmith_config,
             langsmith_client=langsmith_client,
         ),
+        notifications=notifications,
         tools=RegisteredToolService.with_defaults(
             web_search_client=web_search_client,
-            ibkr_data_pipe=ibkr_data_pipe,
+            ibkr_data_reader_provider=ibkr_data_reader_provider,
+            ibkr_credential_store=ibkr_credential_store,
+            notification_service=notifications,
         ),
         evaluation=BasicEvaluationService(),
         security=PermissiveSecurityService(),

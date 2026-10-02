@@ -1177,7 +1177,8 @@ def test_default_toolbox_registers_web_search_tool() -> None:
     services = build_platform_services(memory_service_type="ephemeral")
     tool_ids = [tool.tool_id for tool in services.tools.list_tools()]
     assert "web_search" in tool_ids
-    assert "ibkr_data_pipeline" in tool_ids
+    assert {"get_symbol_daily_data", "list_option_contracts", "get_option_data"}.issubset(tool_ids)
+    assert "ibkr_data_pipeline" not in tool_ids
 
 
 def test_web_search_tool_executes_with_injected_client(tmp_path: Path) -> None:
@@ -1231,69 +1232,6 @@ def test_web_search_tool_returns_unavailable_without_provider(tmp_path: Path, mo
 
     assert response.status == "unavailable"
     assert "reason" in response.metadata
-
-
-def test_ibkr_data_pipeline_tool_executes_with_injected_pipe(tmp_path: Path) -> None:
-    class FakeIBKRPipe:
-        def fetch_market_snapshot(self, request) -> object:
-            class Snapshot:
-                def to_dict(self_inner) -> dict:
-                    return {
-                        "schema_version": "observation.v1",
-                        "as_of": "2026-06-02T20:00:00Z",
-                        "source": "IBKR",
-                        "symbols": {
-                            request.symbol: {"last": 601.25, "volume": 81234000},
-                        },
-                        "history": {},
-                        "quality": {"is_complete": True, "warnings": [], "stale_fields": []},
-                        "option_chain": {
-                            "underlying_symbol": request.symbol,
-                            "expirations": list(request.expirations) or ["20260620"],
-                            "strikes": list(request.strikes) or [600.0],
-                            "rights": list(request.rights),
-                            "option_quotes": [
-                                {
-                                    "symbol": "SPY   260620C00600000",
-                                    "expiry": "20260620",
-                                    "strike": 600.0,
-                                    "right": "C",
-                                    "bid": 10.1,
-                                    "ask": 10.4,
-                                    "volume": 1200,
-                                    "open_interest": 15000,
-                                    "greeks": {"delta": 0.49, "gamma": 0.03},
-                                }
-                            ],
-                        },
-                        "provider_metadata": {"port": 4001},
-                    }
-
-            return Snapshot()
-
-    services = build_platform_services(
-        storage_root=tmp_path / "runtime_store",
-        memory_service_type="ephemeral",
-        ibkr_data_pipe=FakeIBKRPipe(),
-    )
-    response = services.tools.execute(
-        ToolExecutionRequest(
-            tool_id="ibkr_data_pipeline",
-            arguments={
-                "operation": "fetch_market_snapshot",
-                "symbol": "SPY",
-                "port": 4001,
-                "expiry_count": 1,
-                "strike_count": 1,
-            },
-        )
-    )
-
-    assert response.status == "succeeded"
-    assert response.output["source"] == "IBKR"
-    assert response.output["symbols"]["SPY"]["last"] == 601.25
-    assert response.output["option_chain"]["option_quotes"][0]["greeks"]["delta"] == 0.49
-    assert response.metadata["port"] == 4001
 
 
 def test_run_agent_parser_accepts_query_shortcut() -> None:

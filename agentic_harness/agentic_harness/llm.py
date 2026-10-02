@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 
 from agentic_harness.agentic_os.tool_service import ToolExecutionRequest, ToolService
 from agentic_harness.contracts import WorkflowDefinition, WorkflowGraphState, WorkflowStep
+from agentic_harness.ibkr_data_reader import IBKRAuthorizationRequired
 
 
 Provider = Literal["none", "openai"]
@@ -295,6 +296,8 @@ class ResponsesModel:
                 output = {"status": result.status, "output": result.output, "metadata": result.metadata}
                 transcript.append({"type": "function_call_output", "call_id": call_id,
                                    "output": json.dumps(_redact(output), default=str)})
+                if result.status == "authorization_required":
+                    raise IBKRAuthorizationRequired("read_only_consent_required")
                 if result.status != "succeeded":
                     reason = result.metadata.get("reason", result.status)
                     raise fail(f"Tool '{tool_id}' failed: {reason}")

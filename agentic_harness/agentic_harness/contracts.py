@@ -542,6 +542,8 @@ class WorkflowGraphState(TypedDict, total=False):
     memory_hits: list[dict[str, Any]]
     step_history: list[dict[str, Any]]
     pending_review: dict[str, Any] | None
+    pending_authorization: dict[str, Any] | None
+    authorization_resume_fresh: bool
     review_responses: dict[str, dict[str, Any]]
     retry_counts: dict[str, int]
     events: list[dict[str, Any]]

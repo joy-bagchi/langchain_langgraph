@@ -164,21 +164,22 @@ The frontend currently supports:
 - running the deterministic daily belief workflow
 - selecting Heuristic, ML, or HMM daily regime agents
 - selecting HMMv1 vs HMMv2 from the same report surface
-- fetching a live IBKR snapshot through the `ibkr_market_data_agent`
+- fetching daily data and one explicitly selected IBKR option contract through the `ibkr_market_data_agent` Harness contract
 - resuming a review-gated daily run
 
-The IBKR panel defaults to `127.0.0.1:4001`.
+The Harness reads IBKR OAuth credentials from protected GCP Secret Manager storage. The live provider remains disabled until an authenticated IBKR MCP catalog is inspected and an explicit schema mapping is reviewed.
 
 ## Run The IBKR Tool Agent
 
-This example agent uses the harness toolbox directly through the
-`ibkr_data_pipeline` tool. It does not use the app-owned deterministic
-executors.
+This example agent uses only the three actions in the Harness
+`ibkr_data_reader` contract. It does not use the app-owned deterministic
+executors. `exact_contract_id` must be chosen explicitly from the preceding
+contract listing; this agent does not select a fallback strike or expiry.
 
-With a live TWS or IB Gateway on the default port `4001`:
+The contract can be exercised with the fake provider used in the focused test:
 
 ```bash
-python -m agentic_harness run-agent --agent agentic_vol_regime_app/configs/agents/ibkr_market_data_agent.yaml --input agentic_vol_regime_app/configs/sample_inputs/ibkr_spy_snapshot.json --audience agent
+python -m pytest agentic_vol_regime_app/tests/test_ibkr_tool_agent.py
 ```
 
 That route exercises:
@@ -187,7 +188,11 @@ That route exercises:
 - markdown workflow execution
 - tool allowlisting
 - harness toolbox dispatch
-- the real `ibkr_data_pipeline` tool
+- `get_symbol_daily_data`, `list_option_contracts`, and `get_option_data`
+- credential isolation and exact-contract selection
+
+The live invocation remains unavailable until the Harness has authenticated
+IBKR tool schemas and a reviewed provider mapping.
 
 ## Files
 

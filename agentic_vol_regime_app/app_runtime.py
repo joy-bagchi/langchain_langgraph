@@ -376,7 +376,6 @@ def run_daily_regime_agent(
         langsmith_endpoint=langsmith_endpoint,
         langsmith_project=langsmith_project,
         langsmith_workspace_id=langsmith_workspace_id,
-        ibkr_data_pipe=ibkr_data_pipe,
     )
     with services.observability.trace_span(
         "agentic_vol_regime_app:run_daily_regime_agent",
@@ -1155,7 +1154,6 @@ def run_live_overwrite_policy_engine(
         langsmith_endpoint=langsmith_endpoint,
         langsmith_project=langsmith_project,
         langsmith_workspace_id=langsmith_workspace_id,
-        ibkr_data_pipe=ibkr_data_pipe,
     )
     with services.observability.trace_span(
         "agentic_vol_regime_app:run_live_overwrite_policy_engine",

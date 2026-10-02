@@ -8,6 +8,25 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from agentic_harness.shared.services import ServiceDescriptor
+from agentic_harness.ibkr_data_reader import (
+    IBKR_ACTIONS,
+    IBKRAuthorizationRequired,
+    IBKRCredentialStore,
+    IBKRCredentials,
+    IBKRDataProvider,
+    IBKRScopeRejected,
+    IBKRStorageUnavailable,
+    ProviderResult,
+    SecretManagerIBKRCredentialStore,
+    _require_exact_read_scope,
+    normalize_provider_result,
+    validate_action_arguments,
+)
+from agentic_harness.notifications import (
+    HarnessNotificationService,
+    NotificationService,
+    WorkflowNotification,
+)
 
 
 @dataclass(slots=True)
@@ -136,7 +155,9 @@ class RegisteredToolService:
         cls,
         *,
         web_search_client: Any | None = None,
-        ibkr_data_pipe: Any | None = None,
+        ibkr_data_reader_provider: IBKRDataProvider | None = None,
+        ibkr_credential_store: IBKRCredentialStore | None = None,
+        notification_service: NotificationService | None = None,
     ) -> "RegisteredToolService":
         """Create the default toolbox with built-in tools."""
         definitions = [
@@ -155,59 +176,6 @@ class RegisteredToolService:
                     "required": ["query"],
                 },
                 metadata={"provider": "tavily"},
-            ),
-            ToolDefinition(
-                tool_id="ibkr_data_pipeline",
-                name="IBKR Data Pipeline",
-                description=(
-                    "Fetch Interactive Brokers market data for an underlying and a selected "
-                    "option chain, including prices, volume, open interest, and Greeks."
-                ),
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "operation": {
-                            "type": "string",
-                            "default": "fetch_market_snapshot",
-                            "enum": ["fetch_market_snapshot", "fetch_vol_regime_snapshot"],
-                        },
-                        "symbol": {"type": "string", "default": "SPY"},
-                        "host": {"type": "string", "default": "127.0.0.1"},
-                        "port": {"type": "integer", "default": 4001},
-                        "client_id": {"type": "integer", "default": 73},
-                        "market_data_type": {"type": "integer", "default": 1},
-                        "exchange": {"type": "string", "default": "SMART"},
-                        "option_exchange": {"type": "string", "default": "SMART"},
-                        "currency": {"type": "string", "default": "USD"},
-                        "rights": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "default": ["C", "P"],
-                        },
-                        "expiry_count": {"type": "integer", "default": 2},
-                        "strike_count": {"type": "integer", "default": 8},
-                        "expirations": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "default": [],
-                        },
-                        "strikes": {
-                            "type": "array",
-                            "items": {"type": "number"},
-                            "default": [],
-                        },
-                        "min_days_to_expiry": {"type": "integer", "default": 0},
-                        "history_days": {"type": "integer", "default": 30},
-                        "regime_symbols": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "default": ["SPY", "VIX", "VVIX", "VIX9D", "VIX3M"],
-                        },
-                        "index_exchange": {"type": "string", "default": "CBOE"},
-                    },
-                    "required": ["operation"],
-                },
-                metadata={"provider": "interactive_brokers", "default_port": 4001},
             ),
         ]
 
@@ -259,96 +227,119 @@ class RegisteredToolService:
                           "retrieved_at": retrieved_at, "sources": sources},
             )
 
-        def ibkr_data_pipeline_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:
-            operation = str(request.arguments.get("operation", "fetch_market_snapshot")).strip().lower()
-            if operation not in {"fetch_market_snapshot", "fetch_vol_regime_snapshot"}:
-                return ToolExecutionResponse(
-                    status="error",
-                    metadata={
-                        "reason": f"unsupported operation '{operation}'",
-                        "tool_id": "ibkr_data_pipeline",
-                    },
-                )
+        notify = notification_service or HarnessNotificationService()
 
-            try:
-                from agentic_vol_regime_app.data.ibkr_client import (
-                    IBKRConnectionConfig,
-                    IBKRDataPipe,
-                    IBKROptionChainRequest,
-                    IBKRVolRegimeSnapshotRequest,
-                )
-            except ImportError as exc:
-                return ToolExecutionResponse(
-                    status="unavailable",
-                    metadata={
-                        "reason": (
-                            "agentic_vol_regime_app IBKR integration is not available. "
-                            f"{exc}"
-                        ),
-                        "tool_id": "ibkr_data_pipeline",
-                    },
-                )
-
-            arguments = dict(request.arguments)
-            pipe = ibkr_data_pipe
-            if pipe is None:
-                pipe = IBKRDataPipe(
-                    connection=IBKRConnectionConfig(
-                        host=str(arguments.get("host", "127.0.0.1")),
-                        port=int(arguments.get("port", 4001)),
-                        client_id=int(arguments.get("client_id", 73)),
-                        market_data_type=int(arguments.get("market_data_type", 1)),
-                    )
-                )
-
-            try:
-                if operation == "fetch_vol_regime_snapshot":
-                    observation = pipe.fetch_vol_regime_snapshot(
-                        IBKRVolRegimeSnapshotRequest.from_payload(arguments)
-                    )
-                else:
-                    observation = pipe.fetch_market_snapshot(
-                        IBKROptionChainRequest(
-                            symbol=str(arguments.get("symbol", "SPY")),
-                            exchange=str(arguments.get("exchange", "SMART")),
-                            currency=str(arguments.get("currency", "USD")),
-                            option_exchange=str(arguments.get("option_exchange", "SMART")),
-                            rights=tuple(
-                                str(item).upper() for item in arguments.get("rights", ["C", "P"])
-                            ),
-                            expiry_count=int(arguments.get("expiry_count", 2)),
-                            strike_count=int(arguments.get("strike_count", 8)),
-                            expirations=tuple(
-                                str(item) for item in arguments.get("expirations", [])
-                            ),
-                            strikes=tuple(
-                                float(item) for item in arguments.get("strikes", [])
-                            ),
-                            min_days_to_expiry=int(arguments.get("min_days_to_expiry", 0)),
-                        )
-                    )
-            except Exception as exc:
-                return ToolExecutionResponse(
-                    status="error",
-                    metadata={"reason": str(exc), "tool_id": "ibkr_data_pipeline"},
-                )
-            output = observation.to_dict() if hasattr(observation, "to_dict") else observation
-            return ToolExecutionResponse(
-                status="succeeded",
-                output=output,
-                metadata={
-                    "tool_id": "ibkr_data_pipeline",
-                    "operation": operation,
-                    "symbol": str(arguments.get("symbol", "SPY")),
-                    "port": int(arguments.get("port", 4001)),
+        action_schemas = {
+            "get_symbol_daily_data": {
+                "type": "object", "additionalProperties": False,
+                "properties": {"symbol": {"type": "string"}, "trading_date": {"type": "string"}},
+                "required": ["symbol", "trading_date"],
+            },
+            "list_option_contracts": {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "symbol": {"type": "string"}, "expiry": {"type": ["string", "null"]},
+                    "pagination": {"type": "object", "additionalProperties": False,
+                                   "properties": {"cursor": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}},
                 },
+                "required": ["symbol"],
+            },
+            "get_option_data": {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "exact_contract_id": {"type": ["string", "integer"]},
+                    "symbol": {"type": "string"}, "right": {"type": "string", "enum": ["C", "P", "CALL", "PUT"]},
+                    "strike": {"type": "number"}, "expiry": {"type": "string"},
+                },
+                "oneOf": [
+                    {"required": ["exact_contract_id"],
+                     "not": {"anyOf": [{"required": [field]} for field in ("symbol", "right", "strike", "expiry")]}},
+                    {"required": ["symbol", "right", "strike", "expiry"],
+                     "not": {"required": ["exact_contract_id"]}},
+                ],
+            },
+        }
+        definitions.extend(
+            ToolDefinition(
+                tool_id=action,
+                name=action,
+                description={
+                    "get_symbol_daily_data": "Read daily price and volume fields for the requested symbol and trading date.",
+                    "list_option_contracts": "List exact option contract identifiers, rights, strikes, and expiries for the requested symbol.",
+                    "get_option_data": "Read market fields for one exact option contract. No alternate strike or expiry is selected.",
+                }[action],
+                input_schema=action_schemas[action],
+                metadata={"provider": "ibkr_data_reader", "tool_type": "ibkr_data_reader", "read_only": True},
             )
+            for action in IBKR_ACTIONS
+        )
+
+        def ibkr_action_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:
+            action = request.tool_id
+            try:
+                arguments = validate_action_arguments(action, dict(request.arguments))
+            except (TypeError, ValueError):
+                return ToolExecutionResponse(status="error", metadata={"reason": "invalid_action_arguments", "tool_id": action})
+
+            def authorization_required(reason: str) -> ToolExecutionResponse:
+                notification = WorkflowNotification(
+                    notification_type="ibkr_authorization_required",
+                    message="IBKR read-only consent is required before this workflow can continue.",
+                    run_id=request.metadata.get("run_id"),
+                    workflow_id=request.metadata.get("workflow_id"),
+                    step_id=request.metadata.get("step_id"),
+                    metadata={"tool_id": action, "status": "authorization_required"},
+                )
+                notify.notify(notification)
+                return ToolExecutionResponse(
+                    status="authorization_required",
+                    output={"status": "authorization_required", "tool_id": action},
+                    metadata={"reason": reason, "notification_type": notification.notification_type,
+                              "tool_id": action, "fresh_market_data_required": True},
+                )
+
+            try:
+                store = ibkr_credential_store or SecretManagerIBKRCredentialStore()
+                credentials = store.load()
+                if credentials is None:
+                    return authorization_required("read_only_consent_required")
+                _require_exact_read_scope(credentials)
+            except IBKRScopeRejected:
+                return ToolExecutionResponse(status="scope_rejected", metadata={"reason": "read_only_scope_required", "tool_id": action})
+            except IBKRStorageUnavailable:
+                return ToolExecutionResponse(status="unavailable", metadata={"reason": "protected_credential_storage_unavailable", "tool_id": action})
+            if ibkr_data_reader_provider is None:
+                return ToolExecutionResponse(status="unavailable", metadata={"reason": "authenticated_provider_mapping_unavailable", "tool_id": action})
+
+            try:
+                refreshed = ibkr_data_reader_provider.refresh_credentials(credentials)
+                _require_exact_read_scope(refreshed)
+                if refreshed.tokens != credentials.tokens or refreshed.client_info != credentials.client_info:
+                    store.persist(refreshed)
+                provider_result = ibkr_data_reader_provider.invoke(action, arguments, refreshed)
+                if not isinstance(provider_result, ProviderResult):
+                    raise TypeError("provider result contract mismatch")
+                final_credentials = provider_result.rotated_credentials
+                if final_credentials is not None:
+                    _require_exact_read_scope(final_credentials)
+                    store.persist(final_credentials)
+                output = normalize_provider_result(action, arguments, provider_result.payload)
+            except IBKRAuthorizationRequired:
+                return authorization_required("read_only_consent_required")
+            except IBKRScopeRejected:
+                return ToolExecutionResponse(status="scope_rejected", metadata={"reason": "read_only_scope_required", "tool_id": action})
+            except IBKRStorageUnavailable:
+                return ToolExecutionResponse(status="unavailable", metadata={"reason": "protected_credential_storage_unavailable", "tool_id": action})
+            except Exception:
+                # Provider exception strings may contain protected provider data.
+                return ToolExecutionResponse(status="unavailable", metadata={"reason": "provider_unavailable", "tool_id": action})
+            return ToolExecutionResponse(status="succeeded", output=output, metadata={"tool_id": action})
 
         return cls(
             definitions=definitions,
             handlers={
                 "web_search": web_search_handler,
-                "ibkr_data_pipeline": ibkr_data_pipeline_handler,
+                **{action: ibkr_action_handler for action in IBKR_ACTIONS},
             },
         )
 

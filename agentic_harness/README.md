@@ -278,7 +278,9 @@ python -m agentic_harness resume-dag --run-id <run_id> --decision approved --not
 
 ## Built-in Tools
 
-The default platform service bundle now includes a `web_search` tool in the toolbox.
+The default platform service bundle includes `web_search` and the bounded IBKR
+`ibkr_data_reader` actions. The old broad `ibkr_data_pipeline` is no longer
+registered.
 
 Programmatic usage:
 
@@ -295,6 +297,20 @@ response = services.tools.execute(
 ```
 
 `web_search` uses Tavily when `TAVILY_API_KEY` is configured. If Tavily or the API key is not available, the tool remains registered but returns `status="unavailable"` with a reason in metadata.
+
+The IBKR action names are `get_symbol_daily_data`, `list_option_contracts`,
+and `get_option_data`. The Harness loads OAuth data inside trusted runtime code
+from GCP Secret Manager, checks for exactly `mcp.read`, asks the configured
+provider to refresh before each action, and persists rotated credentials as
+new secret versions. Credentials and raw MCP tool catalogs are not part of
+model-facing arguments or results. If consent is required, the run checkpoints
+with `status="authorization_required"`; resume re-runs the market-data segment
+from its first IBKR action so snapshots collected before consent are refreshed.
+
+No live MCP provider mapping is enabled until authenticated IBKR tool schemas
+are inspected. See [the integration inventory](docs/ibkr-data-reader-inventory.md)
+for the Core, Harness, and consumer component dispositions and the current
+live blocker.
 
 The bundled `research_agent` example is configured with:
 

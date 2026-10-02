@@ -6,6 +6,8 @@ llm_provider: none
 memory_service_type: ephemeral
 runtime_profile: short_task
 allowed_tools:
-  - ibkr_data_pipeline
+  - get_symbol_daily_data
+  - list_option_contracts
+  - get_option_data
 domain: volatility_regime
-description: Fetch SPY underlying and option-chain data from IBKR via the harness toolbox.
+description: Fetch daily prices, list exact option contracts, and read one explicitly selected IBKR option contract via the Harness.
