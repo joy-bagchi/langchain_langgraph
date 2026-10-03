@@ -86,6 +86,7 @@ class SecretManagerIBKRCredentialStore:
         project_id: str | None = None,
         client_secret_id: str | None = None,
         token_secret_id: str | None = None,
+        transaction_secret_id: str | None = None,
         client: Any | None = None,
     ) -> None:
         self.project_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
@@ -94,6 +95,9 @@ class SecretManagerIBKRCredentialStore:
         ).strip()
         self.token_secret_id = token_secret_id or os.environ.get(
             "IBKR_OAUTH_TOKEN_SECRET_ID", ""
+        ).strip()
+        self.transaction_secret_id = transaction_secret_id or os.environ.get(
+            "HARNESS_IBKR_TRANSACTION_SECRET_ID", ""
         ).strip()
         self._client = client
 
@@ -147,21 +151,56 @@ class SecretManagerIBKRCredentialStore:
             raise IBKRStorageUnavailable("IBKR protected credential storage could not be updated") from exc
 
     def load(self) -> IBKRCredentials | None:
-        client_info = self._read_json(self.client_secret_id)
-        tokens = self._read_json(self.token_secret_id)
+        client_info = self.load_client_info()
+        tokens = self.load_tokens()
         if client_info is None or tokens is None:
             return None
         credentials = IBKRCredentials(client_info=client_info, tokens=tokens)
         _require_exact_read_scope(credentials)
         return credentials
 
+    def load_client_info(self) -> dict[str, Any] | None:
+        return self._read_json(self.client_secret_id)
+
+    def load_tokens(self) -> dict[str, Any] | None:
+        tokens = self._read_json(self.token_secret_id)
+        if tokens is not None:
+            _require_exact_read_scope(IBKRCredentials(client_info={}, tokens=tokens))
+        return tokens
+
+    def persist_client_info(self, client_info: dict[str, Any]) -> None:
+        scope = client_info.get("scope")
+        if scope and set(str(scope).split()) != {READ_ONLY_SCOPE}:
+            raise IBKRScopeRejected("IBKR client registration must contain only mcp.read")
+        self._write_json(self.client_secret_id, client_info)
+
+    def persist_tokens(self, tokens: dict[str, Any]) -> None:
+        _require_exact_read_scope(IBKRCredentials(client_info={}, tokens=tokens))
+        stored = dict(tokens)
+        stored["harness_obtained_at"] = _utc_now()
+        self._write_json(self.token_secret_id, stored)
+
+    def load_oauth_transaction(self) -> dict[str, Any] | None:
+        return self._read_json(self.transaction_secret_id)
+
+    def persist_oauth_transaction(self, transaction: dict[str, Any]) -> None:
+        """Persist hosted OAuth PKCE/state data only in protected storage."""
+        required = {"status", "state", "code_verifier", "run_id", "created_at"}
+        if set(transaction) != required or transaction.get("status") not in {
+            "prepared", "processing", "completed"
+        }:
+            raise IBKRStorageUnavailable("Hosted IBKR authorization state is invalid")
+        if not all(isinstance(transaction.get(key), str) and transaction[key] for key in required):
+            raise IBKRStorageUnavailable("Hosted IBKR authorization state is invalid")
+        self._write_json(self.transaction_secret_id, transaction)
+
     def persist(self, credentials: IBKRCredentials) -> None:
         _require_exact_read_scope(credentials)
         if credentials.client_info:
-            prior_client_info = self._read_json(self.client_secret_id)
+            prior_client_info = self.load_client_info()
             if prior_client_info != credentials.client_info:
-                self._write_json(self.client_secret_id, credentials.client_info)
-        self._write_json(self.token_secret_id, credentials.tokens)
+                self.persist_client_info(credentials.client_info)
+        self.persist_tokens(credentials.tokens)
 
 
 def _require_exact_read_scope(credentials: IBKRCredentials) -> None:
@@ -181,7 +220,7 @@ def validate_action_arguments(action: str, arguments: dict[str, Any]) -> dict[st
     """Validate and copy the exact public input shape for each action."""
     allowed = {
         "get_symbol_daily_data": {"symbol", "trading_date"},
-        "list_option_contracts": {"symbol", "expiry", "pagination"},
+        "list_option_contracts": {"symbol", "optional_expiry", "pagination"},
         "get_option_data": {"exact_contract_id", "symbol", "right", "strike", "expiry"},
     }.get(action)
     if allowed is None:
@@ -195,8 +234,8 @@ def validate_action_arguments(action: str, arguments: dict[str, Any]) -> dict[st
     elif action == "list_option_contracts":
         if not isinstance(result.get("symbol"), str) or not result["symbol"].strip():
             raise ValueError("symbol is required")
-        if result.get("expiry") is not None and not isinstance(result["expiry"], str):
-            raise ValueError("expiry must be a string")
+        if result.get("optional_expiry") is not None and not isinstance(result["optional_expiry"], str):
+            raise ValueError("optional_expiry must be a string")
         pagination = result.get("pagination", {})
         if not isinstance(pagination, dict) or set(pagination) - {"cursor", "limit"}:
             raise ValueError("pagination accepts only cursor and limit")
@@ -320,7 +359,7 @@ def normalize_provider_result(action: str, arguments: dict[str, Any], payload: d
                     contract["strike"] = None
                 if not isinstance(contract["expiry"], str):
                     contract["expiry"] = None
-                requested_expiry = arguments.get("expiry")
+                requested_expiry = arguments.get("optional_expiry")
                 if requested_expiry and contract["expiry"] != requested_expiry:
                     continue
                 contract["available_fields"] = [key for key in contract_fields if contract[key] is not None]
@@ -335,8 +374,8 @@ def normalize_provider_result(action: str, arguments: dict[str, Any], payload: d
                 safe_page["has_more"] = pagination["has_more"]
         result = {**base, "symbol": arguments["symbol"], "contracts": contracts, "pagination": safe_page,
                   "contract_status": "found" if contracts else "missing"}
-        if arguments.get("expiry"):
-            result["requested_expiry"] = arguments["expiry"]
+        if arguments.get("optional_expiry"):
+            result["requested_expiry"] = arguments["optional_expiry"]
         return result
 
     missing_contract = payload.get("contract_status") == "missing"

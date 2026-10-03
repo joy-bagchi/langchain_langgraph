@@ -278,8 +278,9 @@ python -m agentic_harness resume-dag --run-id <run_id> --decision approved --not
 
 ## Built-in Tools
 
-The default platform service bundle includes `web_search` and the bounded IBKR
-`ibkr_data_reader` actions. The old broad `ibkr_data_pipeline` is no longer
+The default platform service bundle includes `web_search`. The bounded IBKR
+`ibkr_data_reader` actions are registered only when trusted runtime code
+explicitly configures a provider. The old broad `ibkr_data_pipeline` is not
 registered.
 
 Programmatic usage:
@@ -298,19 +299,50 @@ response = services.tools.execute(
 
 `web_search` uses Tavily when `TAVILY_API_KEY` is configured. If Tavily or the API key is not available, the tool remains registered but returns `status="unavailable"` with a reason in metadata.
 
-The IBKR action names are `get_symbol_daily_data`, `list_option_contracts`,
-and `get_option_data`. The Harness loads OAuth data inside trusted runtime code
-from GCP Secret Manager, checks for exactly `mcp.read`, asks the configured
-provider to refresh before each action, and persists rotated credentials as
-new secret versions. Credentials and raw MCP tool catalogs are not part of
-model-facing arguments or results. If consent is required, the run checkpoints
-with `status="authorization_required"`; resume re-runs the market-data segment
-from its first IBKR action so snapshots collected before consent are refreshed.
+The reusable `agentic_harness.remote_mcp` capability uses the pinned MCP SDK
+for Streamable HTTP transport. Its trusted adapter receives a constrained
+connection with only reviewed action bindings; there is no model surface for
+the raw provider catalog. The IBKR profile is fixed to
+`https://api.ibkr.com/v1/api/mcp-public` and `mcp.read`.
 
-No live MCP provider mapping is enabled until authenticated IBKR tool schemas
-are inspected. See [the integration inventory](docs/ibkr-data-reader-inventory.md)
-for the Core, Harness, and consumer component dispositions and the current
-live blocker.
+OAuth registration and callback are owned by the hosted Harness service. It
+uses the SDK for OAuth discovery and registration, stores client credentials,
+rotating tokens, and PKCE/state transaction data in three separate Secret
+Manager secrets, and exposes a protected `POST /ibkr/reconnect` action. For an
+authorization-required run, the notification and durable checkpoint carry that
+route and the run ID, never the authorization URL or any token. The authenticated
+Reconnect response returns a one-time IBKR link with `Cache-Control: no-store`;
+the public callback validates state and an exact `mcp.read` grant before saving
+credentials and resuming the checkpoint. Resume drops earlier market-data
+outputs and starts again at the first IBKR action.
+
+For initial integration registration before a workflow is waiting, the
+authenticated setup request is `POST /ibkr/reconnect` with `{}`. Once a workflow
+is paused, the notification supplies its run ID and the same route requires
+that the durable run is still `authorization_required`.
+
+The pinned MCP SDK is used instead of FastMCP's client OAuth helper: FastMCP's
+documented default flow starts a temporary loopback callback server and opens a
+local browser, while the MCP SDK accepts hosted redirect and callback handlers
+and the Harness Secret Manager token store. The SDK's DCR builder uses an
+advertised `registration_endpoint` when its metadata argument is populated;
+otherwise it falls back to `urljoin(auth_base_url, "/register")`. Harness
+discovers and retains the advertised endpoint, verifies the captured web-client
+DCR body, and pins the request to that endpoint.
+
+Harness restores token expiry from its private `harness_obtained_at` field after
+process restart. It silently refreshes when the grant permits it, checks the
+refreshed scope, and persists token rotation. OAuth client data, tokens, PKCE
+verifiers, and authorization URLs never enter model arguments, results, traces,
+or workflow checkpoints. If consent is required, the checkpoint uses
+`status="authorization_required"`; resume discards earlier market-data outputs
+so a fresh read is performed.
+
+The OAuth-capable provider shell sets `mapping_verified=False`, so the three
+IBKR actions remain absent from the registry until authenticated IBKR tool
+schemas have been inspected and a trusted mapping is implemented. See [the
+integration inventory](docs/ibkr-data-reader-inventory.md) for component
+dispositions and the current live blocker.
 
 The bundled `research_agent` example is configured with:
 

@@ -1177,7 +1177,7 @@ def test_default_toolbox_registers_web_search_tool() -> None:
     services = build_platform_services(memory_service_type="ephemeral")
     tool_ids = [tool.tool_id for tool in services.tools.list_tools()]
     assert "web_search" in tool_ids
-    assert {"get_symbol_daily_data", "list_option_contracts", "get_option_data"}.issubset(tool_ids)
+    assert not {"get_symbol_daily_data", "list_option_contracts", "get_option_data"}.intersection(tool_ids)
     assert "ibkr_data_pipeline" not in tool_ids
 
 

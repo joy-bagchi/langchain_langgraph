@@ -162,7 +162,7 @@ def test_contract_listing_and_option_data_are_exact_and_explicit(tmp_path: Path)
     )
     listed = services.tools.execute(ToolExecutionRequest(
         "list_option_contracts",
-        {"symbol": "SPY", "expiry": "20261016", "pagination": {"limit": 20}},
+        {"symbol": "SPY", "optional_expiry": "20261016", "pagination": {"limit": 20}},
     ))
     option = services.tools.execute(ToolExecutionRequest(
         "get_option_data",
@@ -233,7 +233,7 @@ def test_daily_date_and_option_expiry_mismatches_are_not_substituted(tmp_path: P
         "get_symbol_daily_data", {"symbol": "SPY", "trading_date": "2026-10-01"},
     ))
     contracts = services.tools.execute(ToolExecutionRequest(
-        "list_option_contracts", {"symbol": "SPY", "expiry": "20261016"},
+        "list_option_contracts", {"symbol": "SPY", "optional_expiry": "20261016"},
     ))
     assert daily.output["data_status"] == "unverified"
     assert daily.output["fields"] == {"open": None, "high": None, "low": None, "close": None, "volume": None}
@@ -424,11 +424,13 @@ def test_consent_checkpoint_resumes_from_a_fresh_market_data_step(tmp_path: Path
 
     assert paused["status"] == "authorization_required"
     assert paused["pending_authorization"]["fresh_market_data_required"] is True
-    assert "Complete the Harness IBKR read-only authorization" in paused["pending_authorization"]["instructions"]
+    assert paused["pending_authorization"]["reconnect_action"]["route"] == "/ibkr/reconnect"
+    assert paused["pending_authorization"]["reconnect_action"]["requires_authenticated_harness_session"] is True
     assert inspected["status"] == "authorization_required"
     assert any(event.get("type") == "authorization_required" for event in inspected["events"])
     assert len(notifications) == 1
     assert notifications[0].notification_type == "ibkr_authorization_required"
+    assert notifications[0].metadata["action"]["route"] == "/ibkr/reconnect"
     assert "daily_data" in paused["named_outputs"]
 
     provider.require_consent_for.clear()  # simulate verified read-only consent completion

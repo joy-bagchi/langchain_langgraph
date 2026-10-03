@@ -35,6 +35,7 @@ def tavily_search(
 
     Uses Tavily to discover relevant URLs, then fetches and returns full webpage content as markdown.
 
+
     Args:
         query: Search query to execute
         max_results: Maximum number of results to return (default: 1)

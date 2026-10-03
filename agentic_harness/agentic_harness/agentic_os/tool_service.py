@@ -228,6 +228,10 @@ class RegisteredToolService:
             )
 
         notify = notification_service or HarnessNotificationService()
+        ibkr_actions_enabled = (
+            ibkr_data_reader_provider is not None
+            and getattr(ibkr_data_reader_provider, "mapping_verified", True) is True
+        )
 
         action_schemas = {
             "get_symbol_daily_data": {
@@ -238,7 +242,7 @@ class RegisteredToolService:
             "list_option_contracts": {
                 "type": "object", "additionalProperties": False,
                 "properties": {
-                    "symbol": {"type": "string"}, "expiry": {"type": ["string", "null"]},
+                    "symbol": {"type": "string"}, "optional_expiry": {"type": ["string", "null"]},
                     "pagination": {"type": "object", "additionalProperties": False,
                                    "properties": {"cursor": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}},
                 },
@@ -259,20 +263,21 @@ class RegisteredToolService:
                 ],
             },
         }
-        definitions.extend(
-            ToolDefinition(
-                tool_id=action,
-                name=action,
-                description={
-                    "get_symbol_daily_data": "Read daily price and volume fields for the requested symbol and trading date.",
-                    "list_option_contracts": "List exact option contract identifiers, rights, strikes, and expiries for the requested symbol.",
-                    "get_option_data": "Read market fields for one exact option contract. No alternate strike or expiry is selected.",
-                }[action],
-                input_schema=action_schemas[action],
-                metadata={"provider": "ibkr_data_reader", "tool_type": "ibkr_data_reader", "read_only": True},
+        if ibkr_actions_enabled:
+            definitions.extend(
+                ToolDefinition(
+                    tool_id=action,
+                    name=action,
+                    description={
+                        "get_symbol_daily_data": "Read daily price and volume fields for the requested symbol and trading date.",
+                        "list_option_contracts": "List exact option contract identifiers, rights, strikes, and expiries for the requested symbol.",
+                        "get_option_data": "Read market fields for one exact option contract. No alternate strike or expiry is selected.",
+                    }[action],
+                    input_schema=action_schemas[action],
+                    metadata={"provider": "ibkr_data_reader", "tool_type": "ibkr_data_reader", "read_only": True},
+                )
+                for action in IBKR_ACTIONS
             )
-            for action in IBKR_ACTIONS
-        )
 
         def ibkr_action_handler(request: ToolExecutionRequest) -> ToolExecutionResponse:
             action = request.tool_id
@@ -288,7 +293,16 @@ class RegisteredToolService:
                     run_id=request.metadata.get("run_id"),
                     workflow_id=request.metadata.get("workflow_id"),
                     step_id=request.metadata.get("step_id"),
-                    metadata={"tool_id": action, "status": "authorization_required"},
+                    metadata={
+                        "tool_id": action,
+                        "status": "authorization_required",
+                        "action": {
+                            "label": "Reconnect IBKR",
+                            "method": "POST",
+                            "route": "/ibkr/reconnect",
+                            "requires_authenticated_harness_session": True,
+                        },
+                    },
                 )
                 notify.notify(notification)
                 return ToolExecutionResponse(
@@ -339,7 +353,11 @@ class RegisteredToolService:
             definitions=definitions,
             handlers={
                 "web_search": web_search_handler,
-                **{action: ibkr_action_handler for action in IBKR_ACTIONS},
+                **(
+                    {action: ibkr_action_handler for action in IBKR_ACTIONS}
+                    if ibkr_actions_enabled
+                    else {}
+                ),
             },
         )
 

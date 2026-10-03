@@ -551,7 +551,13 @@ def compile_workflow(
                         "step_id": step_id,
                         "tool_type": "ibkr_data_reader",
                         "fresh_market_data_required": True,
-                        "instructions": "Complete the Harness IBKR read-only authorization, then resume this run.",
+                        "instructions": "Use the protected Harness Reconnect IBKR action to complete read-only authorization. The Harness will resume this run and fetch fresh market data.",
+                        "reconnect_action": {
+                            "label": "Reconnect IBKR",
+                            "method": "POST",
+                            "route": "/ibkr/reconnect",
+                            "requires_authenticated_harness_session": True,
+                        },
                     },
                     "last_error": "IBKR read-only authorization is required.",
                     "review_responses": review_responses,
@@ -1440,7 +1446,7 @@ def resume_workflow(
 ) -> dict[str, Any]:
     """Resume a persisted workflow run."""
     storage_path = Path(storage_root or Path.cwd() / ".workflow_memory")
-    run_store = WorkflowRunStore(storage_path)
+    run_store = WorkflowRunStore(storage_path, database_url=database_url)
     state = run_store.load_state(run_id)
     service_bundle = services or build_platform_services(
         storage_root=storage_path,

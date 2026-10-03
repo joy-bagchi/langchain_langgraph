@@ -1,0 +1,10 @@
+.git
+.pytest_cache
+**/.pytest_cache
+.tmp_*
+**/.tmp_*
+tests/
+examples/
+scripts/
+docs/
+workflows/
